@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 
 struct Flags {
     dirty: Cell<usize>,
-    parent: RefCell<Option<Weak<dyn AnyThunk>>>,
+    parent: RefCell<Vec<Weak<dyn AnyThunk>>>,
 }
 
 trait AnyThunk: Any {
@@ -18,9 +18,9 @@ trait Thunk<T>: AnyThunk {
     fn latest(&self) -> T;
     // fn as_any(self: Rc<Self>) -> Weak<dyn AnyThunk>;
     fn as_any(self: Rc<Self>) -> Weak<dyn AnyThunk>;
-    fn set_parent(&self, to: Option<Weak<dyn AnyThunk>>) {
+    fn add_parent(&self, p: Weak<dyn AnyThunk>) {
         if let Ok(mut parent) = self.flags().parent.try_borrow_mut() {
-            *parent = to;
+            parent.push(p);
         } else {
             panic!()
         }
@@ -136,54 +136,54 @@ impl<T: Clone + 'static> Incr<T> {
     fn new(value: T) -> (Self, Rc<RawValue<T>>) where T: 'static {
         let raw = Rc::new(RawValue {
             value: RefCell::new(value),
-            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(vec![]), }
         });
         let incr = Incr {
             thunk: raw.clone(),
         };
         (incr, raw)
     }
-    pub fn map<R: Clone + 'static>(self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
+    pub fn map<R: Clone + 'static>(&self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
         let value = f(self.value());
         let node = MapNode {
             input: self.clone(),
             mapper: f,
             value,
-            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(vec![]), }
         };
         let map = Incr {
             thunk: Rc::new(node),
         };
-        self.thunk.set_parent(Some(map.thunk.clone().as_any()));
+        self.thunk.add_parent(map.thunk.clone().as_any());
         map
     }
-    pub fn map2<T2: Clone + 'static, R: Clone + 'static>(self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
+    pub fn map2<T2: Clone + 'static, R: Clone + 'static>(&self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
         let value = f(self.value(), other.value());
         let map = Map2Node {
             one: self.clone(),
             two: other.clone(),
             mapper: f,
             value,
-            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(vec![]), }
         };
         let map = Incr {
             thunk: Rc::new(map),
         };
-        self.thunk.set_parent(Some(map.thunk.clone().as_any()));
+        self.thunk.add_parent(map.thunk.clone().as_any());
         map
     }
-    pub fn bind<R: Clone + 'static>(self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
+    pub fn bind<R: Clone + 'static>(&self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
         let output = f(self.value());
         let mapper = BindNode {
             input: self.clone(),
             mapper: f,
             output,
-            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(vec![]), }
         };
         let bind = Incr {
             thunk: Rc::new(mapper),
         };
-        self.thunk.set_parent(Some(bind.thunk.clone().as_any()));
+        self.thunk.add_parent(bind.thunk.clone().as_any());
         bind
     }
     pub fn stabilise(&self) {

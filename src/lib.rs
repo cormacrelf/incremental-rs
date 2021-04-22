@@ -9,7 +9,7 @@ fn test_map() {
     let plus_five = incr.map(|x| x + 5);
     assert_eq!(plus_five.value(), 10);
 
-    // var.set(10u32);
+    var.set(10u32);
     // incr.stabilise();
-    // assert_eq!(plus_five.value(), 15);
+    assert_eq!(plus_five.value(), 15);
 }
