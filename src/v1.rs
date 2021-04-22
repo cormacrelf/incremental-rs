@@ -28,12 +28,13 @@ trait Thunk<T>: AnyThunk {
 }
 
 struct RawValue<T> {
-    value: T,
+    value: RefCell<T>,
+    flags: Flags,
 }
 
 impl<T: 'static> AnyThunk for RawValue<T> {
     fn flags(&self) -> &Flags {
-        todo!()
+        &self.flags
     }
 }
 impl<T: Clone + 'static> Thunk<T> for RawValue<T> {
@@ -41,7 +42,7 @@ impl<T: Clone + 'static> Thunk<T> for RawValue<T> {
         // noop
     }
     fn latest(&self) -> T {
-        self.value.clone()
+        self.value.borrow().clone()
     }
     fn as_any(self: Rc<Self>) -> Weak<dyn AnyThunk> {
         let weak = Rc::downgrade(&self);
@@ -132,14 +133,17 @@ pub struct Incr<T> {
 }
 
 impl<T: Clone + 'static> Incr<T> {
-    pub fn new(value: T) -> Self where T: 'static {
-        Incr {
-            thunk: Rc::new(RawValue {
-                value,
-            }),
-        }
+    fn new(value: T) -> (Self, Rc<RawValue<T>>) where T: 'static {
+        let raw = Rc::new(RawValue {
+            value: RefCell::new(value),
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
+        });
+        let incr = Incr {
+            thunk: raw.clone(),
+        };
+        (incr, raw)
     }
-    pub fn map<R: Clone + 'static>(mut self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
+    pub fn map<R: Clone + 'static>(self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
         let value = f(self.value());
         let node = MapNode {
             input: self.clone(),
@@ -153,7 +157,7 @@ impl<T: Clone + 'static> Incr<T> {
         self.thunk.set_parent(Some(map.thunk.clone().as_any()));
         map
     }
-    pub fn map2<T2: Clone + 'static, R: Clone + 'static>(mut self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
+    pub fn map2<T2: Clone + 'static, R: Clone + 'static>(self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
         let value = f(self.value(), other.value());
         let map = Map2Node {
             one: self.clone(),
@@ -168,7 +172,7 @@ impl<T: Clone + 'static> Incr<T> {
         self.thunk.set_parent(Some(map.thunk.clone().as_any()));
         map
     }
-    pub fn bind<R: Clone + 'static>(mut self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
+    pub fn bind<R: Clone + 'static>(self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
         let output = f(self.value());
         let mapper = BindNode {
             input: self.clone(),
@@ -195,19 +199,21 @@ impl<T: Clone + 'static> Incr<T> {
 }
 
 pub struct Var<T> {
-    raw: Incr<T>,
+    incr: Incr<T>,
+    raw: Rc<RawValue<T>>,
 }
 
 impl<T: Clone + 'static> Var<T> {
     pub fn create(a: T) -> Self {
-        let raw = Incr::new(a);
-        Var { raw }
+        let (incr, raw) = Incr::new(a);
+        Var { incr, raw }
     }
-    pub fn set(&mut self, new_val: T) -> Self {
-        todo!()
+    pub fn set(&self, new_val: T) {
+        let mut val_ref = self.raw.value.borrow_mut();
+        *val_ref = new_val;
     }
     pub fn read(&self) -> Incr<T> {
-        self.raw.clone()
+        self.incr.clone()
     }
 }
 
