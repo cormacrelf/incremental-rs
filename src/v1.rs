@@ -2,11 +2,11 @@
 
 use std::any::Any;
 use std::rc::{Rc, Weak};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
-#[derive(Default)]
 struct Flags {
     dirty: Cell<usize>,
+    parent: RefCell<Option<Weak<dyn AnyThunk>>>,
 }
 
 trait AnyThunk: Any {
@@ -18,6 +18,13 @@ trait Thunk<T>: AnyThunk {
     fn latest(&self) -> T;
     // fn as_any(self: Rc<Self>) -> Weak<dyn AnyThunk>;
     fn as_any(self: Rc<Self>) -> Weak<dyn AnyThunk>;
+    fn set_parent(&self, to: Option<Weak<dyn AnyThunk>>) {
+        if let Ok(mut parent) = self.flags().parent.try_borrow_mut() {
+            *parent = to;
+        } else {
+            panic!()
+        }
+    }
 }
 
 struct RawValue<T> {
@@ -122,14 +129,14 @@ impl<F, T: Clone + 'static, R: Clone + 'static> Thunk<R> for BindNode<F, T, R> w
 #[derive(Clone)]
 pub struct Incr<T> {
     thunk: Rc<dyn Thunk<T>>,
-    parent: Option<Weak<dyn AnyThunk>>,
 }
 
 impl<T: Clone + 'static> Incr<T> {
     pub fn new(value: T) -> Self where T: 'static {
         Incr {
-            thunk: Rc::new(RawValue { value }),
-            parent: None,
+            thunk: Rc::new(RawValue {
+                value,
+            }),
         }
     }
     pub fn map<R: Clone + 'static>(mut self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
@@ -138,13 +145,12 @@ impl<T: Clone + 'static> Incr<T> {
             input: self.clone(),
             mapper: f,
             value,
-            flags: Flags::default(),
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
         };
         let map = Incr {
             thunk: Rc::new(node),
-            parent: None
         };
-        self.parent = Some(map.thunk.clone().as_any());
+        self.thunk.set_parent(Some(map.thunk.clone().as_any()));
         map
     }
     pub fn map2<T2: Clone + 'static, R: Clone + 'static>(mut self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
@@ -154,13 +160,12 @@ impl<T: Clone + 'static> Incr<T> {
             two: other.clone(),
             mapper: f,
             value,
-            flags: Flags::default(),
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
         };
         let map = Incr {
             thunk: Rc::new(map),
-            parent: None,
         };
-        self.parent = Some(map.thunk.clone().as_any());
+        self.thunk.set_parent(Some(map.thunk.clone().as_any()));
         map
     }
     pub fn bind<R: Clone + 'static>(mut self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
@@ -169,13 +174,12 @@ impl<T: Clone + 'static> Incr<T> {
             input: self.clone(),
             mapper: f,
             output,
-            flags: Flags::default(),
+            flags: Flags { dirty: Cell::new(0), parent: RefCell::new(None), }
         };
         let bind = Incr {
             thunk: Rc::new(mapper),
-            parent: None
         };
-        self.parent = Some(bind.thunk.clone().as_any());
+        self.thunk.set_parent(Some(bind.thunk.clone().as_any()));
         bind
     }
     pub fn stabilise(&self) {
