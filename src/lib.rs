@@ -123,6 +123,8 @@ fn multi_input() {
     println!("{:?}", list_all.value());
     for var in variables.iter_mut().take(5) {
         var.set(2);
+    }
+    for var in &variables {
         var.stabilise();
     }
     println!("{:?}", list_all.value());

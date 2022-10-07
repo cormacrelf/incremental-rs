@@ -41,47 +41,59 @@ impl Flags {
     }
 }
 
+fn do_propagate_dirty_count<A: AnyThunk + ?Sized>(thunk: &A) {
+    let mut descendants = thunk.flags().descendants.borrow_mut();
+    descendants.retain(|p_weak| {
+        if let Some(parent) = p_weak.upgrade() {
+            let val = parent.flags().dirty_count.get();
+            // println!("dirty count: {}", val);
+            parent.flags().dirty_count.set(val + 1);
+            parent.propagate_dirty_count();
+            true
+        } else {
+            false
+        }
+    });
+    drop(descendants);
+}
+fn do_stabilise<A: AnyThunk + ?Sized>(thunk: &A) {
+    let mut descendants = thunk.flags().descendants.borrow_mut();
+    let mut to_reconnect = Vec::new();
+    for desc_weak in descendants.iter_mut() {
+        if let Some(desc) = Weak::upgrade(desc_weak) {
+            let mut val = desc.flags().dirty_count.get();
+            if val == 0 {
+                return;
+            }
+            // println!("dirty count: {}", val);
+            val = val - 1;
+            desc.flags().dirty_count.set(val);
+            if val == 0 {
+                if desc.eval() {
+                    to_reconnect.push(desc_weak.clone());
+                }
+            }
+        }
+    }
+    drop(descendants);
+    for desc in to_reconnect {
+        if let Some(d) = Weak::upgrade(&desc) {
+            d.reconnect();
+        }
+    }
+}
+
 trait AnyThunk: Any + Debug {
-    fn eval(self: Rc<Self>) -> bool;
+    fn eval(&self) -> bool;
     fn reconnect(self: Rc<Self>) {}
     fn flags(&self) -> &Flags;
+    /// What Var::set() calls.
+    fn propagate_dirty_count(&self) {
+        do_propagate_dirty_count(self);
+    }
+    /// Resolve all the variables that have dirtied the graph.
     fn stabilise(&self) {
-        let mut descendants = self.flags().descendants.borrow_mut();
-        descendants.retain(|p_weak| {
-            if let Some(parent) = p_weak.upgrade() {
-                let val = parent.flags().dirty_count.get();
-                parent.flags().dirty_count.set(val + 1);
-                parent.stabilise();
-                true
-            } else {
-                false
-            }
-        });
-        drop(descendants);
-        let mut descendants = self.flags().descendants.borrow_mut();
-        let mut to_reconnect = Vec::new();
-        for desc_weak in descendants.iter_mut() {
-            if let Some(desc) = Weak::upgrade(desc_weak) {
-                let mut val = desc.flags().dirty_count.get();
-                if val == 0 {
-                    return;
-                }
-                println!("dirty count: {}", val);
-                val = val - 1;
-                desc.flags().dirty_count.set(val);
-                if val == 0 {
-                    if desc.eval() {
-                        to_reconnect.push(desc_weak.clone());
-                    }
-                }
-            }
-        }
-        drop(descendants);
-        for desc in to_reconnect {
-            if let Some(d) = Weak::upgrade(&desc) {
-                d.reconnect();
-            }
-        }
+        do_stabilise(self);
     }
 }
 
@@ -107,6 +119,7 @@ trait Thunk<T>: AnyThunk {
 
 struct RawValue<T> {
     value: RefCell<T>,
+    self_dirty: Cell<bool>,
     flags: Flags,
 }
 
@@ -117,16 +130,30 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("RawValue")
             .field("value", &self.value.borrow())
+            .field("self_dirty", &self.self_dirty.get())
             .finish()
     }
 }
 
 impl<T: 'static + Debug> AnyThunk for RawValue<T> {
-    fn eval(self: Rc<Self>) -> bool {
+    fn eval(&self) -> bool {
         false
     }
     fn flags(&self) -> &Flags {
         &self.flags
+    }
+    /// Slight modification of the default, to set self_dirty
+    fn propagate_dirty_count(&self) {
+        // called from set(), so yeah, it's changed
+        self.self_dirty.set(true);
+        do_propagate_dirty_count(self);
+    }
+    fn stabilise(&self) {
+        if !self.self_dirty.get() {
+            return;
+        }
+        self.self_dirty.set(false);
+        do_stabilise(self);
     }
 }
 impl<T: Clone + 'static + Debug> Thunk<T> for RawValue<T> {
@@ -168,7 +195,7 @@ impl<F, T1: Clone + 'static + Debug, T2: Clone + 'static + Debug, R: Clone + 'st
 where
     F: Fn(T1, T2) -> R + 'static,
 {
-    fn eval(self: Rc<Self>) -> bool {
+    fn eval(&self) -> bool {
         let mut value = self.value.borrow_mut();
         *value = (self.mapper)(self.one.latest(), self.two.latest());
         false
@@ -219,7 +246,7 @@ impl<F, T: Clone + 'static + Debug, R: Clone + 'static + Debug> AnyThunk for Map
 where
     F: Fn(T) -> R + 'static,
 {
-    fn eval(self: Rc<Self>) -> bool {
+    fn eval(&self) -> bool {
         // println!("eval {:?}", self);
         let mut val = self.value.borrow_mut();
         *val = (self.mapper)(self.input.latest());
@@ -272,7 +299,7 @@ where
     R: Clone + 'static + Debug,
     F: Fn(T) -> Incr<R> + 'static,
 {
-    fn eval(self: Rc<Self>) -> bool {
+    fn eval(&self) -> bool {
         println!("BindNode eval triggered");
         let new_output = (self.mapper)(self.input.latest());
         if !self.output.borrow().ptr_eq(&new_output) {
@@ -343,7 +370,8 @@ impl<R> AnyThunk for ListAllNode<R>
 where
     R: Clone + 'static + Debug,
 {
-    fn eval(self: Rc<Self>) -> bool {
+    fn eval(&self) -> bool {
+        println!("ListAllNode eval triggered");
         let output: Vec<R> = self.inputs.iter().map(|inp| inp.thunk.latest()).collect();
         let mut o = self.output.borrow_mut();
         *o = output;
@@ -389,6 +417,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
     pub fn new(value: T) -> Self {
         let raw = Rc::new(RawValue {
             value: RefCell::new(value),
+            self_dirty: Cell::new(false),
             flags: Flags {
                 dirty_count: Cell::new(0),
                 descendants: RefCell::new(vec![]),
@@ -496,6 +525,7 @@ impl<T: Clone + 'static + Debug> Var<T> {
     pub fn create(a: T) -> Self {
         let raw = Rc::new(RawValue {
             value: RefCell::new(a),
+            self_dirty: Cell::new(false),
             flags: Flags {
                 dirty_count: Cell::new(0),
                 descendants: RefCell::new(vec![]),
@@ -507,6 +537,7 @@ impl<T: Clone + 'static + Debug> Var<T> {
     pub fn set(&self, new_val: T) {
         let mut val_ref = self.raw.value.borrow_mut();
         *val_ref = new_val;
+        self.incr.thunk.propagate_dirty_count();
     }
     pub fn read(&self) -> Incr<T> {
         self.incr.clone()
