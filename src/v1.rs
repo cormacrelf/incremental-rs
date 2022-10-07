@@ -18,13 +18,33 @@
 //!    then stabilise every one of those updated inputs, then you go through two passes where much
 //!    of the call graph is +5,000, and eventually gets back to zero and we re-evaluate. Those
 //!    dirty counts track whether a node has seen all the new values it's supposed to receive.
+//!
+//!
+//! The main problem with V1 is that there's no way to cut off computation of values when the
+//! eval() has not changed. Hence v2.
 
 use fmt::Debug;
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
+/// Incr<R> is meant to be the "sentinel" as in the 7 implementations talk.
+/// The problem that sentinels solve is a lot easier in Rust with explicit reference counting and
+/// std::rc::Weak. Because all the 'descendants' are Weak pointers, when an Incr (with a strong Rc
+/// pointer) is dropped then all those weak pointers might end up dead. This way, Incr is the root
+/// of ownership of the computation graph. All the parent pointers inside the node types are also
+/// strong Rc pointers, so this works the same way. This is that parent pointer type.
+///
+/// We also do not suffer the problem where the GC hasn't kicked in yet to collect a sentinel, and
+/// therefore not only is the memory for all that discarded graph (from a bind that's just thrown
+/// out a whole subgraph, e.g.) not freed, but the entire subgraph stays in action and keeps
+/// getting updated, dirtied, stabilised and evaluated. In Rust, Rc dies when it dies. There is no
+/// lag between when we get rid of a subgraph and when it stops computing itself.
 type Input<T> = Rc<dyn Thunk<T>>;
+
+/// Weak pointer to any kind of thunk, from a parent node perspective. All we need to know about it
+/// is how to increment/decrement its dirty count and make it re-evaluate however it wishes to do
+/// that.
 type Descendant = Weak<dyn AnyThunk>;
 
 struct Flags {
