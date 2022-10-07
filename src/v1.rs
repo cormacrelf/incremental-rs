@@ -1,24 +1,25 @@
 #![allow(unused_variables)]
 
-use std::any::Any;
-use std::rc::{Rc, Weak};
-use std::cell::{Cell, RefCell};
 use fmt::Debug;
+use std::any::Any;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 type Input<T> = Rc<dyn Thunk<T>>;
-type Parent = Weak<dyn AnyThunk>;
+type Descendant = Weak<dyn AnyThunk>;
 
 struct Flags {
     dirty_count: Cell<usize>,
-    parents: RefCell<Vec<Parent>>,
+    descendants: RefCell<Vec<Descendant>>,
 }
 
 trait AnyThunk: Any + Debug {
-    fn eval(&self);
+    fn eval(self: Rc<Self>) -> bool;
+    fn reconnect(self: Rc<Self>) {}
     fn flags(&self) -> &Flags;
     fn stabilise(&self) {
-        let mut parents = self.flags().parents.borrow_mut();
-        parents.retain(|p_weak| {
+        let mut descendants = self.flags().descendants.borrow_mut();
+        descendants.retain(|p_weak| {
             if let Some(parent) = p_weak.upgrade() {
                 let val = parent.flags().dirty_count.get();
                 parent.flags().dirty_count.set(val + 1);
@@ -28,17 +29,28 @@ trait AnyThunk: Any + Debug {
                 false
             }
         });
-        drop(parents);
-        let parents = self.flags().parents.borrow();
-        for parent in parents.iter().filter_map(Weak::upgrade) {
-            let mut val = parent.flags().dirty_count.get();
-            if val == 0 {
-                continue;
+        drop(descendants);
+        let mut descendants = self.flags().descendants.borrow_mut();
+        let mut to_reconnect = Vec::new();
+        for desc_weak in descendants.iter_mut() {
+            if let Some(desc) = Weak::upgrade(desc_weak) {
+                let mut val = desc.flags().dirty_count.get();
+                if val == 0 {
+                    return;
+                }
+                val = val - 1;
+                desc.flags().dirty_count.set(val);
+                if val == 0 {
+                    if desc.eval() {
+                        to_reconnect.push(desc_weak.clone());
+                    }
+                }
             }
-            val = val - 1;
-            parent.flags().dirty_count.set(val);
-            if val == 0 {
-                parent.eval();
+        }
+        drop(descendants);
+        for desc in to_reconnect {
+            if let Some(d) = Weak::upgrade(&desc) {
+                d.reconnect();
             }
         }
     }
@@ -47,10 +59,17 @@ trait AnyThunk: Any + Debug {
 trait Thunk<T>: AnyThunk {
     fn latest(&self) -> T;
     // fn as_any(self: Rc<Self>) -> Parent;
-    fn as_any(self: Rc<Self>) -> Parent;
-    fn add_parent(&self, p: Parent) {
-        if let Ok(mut parents) = self.flags().parents.try_borrow_mut() {
-            parents.push(p);
+    fn as_any(self: Rc<Self>) -> Descendant;
+    fn add_descendant(&self, p: Descendant) {
+        if let Ok(mut descendants) = self.flags().descendants.try_borrow_mut() {
+            descendants.push(p);
+        } else {
+            panic!()
+        }
+    }
+    fn remove_descendant(&self, p: Descendant) {
+        if let Ok(mut descendants) = self.flags().descendants.try_borrow_mut() {
+            descendants.retain(|d| !d.ptr_eq(&p))
         } else {
             panic!()
         }
@@ -63,7 +82,8 @@ struct RawValue<T> {
 }
 
 impl<T> Debug for RawValue<T>
-where T: Debug
+where
+    T: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("RawValue")
@@ -73,8 +93,8 @@ where T: Debug
 }
 
 impl<T: 'static + Debug> AnyThunk for RawValue<T> {
-    fn eval(&self) {
-        // noop
+    fn eval(self: Rc<Self>) -> bool {
+        false
     }
     fn flags(&self) -> &Flags {
         &self.flags
@@ -84,13 +104,16 @@ impl<T: Clone + 'static + Debug> Thunk<T> for RawValue<T> {
     fn latest(&self) -> T {
         self.value.borrow().clone()
     }
-    fn as_any(self: Rc<Self>) -> Parent {
+    fn as_any(self: Rc<Self>) -> Descendant {
         let weak = Rc::downgrade(&self);
-        weak as Parent
+        weak as Descendant
     }
 }
 
-struct Map2Node<F, T1, T2, R> where F: Fn(T1, T2) -> R {
+struct Map2Node<F, T1, T2, R>
+where
+    F: Fn(T1, T2) -> R,
+{
     one: Input<T1>,
     two: Input<T2>,
     mapper: F,
@@ -99,8 +122,9 @@ struct Map2Node<F, T1, T2, R> where F: Fn(T1, T2) -> R {
 }
 
 impl<F, T1, T2, R> Debug for Map2Node<F, T1, T2, R>
-where F: Fn(T1, T2) -> R,
-      R: Debug
+where
+    F: Fn(T1, T2) -> R,
+    R: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Map2Node")
@@ -110,26 +134,38 @@ where F: Fn(T1, T2) -> R,
     }
 }
 
-impl<F, T1: Clone + 'static + Debug, T2: Clone + 'static + Debug, R: Clone + 'static + Debug> AnyThunk for Map2Node<F, T1, T2, R> where F: Fn(T1, T2) -> R + 'static {
-    fn eval(&self) {
+impl<F, T1: Clone + 'static + Debug, T2: Clone + 'static + Debug, R: Clone + 'static + Debug>
+    AnyThunk for Map2Node<F, T1, T2, R>
+where
+    F: Fn(T1, T2) -> R + 'static,
+{
+    fn eval(self: Rc<Self>) -> bool {
         let mut value = self.value.borrow_mut();
         *value = (self.mapper)(self.one.latest(), self.two.latest());
+        false
     }
     fn flags(&self) -> &Flags {
         &self.flags
     }
 }
-impl<F, T1: Clone + 'static + Debug, T2: Clone + 'static + Debug, R: Clone + 'static + Debug> Thunk<R> for Map2Node<F, T1, T2, R> where F: Fn(T1, T2) -> R + 'static {
+impl<F, T1: Clone + 'static + Debug, T2: Clone + 'static + Debug, R: Clone + 'static + Debug>
+    Thunk<R> for Map2Node<F, T1, T2, R>
+where
+    F: Fn(T1, T2) -> R + 'static,
+{
     fn latest(&self) -> R {
         self.value.borrow().clone()
     }
-    fn as_any(self: Rc<Self>) -> Parent {
+    fn as_any(self: Rc<Self>) -> Descendant {
         let weak = Rc::downgrade(&self);
-        weak as Parent
+        weak as Descendant
     }
 }
 
-struct MapNode<F, T, R> where F: Fn(T) -> R {
+struct MapNode<F, T, R>
+where
+    F: Fn(T) -> R,
+{
     input: Input<T>,
     mapper: F,
     value: RefCell<R>,
@@ -138,8 +174,9 @@ struct MapNode<F, T, R> where F: Fn(T) -> R {
 
 use std::fmt;
 impl<F, T, R> Debug for MapNode<F, T, R>
-where F: Fn(T) -> R,
-      R: Debug
+where
+    F: Fn(T) -> R,
+    R: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapNode")
@@ -149,36 +186,48 @@ where F: Fn(T) -> R,
     }
 }
 
-impl<F, T: Clone + 'static + Debug, R: Clone + 'static + Debug> AnyThunk for MapNode<F, T, R> where F: Fn(T) -> R + 'static {
-    fn eval(&self) {
+impl<F, T: Clone + 'static + Debug, R: Clone + 'static + Debug> AnyThunk for MapNode<F, T, R>
+where
+    F: Fn(T) -> R + 'static,
+{
+    fn eval(self: Rc<Self>) -> bool {
         // println!("eval {:?}", self);
         let mut val = self.value.borrow_mut();
         *val = (self.mapper)(self.input.latest());
+        false
     }
     fn flags(&self) -> &Flags {
         &self.flags
     }
 }
-impl<F, T: Clone + 'static + Debug, R: Clone + 'static + Debug> Thunk<R> for MapNode<F, T, R> where F: Fn(T) -> R + 'static {
+impl<F, T: Clone + 'static + Debug, R: Clone + 'static + Debug> Thunk<R> for MapNode<F, T, R>
+where
+    F: Fn(T) -> R + 'static,
+{
     fn latest(&self) -> R {
         self.value.borrow().clone()
     }
-    fn as_any(self: Rc<Self>) -> Parent {
+    fn as_any(self: Rc<Self>) -> Descendant {
         let weak = Rc::downgrade(&self);
-        weak as Parent
+        weak as Descendant
     }
 }
 
-struct BindNode<F, T, R> where F: Fn(T) -> Incr<R> {
+struct BindNode<F, T, R>
+where
+    F: Fn(T) -> Incr<R>,
+{
     input: Input<T>,
     mapper: F,
     output: RefCell<Incr<R>>,
+    to_disconnect: RefCell<Option<RefCell<Incr<R>>>>,
     flags: Flags,
 }
 
 impl<F, T, R> Debug for BindNode<F, T, R>
-where F: Fn(T) -> Incr<R>,
-      R: Debug + Clone + 'static
+where
+    F: Fn(T) -> Incr<R>,
+    R: Debug + Clone + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BindNode")
@@ -194,10 +243,34 @@ where
     R: Clone + 'static + Debug,
     F: Fn(T) -> Incr<R> + 'static,
 {
-    fn eval(&self) {
+    fn eval(self: Rc<Self>) -> bool {
         println!("BindNode eval triggered");
-        let mut output = self.output.borrow_mut();
-        *output = (self.mapper)(self.input.latest());
+        let new_output = (self.mapper)(self.input.latest());
+        if !self.output.borrow().ptr_eq(&new_output) {
+            let orig = self.output.clone();
+            let mut o = self.output.borrow_mut();
+            let mut todisc = self.to_disconnect.borrow_mut();
+            *todisc = Some(orig);
+            *o = new_output;
+        }
+        true
+    }
+    fn reconnect(self: Rc<Self>) {
+        let mut maybe_todisc = self.to_disconnect.borrow_mut();
+        if let Some(todisc) = maybe_todisc.take() {
+            // Disconnect previous
+            // println!("disconnecting BindNode from previous output {:?}", todisc);
+            todisc
+                .borrow_mut()
+                .thunk
+                .remove_descendant(self.clone().as_any());
+            // Connect new one
+            let output = self.output.borrow_mut();
+            // println!("reconnecting BindNode to output {:?}", output);
+            // We want the bind node to be a descendant of whichever Incr was returned by the mapper
+            // function.
+            output.thunk.add_descendant(self.clone().as_any());
+        }
     }
     fn flags(&self) -> &Flags {
         &self.flags
@@ -213,9 +286,9 @@ where
     fn latest(&self) -> R {
         self.output.borrow().value()
     }
-    fn as_any(self: Rc<Self>) -> Parent {
+    fn as_any(self: Rc<Self>) -> Descendant {
         let weak = Rc::downgrade(&self);
-        weak as Parent
+        weak as Descendant
     }
 }
 
@@ -225,14 +298,18 @@ pub struct Incr<T> {
 }
 
 impl<T: Clone + 'static + Debug> Incr<T> {
+    pub fn ptr_eq(&self, other: &Incr<T>) -> bool {
+        Rc::ptr_eq(&self.thunk, &other.thunk)
+    }
     pub fn new(value: T) -> Self {
         let raw = Rc::new(RawValue {
             value: RefCell::new(value),
-            flags: Flags { dirty_count: Cell::new(0), parents: RefCell::new(vec![]), }
+            flags: Flags {
+                dirty_count: Cell::new(0),
+                descendants: RefCell::new(vec![]),
+            },
         });
-        Incr {
-            thunk: raw
-        }
+        Incr { thunk: raw }
     }
     pub fn map<R: Clone + 'static + Debug>(&self, f: impl Fn(T) -> R + 'static) -> Incr<R> {
         let value = f(self.value());
@@ -240,41 +317,64 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             input: self.clone().thunk,
             mapper: f,
             value: RefCell::new(value),
-            flags: Flags { dirty_count: Cell::new(0), parents: RefCell::new(vec![]), }
+            flags: Flags {
+                dirty_count: Cell::new(0),
+                descendants: RefCell::new(vec![]),
+            },
         };
         let map = Incr {
             thunk: Rc::new(node),
         };
-        self.thunk.add_parent(map.thunk.clone().as_any());
+        self.thunk.add_descendant(map.thunk.clone().as_any());
         map
     }
-    pub fn map2<T2: Clone + 'static + Debug, R: Clone + 'static + Debug>(&self, other: &Incr<T2>, f: impl Fn(T, T2) -> R + 'static) -> Incr<R> {
+    pub fn map2<T2: Clone + 'static + Debug, R: Clone + 'static + Debug>(
+        &self,
+        other: &Incr<T2>,
+        f: impl Fn(T, T2) -> R + 'static,
+    ) -> Incr<R> {
         let value = f(self.value(), other.value());
         let map = Map2Node {
             one: self.clone().thunk,
             two: other.clone().thunk,
             mapper: f,
             value: RefCell::new(value),
-            flags: Flags { dirty_count: Cell::new(0), parents: RefCell::new(vec![]), }
+            flags: Flags {
+                dirty_count: Cell::new(0),
+                descendants: RefCell::new(vec![]),
+            },
         };
         let map = Incr {
             thunk: Rc::new(map),
         };
-        self.thunk.add_parent(map.thunk.clone().as_any());
+        self.thunk.add_descendant(map.thunk.clone().as_any());
         map
     }
     pub fn bind<R: Clone + 'static + Debug>(&self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
         let output = f(self.value());
+        let mut output = RefCell::new(output);
         let mapper = BindNode {
             input: self.clone().thunk,
             mapper: f,
-            output: RefCell::new(output),
-            flags: Flags { dirty_count: Cell::new(0), parents: RefCell::new(vec![]), }
+            output: output.clone(),
+            to_disconnect: RefCell::new(None),
+            flags: Flags {
+                dirty_count: Cell::new(0),
+                descendants: RefCell::new(vec![]),
+            },
         };
         let bind = Incr {
             thunk: Rc::new(mapper),
         };
-        self.thunk.add_parent(bind.thunk.clone().as_any());
+        // We add the bind as a descendant of self, so the BindNode is a descendant of the original
+        // incr.
+        self.thunk.add_descendant(bind.thunk.clone().as_any());
+        // But we also want it to be a descendant of whichever Incr returned by the mapper
+        // function.
+        output
+            .get_mut()
+            .thunk
+            .add_descendant(bind.thunk.clone().as_any());
         bind
     }
     pub fn stabilise(&self) {
@@ -297,11 +397,12 @@ impl<T: Clone + 'static + Debug> Var<T> {
     pub fn create(a: T) -> Self {
         let raw = Rc::new(RawValue {
             value: RefCell::new(a),
-            flags: Flags { dirty_count: Cell::new(0), parents: RefCell::new(vec![]), }
+            flags: Flags {
+                dirty_count: Cell::new(0),
+                descendants: RefCell::new(vec![]),
+            },
         });
-        let incr = Incr {
-            thunk: raw.clone(),
-        };
+        let incr = Incr { thunk: raw.clone() };
         Var { incr, raw }
     }
     pub fn set(&self, new_val: T) {
@@ -325,7 +426,10 @@ pub trait ShouldEmit {
     fn should_emit(&self, next_value: &Self) -> bool;
 }
 
-impl<T> ShouldEmit for T where T: PartialEq {
+impl<T> ShouldEmit for T
+where
+    T: PartialEq,
+{
     fn should_emit(&self, next_value: &Self) -> bool {
         self != next_value
     }

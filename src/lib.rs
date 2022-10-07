@@ -72,6 +72,7 @@ fn test_bind_if() {
     cond.stabilise();
     println!("{:?}", a_or_b);
     assert_eq!(a_or_b.value(), 10);
+    println!("setting b to 11");
     b.set(11);
     b.stabilise();
     println!("{:?}", a_or_b);
@@ -79,6 +80,21 @@ fn test_bind_if() {
     // TODO: what do you do when b is not connected, but it gets updated?
     // Do you dirty the bind_if node?
     // Does bind remember which is which somehow?
+    println!("setting cond to true");
+    cond.set(true);
+    cond.stabilise();
+    assert_eq!(a_or_b.value(), 5);
+    println!("setting b to 50");
+    b.set(50);
+    b.stabilise();
+    println!("setting cond to false");
+    cond.set(false);
+    cond.stabilise();
+    assert_eq!(a_or_b.value(), 50);
+    println!("setting b to 90");
+    b.set(90);
+    b.stabilise();
+    assert_eq!(a_or_b.value(), 90);
 }
 
 #[test]
