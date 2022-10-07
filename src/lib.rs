@@ -111,3 +111,20 @@ fn test_map() {
     println!("after stabilise {:?}", plus_five);
     assert_eq!(plus_five.value(), 15);
 }
+
+#[test]
+fn multi_input() {
+    let mut variables = vec![];
+    for _ in 0..10 {
+        variables.push(Var::create(1));
+    }
+    let incrs = variables.iter().map(|inp| inp.read()).collect();
+    let list_all = Incr::list_all(incrs);
+    println!("{:?}", list_all.value());
+    for var in variables.iter_mut().take(5) {
+        var.set(2);
+        var.stabilise();
+    }
+    println!("{:?}", list_all.value());
+    assert_eq!(&list_all.value(), &[2,2,2,2,2,1,1,1,1,1]);
+}

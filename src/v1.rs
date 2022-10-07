@@ -1,4 +1,23 @@
 #![allow(unused_variables)]
+//! This is version 1.
+//!
+//! We have dynamic incremental update graphs here, due to a pretty simple mechanism:
+//!
+//! 1. When you create a new node from an existing incremental node, e.g. via map, the new node
+//!    becomes a "descendant" of the original. This entails adding the new node to a list on the
+//!    parent node.
+//! 2. When you call stabilise on a node, it will walk through the entire DAG of its descendants.
+//!    It will do this in two passes at each level:
+//!
+//!    - First, adding +1 to the dirty count on each of its direct descendants, and recursively
+//!    stabilising that descendant node.
+//!    - Second, subtracting 1 from the dirty count on each of its direct descendants. If it
+//!    reaches 0, then it calls eval() on the descendant.
+//!
+//!    In this fashion, if you have 10,000 inputs and half of them are updated in one go, and you
+//!    then stabilise every one of those updated inputs, then you go through two passes where much
+//!    of the call graph is +5,000, and eventually gets back to zero and we re-evaluate. Those
+//!    dirty counts track whether a node has seen all the new values it's supposed to receive.
 
 use fmt::Debug;
 use std::any::Any;
@@ -11,6 +30,15 @@ type Descendant = Weak<dyn AnyThunk>;
 struct Flags {
     dirty_count: Cell<usize>,
     descendants: RefCell<Vec<Descendant>>,
+}
+
+impl Flags {
+    fn empty() -> Self {
+        Flags {
+            dirty_count: Cell::new(0),
+            descendants: RefCell::new(vec![]),
+        }
+    }
 }
 
 trait AnyThunk: Any + Debug {
@@ -38,6 +66,7 @@ trait AnyThunk: Any + Debug {
                 if val == 0 {
                     return;
                 }
+                println!("dirty count: {}", val);
                 val = val - 1;
                 desc.flags().dirty_count.set(val);
                 if val == 0 {
@@ -292,6 +321,62 @@ where
     }
 }
 
+struct ListAllNode<R> {
+    inputs: Vec<Incr<R>>,
+    output: RefCell<Vec<R>>,
+    prev: RefCell<Option<Vec<Incr<R>>>>,
+    flags: Flags,
+}
+
+impl<R> Debug for ListAllNode<R>
+where
+    R: Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ListAllNode")
+            .field("inputs", &self.inputs)
+            .field("flags.dirty_count", &self.flags.dirty_count.get())
+            .finish()
+    }
+}
+impl<R> AnyThunk for ListAllNode<R>
+where
+    R: Clone + 'static + Debug,
+{
+    fn eval(self: Rc<Self>) -> bool {
+        let output: Vec<R> = self.inputs.iter().map(|inp| inp.thunk.latest()).collect();
+        let mut o = self.output.borrow_mut();
+        *o = output;
+        true
+    }
+    fn reconnect(self: Rc<Self>) {
+        let mut prev = self.prev.borrow_mut();
+        if let Some(prev) = prev.take() {
+            for p in prev {
+                p.thunk.remove_descendant(self.clone().as_any());
+            }
+            for i in self.inputs.iter() {
+                i.thunk.add_descendant(self.clone().as_any());
+            }
+        }
+    }
+
+    fn flags(&self) -> &Flags {
+        &self.flags
+    }
+}
+
+impl<R: Clone + 'static + Debug> Thunk<Vec<R>> for ListAllNode<R> {
+    fn as_any(self: Rc<Self>) -> Descendant {
+        let weak = Rc::downgrade(&self);
+        weak as Descendant
+    }
+
+    fn latest(&self) -> Vec<R> {
+        self.output.borrow().clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Incr<T> {
     thunk: Input<T>,
@@ -339,16 +424,30 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             two: other.clone().thunk,
             mapper: f,
             value: RefCell::new(value),
-            flags: Flags {
-                dirty_count: Cell::new(0),
-                descendants: RefCell::new(vec![]),
-            },
+            flags: Flags::empty(),
         };
         let map = Incr {
             thunk: Rc::new(map),
         };
         self.thunk.add_descendant(map.thunk.clone().as_any());
         map
+    }
+    pub fn list_all(list: Vec<Incr<T>>) -> Incr<Vec<T>> {
+        let output = list.iter().map(|input| input.thunk.latest()).collect();
+        let cloned = list.clone();
+        let listall = ListAllNode {
+            inputs: list,
+            output: RefCell::new(output),
+            prev: RefCell::new(None),
+            flags: Flags::empty(),
+        };
+        let new = Incr {
+            thunk: Rc::new(listall),
+        };
+        for inp in cloned.iter() {
+            inp.thunk.add_descendant(new.thunk.clone().as_any());
+        }
+        new
     }
     pub fn bind<R: Clone + 'static + Debug>(&self, f: impl Fn(T) -> Incr<R> + 'static) -> Incr<R> {
         let output = f(self.value());
