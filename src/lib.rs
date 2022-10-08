@@ -1,9 +1,14 @@
-#![feature(coerce_unsized)]
 #[cfg(test)]
 use std::rc::Rc;
 use std::fmt::Debug;
 mod v1;
+mod v_pseudo_height;
+mod order;
 pub use v1::*;
+
+trait Invariant {
+    fn invariant(&self) -> bool;
+}
 
 #[allow(dead_code)]
 fn bind_if<T: Debug + Clone + 'static>(
