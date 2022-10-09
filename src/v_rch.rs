@@ -17,7 +17,7 @@ use std::rc::{Rc, Weak};
 
 use node::Input;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Incr<T> {
     node: Input<T>,
 }
@@ -177,7 +177,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BindNode")
-            .field("output", &self.rhs.borrow().as_ref().unwrap().value())
+            .field("output", &self.rhs.borrow().as_ref().map(|x| &x.node))
             .finish()
     }
 }
@@ -309,7 +309,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         *lhs_change_kind = node::Kind::BindLhsChange(bind.clone());
         main_incr
     }
-    pub fn value(&self) -> T {
+    pub(crate) fn value(&self) -> T {
         self.node.latest()
     }
     pub fn on_update(&self, callback: Box<dyn Fn(T)>) -> T {

@@ -47,20 +47,15 @@ impl<T: Debug + Clone + 'static> Var<T> {
                 t.num_var_sets.set(t.num_var_sets.get() + 1);
                 let mut value_slot = self.value.borrow_mut();
                 *value_slot = value;
-                println!(
-                    "set_at {:?}, stab_num {:?}",
-                    self.set_at.get(),
-                    t.stabilisation_num.get()
-                );
                 if self.set_at.get() < t.stabilisation_num.get() {
+                    println!(
+                        "variable set at t={:?}, current revision is t={:?}",
+                        self.set_at.get().0,
+                        t.stabilisation_num.get().0
+                    );
                     self.set_at.set(t.stabilisation_num.get());
                     let watch = self.node.clone();
                     debug_assert!(watch.is_stale());
-                    println!(
-                        "watch: is_nec {:?}, is_in_rch {:?}",
-                        watch.is_necessary(),
-                        watch.is_in_recompute_heap()
-                    );
                     if watch.is_necessary() && !watch.is_in_recompute_heap() {
                         println!(
                             "inserting var watch into recompute heap at height {:?}",

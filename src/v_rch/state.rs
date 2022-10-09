@@ -19,6 +19,8 @@ pub struct State {
     pub(crate) num_nodes_recomputed: Cell<usize>,
     pub(crate) num_nodes_changed: Cell<usize>,
     pub(crate) num_nodes_became_necessary: Cell<usize>,
+    pub(crate) num_nodes_became_unnecessary: Cell<usize>,
+    pub(crate) num_nodes_invalidated: Cell<usize>,
     pub(crate) new_observers: Rc<RefCell<Vec<WeakObserver>>>,
     pub(crate) all_observers: Rc<RefCell<Vec<WeakObserver>>>,
     pub(crate) current_scope: RefCell<Scope>,
@@ -44,6 +46,8 @@ impl State {
             num_nodes_recomputed: Cell::new(0),
             num_nodes_changed: Cell::new(0),
             num_nodes_became_necessary: Cell::new(0),
+            num_nodes_became_unnecessary: Cell::new(0),
+            num_nodes_invalidated: Cell::new(0),
             status: Cell::new(IncrStatus::NotStabilising),
             new_observers: Rc::new(RefCell::new(Vec::new())),
             all_observers: Rc::new(RefCell::new(Vec::new())),
@@ -164,5 +168,9 @@ impl State {
             }
         }
         self.stabilise_end();
+    }
+    pub(crate) fn propagate_invalidity(&self) {
+        // todo!();
+        eprintln!("WARNING: propagate_invalidity not implemented");
     }
 }
