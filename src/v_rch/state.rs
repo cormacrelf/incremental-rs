@@ -1,7 +1,8 @@
 use super::node::PackedNode;
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
-use super::node::{Kind, Node, Scope};
+use super::node::{Kind, Node};
+use super::scope::Scope;
 use super::var::Var;
 use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
@@ -58,19 +59,22 @@ impl State {
     pub fn var<T: Debug + Clone + 'static>(self: &Rc<Self>, value: T) -> public::Var<T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.clone(),
-            Scope::Top,
-            Kind::Var(Weak::new()),
+            self.current_scope(),
+            Kind::Uninitialised,
         )
         .into_rc();
         let var = Rc::new(Var {
             state: self.clone(),
             set_at: Cell::new(self.stabilisation_num.get()),
             value: RefCell::new(value),
-            node,
+            node: RefCell::new(Some(node)),
         });
         {
-            let mut kind = var.node.kind.borrow_mut();
-            *kind = Kind::Var(Rc::downgrade(&var));
+            let node = var.node.borrow();
+
+            let n = node.as_ref().expect("we just created var's node as Some");
+            let mut kind = n.kind.borrow_mut();
+            *kind = Kind::Var(var.clone());
         }
         public::Var::new(var)
     }

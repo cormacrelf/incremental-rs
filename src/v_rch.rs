@@ -3,11 +3,13 @@
 mod internal_observer;
 mod node;
 mod recompute_heap;
+mod scope;
 mod stabilisation_num;
 mod state;
 mod var;
 
-use self::node::{ErasedNode, Node, NodeGenerics, Scope};
+use self::node::{ErasedNode, Node, NodeGenerics};
+use self::scope::Scope;
 use fmt::Debug;
 use std::cell::RefCell;
 use std::fmt;
@@ -308,6 +310,10 @@ impl<T: Clone + 'static + Debug> Incr<T> {
     }
 
     pub(crate) fn value(&self) -> T {
+        self.node.latest()
+    }
+
+    pub(crate) fn value_opt(&self) -> T {
         self.node.latest()
     }
 

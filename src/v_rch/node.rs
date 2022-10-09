@@ -1,6 +1,7 @@
 // use enum_dispatch::enum_dispatch;
 
 use super::internal_observer::ErasedObserver;
+use super::scope::Scope;
 use super::{state::State, var::Var};
 use super::{BindNode, BindScope, CutoffNode, Incr, Map2Node, MapNode};
 use core::fmt::Debug;
@@ -11,36 +12,25 @@ use std::{
     rc::{Rc, Weak},
 };
 
-#[derive(Debug)]
-pub struct NodeId;
+#[derive(Debug, Copy, Clone)]
+pub struct NodeId(usize);
 impl NodeId {
     fn next() -> Self {
-        NodeId
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum Scope {
-    Top,
-    Bind(Weak<dyn BindScope>),
-}
-
-impl Scope {
-    pub(crate) fn height(&self) -> i32 {
-        match self {
-            Self::Top => 0,
-            Self::Bind(weak) => {
-                let Some(strong) = weak.upgrade() else { panic!() };
-                strong.height()
-            }
+        thread_local! {
+            static NODE_ID: Cell<usize> = Cell::new(0);
         }
+
+        NODE_ID.with(|x| {
+            let next = x.get() + 1;
+            x.set(next);
+            NodeId(next)
+        })
     }
 }
 
 /// Needs a better name but ok
 #[derive(Debug)]
 pub struct NodeInner {
-    pub id: NodeId,
     pub state: Rc<State>,
     // cutoff
     // num_on_update_handlers
@@ -59,6 +49,7 @@ pub struct NodeInner {
 }
 
 pub(crate) struct Node<G: NodeGenerics> {
+    pub(crate) id: NodeId,
     pub(crate) inner: RefCell<NodeInner>,
     pub(crate) kind: RefCell<Kind<G>>,
     pub(crate) value_opt: RefCell<Option<G::R>>,
@@ -76,15 +67,18 @@ pub type Input<R> = Rc<dyn Incremental<R>>;
 pub trait Incremental<R>: ErasedNode + Debug {
     fn as_input(self: Rc<Self>) -> Input<R>;
     fn latest(&self) -> R;
+    fn value_opt(&self) -> Option<R>;
 }
 
 impl<G: NodeGenerics + 'static> Incremental<G::R> for Node<G> {
     fn as_input(self: Rc<Self>) -> Input<G::R> {
-        let rc = self.clone();
-        rc as Input<G::R>
+        self as Input<G::R>
     }
     fn latest(&self) -> G::R {
-        self.value()
+        self.value_opt.borrow().clone().unwrap()
+    }
+    fn value_opt(&self) -> Option<G::R> {
+        self.value_opt.borrow().clone()
     }
 }
 
@@ -194,7 +188,8 @@ impl NodeInner {
 impl<G: NodeGenerics + 'static> Debug for Node<G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
-            .field("value_opt", &self.value_opt)
+            .field("id", &self.id)
+            .field("value_opt", &self.value_opt.borrow())
             .field("height", &self.height.get())
             .field("kind", &self.kind.borrow())
             // .field("inner", &self.inner)
@@ -257,6 +252,11 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         debug_assert!(parent.is_necessary());
         self.add_parent_without_adjusting_heights(child_index, parent_weak.clone());
         if self.height() >= parent.height() {
+            println!(
+                "self.height() = {:?}, parent.height() = {:?}",
+                self.height(),
+                parent.height()
+            );
             todo!("Adjust_heights_heap.adjust_heights t.adjust_heights_heap t.recompute_heap ~child ~parent");
         }
         self.state().propagate_invalidity();
@@ -275,7 +275,6 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         match &*k {
             Kind::Invalid => panic!(),
             Kind::Var(var) => {
-                let Some(var) = var.upgrade() else { return false };
                 let set_at = var.set_at.get();
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
@@ -311,13 +310,10 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         self.is_necessary() && self.is_stale()
     }
     fn became_necessary(&self) {
-        // if Node.is_valid node && not (Scope.is_necessary node.created_in)
-        //   then
-        //     failwiths
-        //       ~here:[%here]
-        //       "Trying to make a node necessary whose defining bind is not necessary"
-        //       node
-        //       [%sexp_of: _ Node.t];
+        println!("became_necessary: {:?}", self);
+        if self.is_valid() && !self.created_in.is_necessary() {
+            panic!("trying to make a node necessary whose defining bind is not necessary");
+        }
         let t = self.state();
         t.num_nodes_became_necessary
             .set(t.num_nodes_became_necessary.get() + 1);
@@ -344,7 +340,8 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         debug_assert!(self.is_necessary());
         if self.is_stale() {
             let mut rch = t.recompute_heap.borrow_mut();
-            rch.insert(self.clone().weak());
+            rch.insert(self.weak());
+            println!("===> added self(id={:?}) to rch", self.id);
         }
         println!("became_necessary(post): {:?}", self);
     }
@@ -415,11 +412,13 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
         self.recomputed_at.set(t.stabilisation_num.get());
         let mut k = self.kind.borrow_mut();
+        let id = self.id;
+        let height = self.height();
         match &mut *k {
             Kind::Var(var) => {
-                let Some(var): Option<Rc<Var<G::R>>> = var.upgrade() else { return };
                 let value = var.value.borrow();
                 let v = value.clone();
+                println!("-- recomputing Var(id={id:?}) <- {v:?}");
                 drop(value);
                 self.maybe_change_value(v);
             }
@@ -427,6 +426,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 let map: &mut MapNode<G::F1, G::I1, G::R> = map;
                 let input = map.input.latest();
                 let new_value = (map.mapper)(input);
+                println!("-- recomputing Map(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
             Kind::Map2(map2) => {
@@ -434,6 +434,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 let i1 = map2.one.latest();
                 let i2 = map2.two.latest();
                 let new_value = (map2.mapper)(i1, i2);
+                println!("-- recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
             Kind::BindLhsChange(bind) => {
@@ -444,8 +445,10 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 let rhs = {
                     let old_scope = self.state().current_scope();
                     *self.state().current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
+                    println!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
                     let rhs = (bind.mapper)(lhs);
                     *self.state().current_scope.borrow_mut() = old_scope;
+                    println!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
                     rhs
                 };
                 let mut old_rhs = Some(rhs.clone());
@@ -481,7 +484,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
             }
             Kind::BindMain(bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
-                println!("copy_child from {:?}", rhs.node);
+                println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
                 self.copy_child(rhs.node);
             }
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
@@ -550,9 +553,9 @@ impl<G: NodeGenerics + 'static> Node<G> {
     }
     pub fn create(state: Rc<State>, created_in: Scope, kind: Kind<G>) -> Self {
         Node {
+            id: NodeId::next(),
             weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
-                id: NodeId::next(),
                 state,
                 prev_in_recompute_heap: None,
                 next_in_recompute_heap: None,
@@ -676,7 +679,7 @@ pub trait NodeGenerics {
 pub(crate) enum Kind<G: NodeGenerics> {
     Invalid,
     Uninitialised,
-    Var(Weak<Var<G::R>>),
+    Var(Rc<Var<G::R>>),
     Map(MapNode<G::F1, G::I1, G::R>),
     Map2(super::Map2Node<G::F2, G::I1, G::I2, G::R>),
     BindLhsChange(Rc<super::BindNode<G::B1, G::I1, G::R>>),

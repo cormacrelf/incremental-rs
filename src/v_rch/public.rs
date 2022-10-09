@@ -2,9 +2,10 @@ use core::fmt::Debug;
 use std::rc::Rc;
 
 use super::internal_observer::InternalObserver;
+pub use super::internal_observer::ObserverError;
 pub use super::state::State;
-pub use super::Incr;
 use super::var::Var as InternalVar;
+pub use super::Incr;
 
 #[derive(Clone)]
 pub struct Observer<T> {
@@ -16,8 +17,12 @@ impl<T: Debug + Clone + 'static> Observer<T> {
         Self { internal }
     }
     #[inline]
-    pub fn value(&self) -> T {
+    pub fn value(&self) -> Result<T, ObserverError> {
         self.internal.value()
+    }
+    #[inline]
+    pub fn value_unwrap(&self) -> T {
+        self.internal.value().unwrap()
     }
 }
 
@@ -42,5 +47,17 @@ impl<T: Debug + Clone + 'static> Var<T> {
     #[inline]
     pub fn watch(&self) -> Incr<T> {
         self.internal.watch()
+    }
+}
+
+impl<T: Debug + Clone + 'static> Drop for Var<T> {
+    fn drop(&mut self) {
+        // drop the reference to the node.
+        // a reference may still be held by the .watch() Incr. but we only needed it in
+        // order to create new .watch()s, and we have been dropped. so we're done.
+        //
+        // Does Node itself still need var's reference to itself? no. So it's fine for
+        // InternalVar to no longer store Rc<Node>.
+        *self.internal.node.borrow_mut() = None;
     }
 }

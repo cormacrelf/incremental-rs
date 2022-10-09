@@ -24,7 +24,7 @@ pub struct Var<T: Debug + Clone + 'static> {
     pub(crate) state: Rc<State>,
     pub(crate) value: RefCell<T>,
     pub(crate) set_at: Cell<StabilisationNum>,
-    pub(crate) node: Rc<Node<VarGenerics<T>>>,
+    pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
 }
 
 impl<T: Debug + Clone + 'static> Debug for Var<T> {
@@ -41,7 +41,10 @@ impl<T: Debug + Clone + 'static> Var<T> {
         self.value.borrow().clone()
     }
     pub fn set(&self, value: T) {
-        let t = self.node.inner().borrow().state.clone();
+        let Some(watch) = self.node.borrow().clone() else {
+            panic!("uninitialised var");
+        };
+        let t = watch.inner().borrow().state.clone();
         match t.status.get() {
             IncrStatus::NotStabilising => {
                 t.num_var_sets.set(t.num_var_sets.get() + 1);
@@ -54,7 +57,6 @@ impl<T: Debug + Clone + 'static> Var<T> {
                         t.stabilisation_num.get().0
                     );
                     self.set_at.set(t.stabilisation_num.get());
-                    let watch = self.node.clone();
                     debug_assert!(watch.is_stale());
                     if watch.is_necessary() && !watch.is_in_recompute_heap() {
                         println!(
@@ -71,7 +73,34 @@ impl<T: Debug + Clone + 'static> Var<T> {
     }
     pub fn watch(&self) -> Incr<T> {
         Incr {
-            node: self.node.clone().as_input(),
+            node: self
+                .node
+                .borrow()
+                .clone()
+                .expect("var was not initialised")
+                .as_input(),
         }
     }
 }
+
+#[cfg(test)]
+impl<T: Debug + Clone + 'static> Drop for Var<T> {
+    fn drop(&mut self) {
+        println!(
+            "$$$$$$$$$ Dropping var with id {:?}",
+            self.node.borrow().as_ref().map(|n| n.id)
+        );
+    }
+}
+
+#[test]
+fn var_drop() {
+    let incr = State::new();
+    println!("before watch created");
+    let w = incr.var(10).watch();
+    println!("watch created");
+    let o = w.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(10));
+}
+

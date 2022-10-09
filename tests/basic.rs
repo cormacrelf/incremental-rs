@@ -1,4 +1,4 @@
-use incremental::State;
+use incremental::{ObserverError, State};
 
 #[test]
 fn testit() {
@@ -7,7 +7,7 @@ fn testit() {
     var.set(10);
     let observer = var.watch().observe();
     incr.stabilise();
-    assert_eq!(observer.value(), 10);
+    assert_eq!(observer.value(), Ok(10));
 }
 
 #[test]
@@ -18,10 +18,10 @@ fn test_map() {
     let mapped = watch.map(|x| dbg!(dbg!(x) * 10));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), 50);
+    assert_eq!(observer.value(), Ok(50));
     var.set(3);
     incr.stabilise();
-    assert_eq!(observer.value(), 30);
+    assert_eq!(observer.value(), Ok(30));
 }
 
 #[test]
@@ -34,13 +34,13 @@ fn test_map2() {
     let mapped = a_.map2(&b_, |a, b| dbg!(dbg!(a) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), 13);
+    assert_eq!(observer.value(), Ok(13));
     // each of these queues up the watch node into the recompute heap.
     a.set(3);
     b.set(9);
     // during stabilisation the map node gets inserted into the recompute heap
     incr.stabilise();
-    assert_eq!(observer.value(), 12);
+    assert_eq!(observer.value(), Ok(12));
 }
 #[test]
 fn test_map_map2() {
@@ -53,13 +53,13 @@ fn test_map_map2() {
     let mapped = map_left.map2(&b_, |left, b| dbg!(dbg!(left) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), 58);
+    assert_eq!(observer.value(), Ok(58));
     // each of these queues up the watch node into the recompute heap.
     a.set(3);
     b.set(9);
     // during stabilisation the map node gets inserted into the recompute heap
     incr.stabilise();
-    assert_eq!(observer.value(), 39);
+    assert_eq!(observer.value(), Ok(39));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn test_bind_existing() {
         });
     let obs = bound.observe();
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), 5);
+    assert_eq!(dbg!(obs.value()), Ok(5));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -97,7 +97,7 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     b.set(50);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), 50);
+    assert_eq!(dbg!(obs.value()), Ok(50));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -105,7 +105,7 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     c.set(99);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), 50);
+    assert_eq!(dbg!(obs.value()), Ok(50));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -114,5 +114,39 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     choose.set(Choose::C);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), 99);
+    assert_eq!(dbg!(obs.value()), Ok(99));
+}
+
+#[test]
+fn observer_ugly() {
+    let incr = State::new();
+    let lhs = incr.var(true);
+    let unused = incr.var(2).watch();
+    let state = incr.clone();
+    let v9 = state.var(9);
+    let bound = lhs
+        .watch()
+        .bind(move |l| if l { v9.watch() } else { unused.clone() });
+    let o = bound.observe();
+
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(9));
+
+    let unrelated = incr.var(100);
+    // make sure to add unrelated to recompute heap first
+    let _o = unrelated.watch().observe();
+
+    let var = incr.var(10);
+    let o1 = var.watch().map(|a| a + 10).observe();
+    assert_eq!(o1.value(), Err(ObserverError::NeverStabilised));
+
+    let map = unrelated.watch().map(move |_x| o.value());
+    let o2 = map.observe();
+
+    incr.stabilise();
+    unrelated.set(700);
+    lhs.set(false);
+    assert_eq!(o2.value(), Ok(Ok(9)));
+    incr.stabilise();
+    assert_eq!(o2.value(), Ok(Ok(9)));
 }
