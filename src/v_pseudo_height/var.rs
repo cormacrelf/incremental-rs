@@ -56,7 +56,16 @@ impl<T: Debug + Clone + 'static> Var<T> {
                     self.set_at.set(t.stabilisation_num.get());
                     let watch = self.node.clone();
                     debug_assert!(watch.is_stale());
+                    println!(
+                        "watch: is_nec {:?}, is_in_rch {:?}",
+                        watch.is_necessary(),
+                        watch.is_in_recompute_heap()
+                    );
                     if watch.is_necessary() && !watch.is_in_recompute_heap() {
+                        println!(
+                            "inserting var watch into recompute heap at height {:?}",
+                            watch.height()
+                        );
                         let mut heap = t.recompute_heap.borrow_mut();
                         heap.insert(watch.weak());
                     }

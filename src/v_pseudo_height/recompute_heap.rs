@@ -24,10 +24,8 @@ impl RecomputeHeap {
     }
 
     pub fn insert(&mut self, weak_node: WeakNode) {
-        println!("inserting node {:?}", weak_node);
         let Some(node) = weak_node.upgrade() else { return };
         let inner = node.inner();
-        let mut i = inner.borrow_mut();
         let h = node.height();
         let Some(q) = self.get_queue(h) else { return };
         drop(q);
@@ -80,6 +78,12 @@ impl RecomputeHeap {
             queue = self.queues.get_mut(self.height_lower_bound as usize)?;
             debug_assert!(self.height_lower_bound as usize <= len);
         }
-        queue.pop_front().flatten()
+        let removed = queue.pop_front().flatten();
+        if let Some(r) = &removed {
+            if let Some(upgraded) = r.upgrade() {
+                upgraded.height_in_recompute_heap().set(-1);
+            }
+        }
+        removed
     }
 }

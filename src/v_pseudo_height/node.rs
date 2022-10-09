@@ -48,14 +48,14 @@ pub struct NodeInner {
     // pub(crate) num_parents: i32,
     // parent0
     // parent1_and_beyond
-    pub(crate) parents: Vec<Option<WeakNode>>,
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
     // next_node_in_same_scope
     pub prev_in_recompute_heap: Option<PackedNode>,
     pub next_in_recompute_heap: Option<PackedNode>,
-    pub(crate) observers: Vec<Weak<dyn Observer>>,
     pub(crate) force_necessary: bool,
+    pub(crate) parents: Vec<Option<WeakNode>>,
+    pub(crate) observers: Vec<Weak<dyn Observer>>,
 }
 
 pub(crate) struct Node<G: NodeGenerics> {
@@ -68,6 +68,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     pub(crate) created_in: Scope,
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
+    pub(crate) weak_self: Weak<dyn ErasedNode>,
 }
 
 pub type Input<R> = Rc<dyn Incremental<R>>;
@@ -90,36 +91,41 @@ impl<G: NodeGenerics + 'static> Incremental<G::R> for Node<G> {
 pub type PackedNode = Rc<dyn ErasedNode>;
 pub type WeakNode = Weak<dyn ErasedNode>;
 
+// pub type ParentNode<I> = Weak<dyn ParentNode<I>>;
+// pub trait ParentNode<I>: ErasedNode {
+//     fn child_changed(&self, child: Weak<dyn ErasedNode>, child_index: i32);
+// }
+
 pub trait ErasedNode: Debug {
     fn is_valid(&self) -> bool;
     fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn set_height(&mut self, height: i32);
-    fn add_parent_without_adjusting_heights(self: Rc<Self>, child_index: i32, parent: WeakNode);
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent: WeakNode);
     fn is_stale(&self) -> bool;
+    fn is_stale_with_respect_to_a_child(&self) -> bool;
+    fn edge_is_stale(&self, parent: WeakNode) -> bool;
     fn is_necessary(&self) -> bool;
-    fn became_necessary(self: Rc<Self>);
+    fn became_necessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
     fn inner(&self) -> &RefCell<NodeInner>;
     fn state(&self) -> Rc<State>;
-    fn weak(self: Rc<Self>) -> Weak<dyn ErasedNode>;
-    fn packed(self: Rc<Self>) -> Rc<dyn ErasedNode>;
+    fn weak(&self) -> Weak<dyn ErasedNode>;
+    fn packed(&self) -> Rc<dyn ErasedNode>;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, PackedNode) -> ());
+    fn recomputed_at(&self) -> &Cell<StabilisationNum>;
 }
 
 impl NodeInner {
     fn is_necessary(&self) -> bool {
-        println!(
-            "is_necessary: num_parents {:?}, observers len {:?} force_nec {:?}",
-            self.num_parents(),
-            self.observers.len(),
-            self.force_necessary
-        );
         self.num_parents() > 0
             || !self.observers.is_empty()
             // || kind is freeze
             || self.force_necessary
+    }
+    fn parents(&self) -> &[Option<WeakNode>] {
+        &self.parents[..]
     }
     fn num_parents(&self) -> usize {
         self.parents.len()
@@ -145,12 +151,14 @@ impl<G: NodeGenerics + 'static> Debug for Node<G> {
     }
 }
 impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
-    fn weak(self: Rc<Self>) -> Weak<dyn ErasedNode> {
-        let weak = Rc::downgrade(&self);
-        weak as Weak<dyn ErasedNode>
+    fn weak(&self) -> Weak<dyn ErasedNode> {
+        self.weak_self.clone() as Weak<dyn ErasedNode>
     }
-    fn packed(self: Rc<Self>) -> PackedNode {
-        self as Rc<dyn ErasedNode>
+    fn packed(&self) -> PackedNode {
+        let Some(strong) = self.weak_self.upgrade() else {
+            panic!("Node not initialised properly (did not call into_rc())");
+        };
+        strong as Rc<dyn ErasedNode>
     }
     fn inner(&self) -> &RefCell<NodeInner> {
         &self.inner
@@ -175,14 +183,14 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         // TODO: checks
         self.height.set(height);
     }
-    fn add_parent_without_adjusting_heights(self: Rc<Self>, child_index: i32, parent: WeakNode) {
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent: WeakNode) {
         println!("add_parent_without_adjusting_heights");
         debug_assert!({
             let Some(p) = parent.upgrade() else { panic!() };
             p.is_necessary()
         });
+        let was_necessary = self.is_necessary();
         let mut child_i = self.inner.borrow_mut();
-        let was_necessary = child_i.is_necessary();
         child_i.add_parent(child_index, parent);
         drop(child_i);
         if !self.is_valid() {
@@ -203,15 +211,34 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
+            Kind::Map(_) | Kind::Map2(_) | Kind::BindLhsChange(_) | Kind::BindMain(_) => {
+                self.recomputed_at.get() == StabilisationNum(-1)
+                    || self.is_stale_with_respect_to_a_child()
+            }
             // wrong
             _ => false,
         }
+    }
+    fn is_stale_with_respect_to_a_child(&self) -> bool {
+        let mut is_stale = false;
+        let parent = self.weak();
+        // TODO: make a version of try_fold for this, to short-circuit it
+        self.foreach_child(&mut |ix, child| {
+            if child.edge_is_stale(parent.clone()) {
+                is_stale = true;
+            }
+        });
+        is_stale
+    }
+    fn edge_is_stale(&self, parent: WeakNode) -> bool {
+        let Some(parent) = parent.upgrade() else { return false };
+        self.changed_at.get() > parent.recomputed_at().get()
     }
     fn is_necessary(&self) -> bool {
         let i = self.inner().borrow();
         i.is_necessary() // || kind is freeze
     }
-    fn became_necessary(self: Rc<Self>) {
+    fn became_necessary(&self) {
         println!("became_necessary");
         // if Node.is_valid node && not (Scope.is_necessary node.created_in)
         //   then
@@ -234,9 +261,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
             self.height.get()
         };
         self.foreach_child(&mut |index, child| {
-            child
-                .clone()
-                .add_parent_without_adjusting_heights(index, weak.clone());
+            child.add_parent_without_adjusting_heights(index, weak.clone());
             {
                 if child.height() >= h {
                     h = child.height() + 1;
@@ -269,6 +294,9 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
     }
     fn is_in_recompute_heap(&self) -> bool {
         self.height_in_recompute_heap.get() >= 0
+    }
+    fn recomputed_at(&self) -> &Cell<StabilisationNum> {
+        &self.recomputed_at
     }
     fn recompute(&self) {
         let t = self.inner.borrow().state.clone();
@@ -316,8 +344,15 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
 }
 
 impl<G: NodeGenerics + 'static> Node<G> {
+    pub fn into_rc(mut self) -> Rc<Self> {
+        Rc::<Self>::new_cyclic(|weak| {
+            self.weak_self = weak.clone();
+            self
+        })
+    }
     pub fn create(state: Rc<State>, created_in: Scope, kind: Kind<G>) -> Self {
         Node {
+            weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
                 id: NodeId::next(),
                 state,
@@ -352,8 +387,29 @@ impl<G: NodeGenerics + 'static> Node<G> {
             .state
             .num_nodes_changed
             .set(inner.state.num_nodes_changed.get() + 1);
-        // self.changed_at = self.state.stabilization_num;
-        // self.state.num_nodes_changed = self.state.num_nodes_changed + 1;
+        /* if node.num_on_update_handlers > 0
+        then (
+        node.old_value_opt <- old_value_opt;
+        handle_after_stabilization node); */
+        let i = self.inner.borrow();
+        if i.num_parents() >= 1 {
+            for (parent_index, parent) in i
+                .parents()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, x)| x.as_ref().and_then(|a| a.upgrade()).map(|a| (i, a)))
+            {
+                if !parent.is_in_recompute_heap() {
+                    println!(
+                        "inserting parent into recompute heap at height {:?}",
+                        parent.height()
+                    );
+                    let t = self.state();
+                    let mut rch = t.recompute_heap.borrow_mut();
+                    rch.insert(parent.clone().weak());
+                }
+            }
+        }
     }
 }
 
@@ -408,5 +464,65 @@ mod test {
         incr.stabilise();
         assert_eq!(watch.value(), 10);
         assert_eq!(observer.value(), 10);
+    }
+    #[test]
+    fn test_map() {
+        let incr = State::new();
+        let var = incr.var(5);
+        let watch = var.watch();
+        let mapped = watch.map(|x| dbg!(dbg!(x) * 10));
+        let observer = mapped.observe();
+        incr.stabilise();
+        assert_eq!(watch.value(), 5);
+        assert_eq!(observer.value(), 50);
+        var.set(3);
+        incr.stabilise();
+        assert_eq!(watch.value(), 3);
+        assert_eq!(observer.value(), 30);
+    }
+    #[test]
+    fn test_map2() {
+        let incr = State::new();
+        let a = incr.var(5);
+        let b = incr.var(8);
+        let a_ = a.watch();
+        let b_ = b.watch();
+        let mapped = a_.map2(&b_, |a, b| dbg!(dbg!(a) + dbg!(b)));
+        let observer = mapped.observe();
+        incr.stabilise();
+        assert_eq!(a_.value(), 5);
+        assert_eq!(b_.value(), 8);
+        assert_eq!(observer.value(), 13);
+        // each of these queues up the watch node into the recompute heap.
+        a.set(3);
+        b.set(9);
+        // during stabilisation the map node gets inserted into the recompute heap
+        incr.stabilise();
+        assert_eq!(a_.value(), 3);
+        assert_eq!(b_.value(), 9);
+        assert_eq!(observer.value(), 12);
+    }
+    #[test]
+    fn test_map_map2() {
+        let incr = State::new();
+        let a = incr.var(5);
+        let b = incr.var(8);
+        let a_ = a.watch();
+        let b_ = b.watch();
+        let map_left = a_.map(|a| dbg!(a * 10));
+        let mapped = map_left.map2(&b_, |left, b| dbg!(dbg!(left) + dbg!(b)));
+        let observer = mapped.observe();
+        incr.stabilise();
+        assert_eq!(a_.value(), 5);
+        assert_eq!(b_.value(), 8);
+        assert_eq!(observer.value(), 58);
+        // each of these queues up the watch node into the recompute heap.
+        a.set(3);
+        b.set(9);
+        // during stabilisation the map node gets inserted into the recompute heap
+        incr.stabilise();
+        assert_eq!(a_.value(), 3);
+        assert_eq!(b_.value(), 9);
+        assert_eq!(observer.value(), 39);
     }
 }

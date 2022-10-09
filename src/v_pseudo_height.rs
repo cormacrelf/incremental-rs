@@ -30,7 +30,6 @@ where
     one: Input<T1>,
     two: Input<T2>,
     mapper: F,
-    value: RefCell<R>,
 }
 
 impl<F, T1, T2, R> NodeGenerics for Map2Node<F, T1, T2, R>
@@ -55,9 +54,7 @@ where
     R: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Map2Node")
-            .field("value", &self.value)
-            .finish()
+        f.debug_struct("Map2Node").finish()
     }
 }
 
@@ -67,7 +64,6 @@ where
 {
     input: Input<T>,
     mapper: F,
-    value: RefCell<R>,
 }
 
 impl<F, T, R> NodeGenerics for MapNode<F, T, R>
@@ -91,9 +87,7 @@ where
     R: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("MapNode")
-            .field("value", &self.value)
-            .finish()
+        f.debug_struct("MapNode").finish()
     }
 }
 
@@ -225,11 +219,9 @@ impl<T: Clone + 'static + Debug> Incr<T> {
     //     Incr { node: raw }
     // }
     pub fn map<R: Clone + 'static + Debug, F: Fn(T) -> R + 'static>(&self, f: F) -> Incr<R> {
-        let value = f(self.value());
         let mapper = MapNode {
             input: self.clone().node,
             mapper: f,
-            value: RefCell::new(value),
         };
         let state = self.node.state();
         let node = Node::<MapNode<F, T, R>>::create(
@@ -237,10 +229,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map(mapper),
         );
-        let map = Incr {
-            node: Rc::new(node),
-        };
-        // self.node.add_descendant(map.node.clone().as_any());
+        let map = Incr { node: node.into_rc() };
         map
     }
     pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
@@ -249,12 +238,10 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         R: Clone + 'static + Debug,
         F: Fn(T, T2) -> R + 'static,
     {
-        let value = f(self.value(), other.value());
         let mapper = Map2Node {
             one: self.clone().node,
             two: other.clone().node,
             mapper: f,
-            value: RefCell::new(value),
         };
         let state = self.node.state();
         let node = Node::<Map2Node<F, T, T2, R>>::create(
@@ -262,10 +249,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map2(mapper),
         );
-        let map = Incr {
-            node: Rc::new(node),
-        };
-        // self.node.add_descendant(map.node.clone().as_any());
+        let map = Incr { node: node.into_rc() };
         map
     }
     // pub fn list_all(list: Vec<Incr<T>>) -> Incr<Vec<T>> {
@@ -290,16 +274,18 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         F: Fn(T) -> Incr<R> + 'static,
     {
         let state = self.node.state();
-        let lhs_change = Rc::new(Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
+        let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
             state.clone(),
             state.current_scope(),
             node::Kind::Uninitialised,
-        ));
-        let main = Rc::new(Node::<BindNodeGenerics<F, T, R>>::create(
+        )
+        .into_rc();
+        let main = Node::<BindNodeGenerics<F, T, R>>::create(
             self.node.state(),
             Scope::Top,
             node::Kind::Uninitialised,
-        ));
+        )
+        .into_rc();
         let bind = Rc::new(BindNode {
             lhs: self.clone().node,
             mapper: f,
@@ -343,9 +329,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope(),
             node::Kind::Cutoff(cutoff),
         );
-        Incr {
-            node: Rc::new(node),
-        }
+        Incr { node: node.into_rc() }
     }
 }
 

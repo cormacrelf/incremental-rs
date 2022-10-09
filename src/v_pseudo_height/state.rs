@@ -56,12 +56,13 @@ impl State {
             self.clone(),
             Scope::Top,
             Kind::Var(Weak::new()),
-        );
+        )
+        .into_rc();
         let var = Rc::new(Var {
             state: self.clone(),
             set_at: Cell::new(self.stabilisation_num.get()),
             value: RefCell::new(value),
-            node: Rc::new(node),
+            node,
         });
         {
             let mut kind = var.node.kind.borrow_mut();
@@ -102,7 +103,6 @@ impl State {
 
     fn add_new_observers(&self) {
         let mut no = self.new_observers.borrow_mut();
-        println!("add_new_observers: {:?}", no);
         let mut ao = self.all_observers.borrow_mut();
         for weak in no.drain(..) {
             let Some(obs) = weak.upgrade() else { continue };
@@ -114,7 +114,6 @@ impl State {
                     obs.state().set(ObState::InUse);
                     let src: PackedNode = obs.observing();
                     let was_necessary = src.is_necessary();
-                    println!("observed was necessary?: {:?}", was_necessary);
                     {
                         let inner = src.inner();
                         let mut i = inner.borrow_mut();
@@ -131,7 +130,6 @@ impl State {
     }
     fn remove_disallowed_observers(&self) {}
     fn stabilise_start(&self) {
-        println!("stabilise_start");
         self.status.set(IncrStatus::Stabilising);
         self.add_new_observers();
         self.remove_disallowed_observers();
@@ -155,8 +153,12 @@ impl State {
         let mut stdout = std::io::stdout();
         stdout.flush().unwrap();
         self.stabilise_start();
-        let mut rch = self.recompute_heap.borrow_mut();
-        while let Some(min) = rch.remove_min() {
+        while let Some(min) = {
+            // we need to access rch in recompute() > maybe_change_value()
+            // so fine grained access here
+            let mut rch = self.recompute_heap.borrow_mut();
+            rch.remove_min()
+        } {
             if let Some(node) = min.upgrade() {
                 node.recompute();
             }
