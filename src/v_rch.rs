@@ -7,13 +7,14 @@ mod stabilisation_num;
 mod state;
 mod var;
 
-use self::internal_observer::Observer;
-use self::node::Incremental;
 use self::node::{ErasedNode, Node, NodeGenerics, Scope};
 use fmt::Debug;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
+
+pub mod public;
+use public::Observer;
 
 use node::Input;
 
@@ -188,14 +189,6 @@ pub(crate) struct ListAllNode<R> {
     prev: RefCell<Option<Vec<Incr<R>>>>,
 }
 
-// impl<R: Debug + Clone + 'static> NodeGenerics<R> for ListAllNode<R> {
-//     type I1 = Vec<Incr<R>>;
-//     type I2 = ();
-//     type F1 = fn(Self::I1) -> R;
-//     type F2 = fn(Self::I1, Self::I2) -> R;
-//     type B1 = fn(Self::I1) -> Incr<R>;
-// }
-
 impl<R> Debug for ListAllNode<R>
 where
     R: Debug,
@@ -207,7 +200,7 @@ where
     }
 }
 impl<T: Clone + 'static + Debug> Incr<T> {
-    pub fn ptr_eq(&self, other: &Incr<T>) -> bool {
+    pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
         Rc::ptr_eq(&self.node, &other.node)
     }
     // pub fn new(value: T) -> Self {
@@ -217,6 +210,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
     //     let node = Node::create(self.node.state(), node::Kind::<T, RawValue<T>>::Raw)
     //     Incr { node: raw }
     // }
+
     pub fn map<R: Clone + 'static + Debug, F: Fn(T) -> R + 'static>(&self, f: F) -> Incr<R> {
         let mapper = MapNode {
             input: self.clone().node,
@@ -233,6 +227,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         };
         map
     }
+
     pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
     where
         T2: Clone + 'static + Debug,
@@ -255,6 +250,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         };
         map
     }
+
     // pub fn list_all(list: Vec<Incr<T>>) -> Incr<Vec<T>> {
     //     let output = list.iter().map(|input| input.node.latest()).collect();
     //     let cloned = list.clone();
@@ -271,6 +267,7 @@ impl<T: Clone + 'static + Debug> Incr<T> {
     //     }
     //     new
     // }
+
     pub fn bind<F, R>(&self, f: F) -> Incr<R>
     where
         R: Debug + Clone + 'static,
@@ -309,16 +306,15 @@ impl<T: Clone + 'static + Debug> Incr<T> {
         *lhs_change_kind = node::Kind::BindLhsChange(bind.clone());
         main_incr
     }
+
     pub(crate) fn value(&self) -> T {
         self.node.latest()
     }
-    pub fn on_update(&self, callback: Box<dyn Fn(T)>) -> T {
-        todo!()
-    }
 
-    pub fn observe(&self) -> Rc<internal_observer::InternalObserver<T>> {
+    pub fn observe(&self) -> Observer<T> {
         let incr = self.clone();
-        incr.node.state().observe(incr)
+        let internal = incr.node.state().observe(incr);
+        Observer::new(internal)
     }
 
     pub fn filter(&self, should_emit: impl Fn(&T, &T) -> bool + 'static) -> Incr<T> {

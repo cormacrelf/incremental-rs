@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #![allow(unused_variables)]
 //! This is version 1.
 //!
@@ -27,6 +28,9 @@ use fmt::Debug;
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+
+#[cfg(test)]
+mod test;
 
 /// Incr<R> is meant to be the "sentinel" as in the 7 implementations talk.
 /// The problem that sentinels solve is a lot easier in Rust with explicit reference counting and

@@ -4,9 +4,9 @@ use std::{cell::Cell, rc::Weak};
 use super::node::PackedNode;
 use super::Incr;
 
-pub(crate) type WeakObserver = Weak<dyn Observer>;
+pub(crate) type WeakObserver = Weak<dyn ErasedObserver>;
 
-pub(crate) trait Observer: Debug + 'static {
+pub(crate) trait ErasedObserver: Debug + 'static {
     fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<State>;
     fn observing(&self) -> PackedNode;
@@ -34,11 +34,11 @@ impl<T: Debug + Clone + 'static> InternalObserver<T> {
             on_update_handlers: (),
         }
     }
-    pub fn value(&self) -> T {
+    pub(crate) fn value(&self) -> T {
         self.observing.value()
     }
 }
-impl<T: 'static> Observer for InternalObserver<T> {
+impl<T: 'static> ErasedObserver for InternalObserver<T> {
     fn use_is_allowed(&self) -> bool {
         match self.state.get() {
             State::Created | State::InUse => true,

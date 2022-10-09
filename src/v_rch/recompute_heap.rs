@@ -1,8 +1,7 @@
 use super::node::ErasedNode;
 use std::collections::VecDeque;
-use std::rc::{Rc, Weak};
+use std::rc::Weak;
 
-type StrongNode = Rc<dyn ErasedNode>;
 type WeakNode = Weak<dyn ErasedNode>;
 type Queue = VecDeque<WeakNode>;
 
@@ -54,6 +53,8 @@ impl RecomputeHeap {
         }
         let Some(q) = self.get_queue(node.height()) else { return };
         // Unfortunately we must scan for the node
+        // if this is slow, we should use a hash set or something instead with a fast "remove_any"
+        // method
         let Some(indexof) = q.iter().position(|x| x.ptr_eq(&weak_node)) else { return };
         // order within a particular queue does not matter at all.
         // they're all the same height so they cannot have any dependencies

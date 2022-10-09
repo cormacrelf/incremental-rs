@@ -1,9 +1,9 @@
 use super::node::PackedNode;
 
-use super::internal_observer::{InternalObserver, Observer, WeakObserver};
+use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
 use super::node::{Kind, Node, Scope};
 use super::var::Var;
-use super::Incr;
+use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
@@ -55,7 +55,7 @@ impl State {
         })
     }
 
-    pub fn var<T: Debug + Clone + 'static>(self: &Rc<Self>, value: T) -> Rc<Var<T>> {
+    pub fn var<T: Debug + Clone + 'static>(self: &Rc<Self>, value: T) -> public::Var<T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.clone(),
             Scope::Top,
@@ -72,15 +72,18 @@ impl State {
             let mut kind = var.node.kind.borrow_mut();
             *kind = Kind::Var(Rc::downgrade(&var));
         }
-        var
+        public::Var::new(var)
     }
 
-    pub fn observe<T: Debug + Clone + 'static>(&self, incr: Incr<T>) -> Rc<InternalObserver<T>> {
+    pub(crate) fn observe<T: Debug + Clone + 'static>(
+        &self,
+        incr: Incr<T>,
+    ) -> Rc<InternalObserver<T>> {
         let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
         let mut no = state.new_observers.borrow_mut();
         let rc: Rc<InternalObserver<T>> = Rc::new(internal_observer);
-        no.push(Rc::downgrade(&rc) as Weak<dyn Observer>);
+        no.push(Rc::downgrade(&rc) as Weak<dyn ErasedObserver>);
         rc
     }
 
