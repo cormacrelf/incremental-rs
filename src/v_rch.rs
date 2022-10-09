@@ -7,9 +7,8 @@ mod stabilisation_num;
 mod state;
 mod var;
 
-use crate::v_pseudo_height::node::Incremental;
-
 use self::internal_observer::Observer;
+use self::node::Incremental;
 use self::node::{ErasedNode, Node, NodeGenerics, Scope};
 use fmt::Debug;
 use std::cell::RefCell;
@@ -229,7 +228,9 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map(mapper),
         );
-        let map = Incr { node: node.into_rc() };
+        let map = Incr {
+            node: node.into_rc(),
+        };
         map
     }
     pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
@@ -249,7 +250,9 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map2(mapper),
         );
-        let map = Incr { node: node.into_rc() };
+        let map = Incr {
+            node: node.into_rc(),
+        };
         map
     }
     // pub fn list_all(list: Vec<Incr<T>>) -> Incr<Vec<T>> {
@@ -329,7 +332,9 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             state.current_scope(),
             node::Kind::Cutoff(cutoff),
         );
-        Incr { node: node.into_rc() }
+        Incr {
+            node: node.into_rc(),
+        }
     }
 }
 

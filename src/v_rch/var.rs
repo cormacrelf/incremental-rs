@@ -1,5 +1,5 @@
-use crate::v_pseudo_height::node::ErasedNode;
-use crate::v_pseudo_height::state::IncrStatus;
+use super::node::ErasedNode;
+use super::state::IncrStatus;
 
 use super::node::{Incremental, Node, NodeGenerics};
 use super::stabilisation_num::StabilisationNum;

@@ -1,4 +1,4 @@
-use crate::v_pseudo_height::node::PackedNode;
+use super::node::PackedNode;
 
 use super::internal_observer::{InternalObserver, Observer, WeakObserver};
 use super::node::{Kind, Node, Scope};
