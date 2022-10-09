@@ -117,6 +117,17 @@ fn test_bind_existing() {
     assert_eq!(dbg!(obs.value()), Ok(99));
 }
 
+/// Exercisees Adjust_heights_heap for a variable that was created from scratch inside a bind
+#[test]
+fn create_var_in_bind() {
+    let incr = State::new();
+    let lhs = incr.var(true);
+    let state = incr.clone();
+    let o = lhs.watch().bind(move |_| state.var(9).watch()).observe();
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(9));
+}
+
 #[test]
 fn observer_ugly() {
     let incr = State::new();
