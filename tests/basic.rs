@@ -121,12 +121,13 @@ fn test_bind_existing() {
 fn observer_ugly() {
     let incr = State::new();
     let lhs = incr.var(true);
-    let unused = incr.var(2).watch();
+    let unused = incr.var(2);
+    let unused_w = unused.watch();
     let state = incr.clone();
     let v9 = state.var(9);
     let bound = lhs
         .watch()
-        .bind(move |l| if l { v9.watch() } else { unused.clone() });
+        .bind(move |l| if l { v9.watch() } else { unused_w.clone() });
     let o = bound.observe();
 
     incr.stabilise();
@@ -144,9 +145,13 @@ fn observer_ugly() {
     let o2 = map.observe();
 
     incr.stabilise();
-    unrelated.set(700);
+    // ok none of this is guaranteed to work but i'm just trying to break it
     lhs.set(false);
+    unused.set(700);
     assert_eq!(o2.value(), Ok(Ok(9)));
     incr.stabilise();
     assert_eq!(o2.value(), Ok(Ok(9)));
+    unrelated.set(99);
+    incr.stabilise();
+    assert_eq!(o2.value(), Ok(Ok(700)));
 }
