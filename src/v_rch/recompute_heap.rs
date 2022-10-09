@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 
 type StrongNode = Rc<dyn ErasedNode>;
 type WeakNode = Weak<dyn ErasedNode>;
-type Queue = VecDeque<Option<WeakNode>>;
+type Queue = VecDeque<WeakNode>;
 
 #[derive(Debug)]
 pub struct RecomputeHeap {
@@ -34,7 +34,7 @@ impl RecomputeHeap {
             self.height_lower_bound = node.height();
         }
         let Some(q) = self.get_queue(h) else { return };
-        q.push_back(Some(weak_node));
+        q.push_back(weak_node);
         self.length += 1;
     }
 
@@ -53,6 +53,12 @@ impl RecomputeHeap {
             return;
         }
         let Some(q) = self.get_queue(node.height()) else { return };
+        // Unfortunately we must scan for the node
+        let Some(indexof) = q.iter().position(|x| x.ptr_eq(&weak_node)) else { return };
+        // order within a particular queue does not matter at all.
+        // they're all the same height so they cannot have any dependencies
+        // so we can use swap_remove
+        q.swap_remove_back(indexof);
         node.height_in_recompute_heap().set(-1);
         self.length -= 1;
     }
@@ -78,7 +84,7 @@ impl RecomputeHeap {
             queue = self.queues.get_mut(self.height_lower_bound as usize)?;
             debug_assert!(self.height_lower_bound as usize <= len);
         }
-        let removed = queue.pop_front().flatten();
+        let removed = queue.pop_front();
         if let Some(r) = &removed {
             if let Some(upgraded) = r.upgrade() {
                 upgraded.height_in_recompute_heap().set(-1);
