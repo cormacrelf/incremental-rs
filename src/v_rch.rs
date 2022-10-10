@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+mod adjust_heights_heap;
 mod internal_observer;
 mod node;
 mod recompute_heap;
@@ -8,7 +9,8 @@ mod stabilisation_num;
 mod state;
 mod var;
 
-use self::node::{ErasedNode, Node, NodeGenerics};
+use self::adjust_heights_heap::NodeRef;
+use self::node::{ErasedNode, Node, NodeGenerics, WeakNode};
 use self::scope::Scope;
 use fmt::Debug;
 use std::cell::RefCell;
@@ -113,6 +115,7 @@ pub(crate) trait BindScope: Debug {
     fn is_valid(&self) -> bool;
     fn is_necessary(&self) -> bool;
     fn height(&self) -> i32;
+    fn add_node(&self, node: WeakNode);
 }
 
 impl<F, T, R> BindScope for BindNode<F, T, R>
@@ -131,6 +134,10 @@ where
     }
     fn height(&self) -> i32 {
         self.lhs_change.height.get()
+    }
+    fn add_node(&self, node: WeakNode) {
+        let mut all = self.all_nodes_created_on_rhs.borrow_mut();
+        all.push(node);
     }
 }
 
@@ -282,12 +289,20 @@ impl<T: Clone + 'static + Debug> Incr<T> {
             node::Kind::Uninitialised,
         )
         .into_rc();
+        println!(
+            "creating bind lhs with scope height {:?}",
+            state.current_scope().height()
+        );
         let main = Node::<BindNodeGenerics<F, T, R>>::create(
             self.node.state(),
-            Scope::Top,
+            state.current_scope(),
             node::Kind::Uninitialised,
         )
         .into_rc();
+        println!(
+            "creating bind main with scope height {:?}",
+            state.current_scope().height()
+        );
         let bind = Rc::new(BindNode {
             lhs: self.clone().node,
             mapper: f,

@@ -123,7 +123,44 @@ fn create_var_in_bind() {
     let incr = State::new();
     let lhs = incr.var(true);
     let state = incr.clone();
-    let o = lhs.watch().bind(move |_| state.var(9).watch()).observe();
+    let o = lhs
+        .watch()
+        .bind(move |_| {
+            // the difference between creating the variable beforehand
+            // and doing it inside the bind is that during the bind, new nodes
+            // have a scope. so the new variable is created with a height of -1,
+            // but when became_necessary runs on it, it inherits the bind scope's
+            // height + 1.
+            //
+            // But the bind scope has the BindLhsChange node's height.
+            //
+            // So BindMain also inherits it at h+1. That means that v here, which is now
+            // the bind RHS, and BindMain, both have a height of 3. Except BindMain is
+            // meant to be recomputed after the RHS, so it can copy the value that's
+            // already been computed and stored in the RHS node.
+            //
+            // If they both have a height of 3, it is not determined that RHS is computed
+            // first. So we need to adjust heights to make sure. You might ask -- why isn't
+            // BindMain already picking up the height of its children and adding 1 to it?
+            // That's because BindMain is an existing node, it is already necessary, and
+            // that procedure is done in became_necessary.
+            //
+            // The key lines in adjust_heights_heap.ml are
+            //
+            //     set_height t parent (child.height + 1))
+            //     ...
+            //     if debug then assert (original_child.height < original_parent.height)
+            //
+            // That's because in its roundabout way, it's doing the same thing as
+            // became_necessary, but for the dynamic nodes created by a bind.
+            // 
+            let v = state.var(9);
+            println!("--------------------------------");
+            println!("created var in bind with id {:?}", v.id());
+            println!("--------------------------------");
+            v.watch()
+        })
+        .observe();
     incr.stabilise();
     assert_eq!(o.value(), Ok(9));
 }

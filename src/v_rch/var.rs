@@ -64,7 +64,7 @@ impl<T: Debug + Clone + 'static> Var<T> {
                             watch.height()
                         );
                         let mut heap = t.recompute_heap.borrow_mut();
-                        heap.insert(watch.weak());
+                        heap.insert(watch.packed());
                     }
                 }
             }

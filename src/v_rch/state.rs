@@ -1,3 +1,4 @@
+use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::node::PackedNode;
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
@@ -14,6 +15,7 @@ use std::rc::{Rc, Weak};
 #[derive(Debug)]
 pub struct State {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
+    pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap>,
     pub(crate) recompute_heap: RefCell<RecomputeHeap>,
     pub(crate) status: Cell<IncrStatus>,
     pub(crate) num_var_sets: Cell<usize>,
@@ -40,8 +42,10 @@ impl State {
         self.current_scope.borrow().clone()
     }
     pub fn new() -> Rc<Self> {
+        const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Rc::new(State {
-            recompute_heap: RefCell::new(RecomputeHeap::new()),
+            recompute_heap: RefCell::new(RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
+            adjust_heights_heap: RefCell::new(AdjustHeightsHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
             stabilisation_num: Cell::new(StabilisationNum(0)),
             num_var_sets: Cell::new(0),
             num_nodes_recomputed: Cell::new(0),
@@ -170,9 +174,7 @@ impl State {
             let mut rch = self.recompute_heap.borrow_mut();
             rch.remove_min()
         } {
-            if let Some(node) = min.upgrade() {
-                node.recompute();
-            }
+            min.recompute();
         }
         self.stabilise_end();
     }

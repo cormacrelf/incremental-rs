@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use super::internal_observer::InternalObserver;
 pub use super::internal_observer::ObserverError;
+use super::node::NodeId;
 pub use super::state::State;
 use super::var::Var as InternalVar;
 pub use super::Incr;
@@ -47,6 +48,10 @@ impl<T: Debug + Clone + 'static> Var<T> {
     #[inline]
     pub fn watch(&self) -> Incr<T> {
         self.internal.watch()
+    }
+    #[inline]
+    pub fn id(&self) -> NodeId {
+        self.internal.node.borrow().as_ref().unwrap().id
     }
 }
 
