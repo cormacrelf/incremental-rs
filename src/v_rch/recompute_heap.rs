@@ -98,6 +98,8 @@ impl RecomputeHeap {
         self.queues.len() as i32 - 1
     }
     pub(crate) fn increase_height(&mut self, node: &NodeRef, old_height: i32) {
+        debug_assert!(node.old_height() >= 0);
+        debug_assert!(node.height() > node.old_height());
         debug_assert!(node.height() > node.height_in_recompute_heap().get());
         debug_assert!(node.height() <= self.max_height_allowed());
         debug_assert!(node.is_in_recompute_heap());

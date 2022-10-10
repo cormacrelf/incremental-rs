@@ -153,7 +153,7 @@ fn create_var_in_bind() {
             //
             // That's because in its roundabout way, it's doing the same thing as
             // became_necessary, but for the dynamic nodes created by a bind.
-            // 
+            //
             let v = state.var(9);
             println!("--------------------------------");
             println!("created var in bind with id {:?}", v.id());
@@ -163,6 +163,79 @@ fn create_var_in_bind() {
         .observe();
     incr.stabilise();
     assert_eq!(o.value(), Ok(9));
+}
+
+#[test]
+fn bind_changing_heights_outside() {
+    let incr = State::new();
+    let is_short = incr.var(true);
+    // this is a very short graph, height 1.
+    let short_graph = incr.var(5).watch();
+    // this is a very short graph, height 4.
+    let long_graph = incr.var(10).watch().map(|x| x).map(|x| x).map(|x| x);
+    let obs = is_short
+        .watch()
+        // BindMain's height is initially bumped to 3 (short=1, lhs=2, main=3)
+        .bind(move |s| {
+            if s {
+                short_graph.clone()
+            } else {
+                long_graph.clone()
+            }
+        })
+        .observe();
+    println!("------------------------------------------------------------------");
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(5));
+    println!("------------------------------------------------------------------");
+    println!("set long");
+    println!("------------------------------------------------------------------");
+    // BindMain's height is bumped up to 5.
+    is_short.set(false);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(10));
+    println!("------------------------------------------------------------------");
+    println!("return to short");
+    println!("------------------------------------------------------------------");
+    // here, BindMain still has height 5.
+    // But it should not decrease its height, just because its child is now back to height 1.
+    // We have child.height() < parent.height(), so that's fine. And, AdjustHeightsHeap is not
+    // capable of setting a height lower than the previous one.
+    is_short.set(true);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(5));
+}
+
+#[test]
+fn bind_changing_heights_inside() {
+    let incr = State::new();
+    let is_short = incr.var(true);
+    let i2 = incr.clone();
+    let obs = is_short
+        .watch()
+        .bind(move |s| {
+            if s {
+                i2.var(5).watch()
+            } else {
+                i2.var(10).watch().map(|x| x).map(|x| x).map(|x| x)
+            }
+        })
+        .observe();
+    println!("------------------------------------------------------------------");
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(5));
+    println!("------------------------------------------------------------------");
+    println!("set long");
+    println!("------------------------------------------------------------------");
+    is_short.set(false);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(10));
+    println!("------------------------------------------------------------------");
+    println!("return to short");
+    println!("------------------------------------------------------------------");
+    is_short.set(true);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(5));
 }
 
 #[test]

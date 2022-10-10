@@ -107,6 +107,13 @@ impl AdjustHeightsHeap {
         original_child: NodeRef,
         original_parent: NodeRef,
     ) {
+        println!(
+            "adjust_heights from child(id={:?},h={:?}) to parent(id={:?},h={:?})",
+            original_child.id(),
+            original_child.height(),
+            original_parent.id(),
+            original_parent.height()
+        );
         debug_assert!(self.is_empty());
         debug_assert!(original_child.height() >= original_parent.height());
         self.height_lower_bound = original_parent.height();

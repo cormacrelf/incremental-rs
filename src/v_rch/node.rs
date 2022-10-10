@@ -94,6 +94,7 @@ pub(crate) type WeakNode = Weak<dyn ErasedNode>;
 // }
 
 pub(crate) trait ErasedNode: Debug {
+    fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
@@ -210,6 +211,9 @@ impl<G: NodeGenerics + 'static> Debug for Node<G> {
     }
 }
 impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn weak(&self) -> Weak<dyn ErasedNode> {
         self.weak_self.clone() as Weak<dyn ErasedNode>
     }
