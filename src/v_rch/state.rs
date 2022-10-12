@@ -10,13 +10,14 @@ use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::io::Write;
+use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
-pub struct State {
+pub struct State<'a> {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
-    pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap>,
-    pub(crate) recompute_heap: RefCell<RecomputeHeap>,
+    pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap<'a>>,
+    pub(crate) recompute_heap: RefCell<RecomputeHeap<'a>>,
     pub(crate) status: Cell<IncrStatus>,
     pub(crate) num_var_sets: Cell<usize>,
     pub(crate) num_nodes_recomputed: Cell<usize>,
@@ -24,9 +25,10 @@ pub struct State {
     pub(crate) num_nodes_became_necessary: Cell<usize>,
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
     pub(crate) num_nodes_invalidated: Cell<usize>,
-    pub(crate) new_observers: Rc<RefCell<Vec<WeakObserver>>>,
-    pub(crate) all_observers: Rc<RefCell<Vec<WeakObserver>>>,
-    pub(crate) current_scope: RefCell<Scope>,
+    pub(crate) new_observers: &'a RefCell<Vec<WeakObserver<'a>>>,
+    pub(crate) all_observers: &'a RefCell<Vec<WeakObserver<'a>>>,
+    pub(crate) current_scope: RefCell<Scope<'a>>,
+    _phantom: PhantomData<&'a ()>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -37,11 +39,11 @@ pub enum IncrStatus {
     StabilisePreviouslyRaised,
 }
 
-impl State {
-    pub(crate) fn current_scope(&self) -> Scope {
+impl<'a> State<'a> {
+    pub(crate) fn current_scope(&self) -> Scope<'a> {
         self.current_scope.borrow().clone()
     }
-    pub fn new() -> Rc<Self> {
+    pub fn new() -> &'a Self {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Rc::new(State {
             recompute_heap: RefCell::new(RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
@@ -57,10 +59,11 @@ impl State {
             new_observers: Rc::new(RefCell::new(Vec::new())),
             all_observers: Rc::new(RefCell::new(Vec::new())),
             current_scope: RefCell::new(Scope::Top),
+            _phantom: Default::default(),
         })
     }
 
-    pub fn var<T: Debug + Clone + 'static>(self: &Rc<Self>, value: T) -> public::Var<T> {
+    pub fn var<T: Debug + Clone + 'a>(self: &'a Self, value: T) -> public::Var<'a, T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.clone(),
             self.current_scope(),
@@ -83,19 +86,19 @@ impl State {
         public::Var::new(var)
     }
 
-    pub(crate) fn observe<T: Debug + Clone + 'static>(
+    pub(crate) fn observe<T: Debug + Clone + 'a>(
         &self,
-        incr: Incr<T>,
-    ) -> Rc<InternalObserver<T>> {
+        incr: Incr<'a, T>,
+    ) -> &'a InternalObserver<'a, T> {
         let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
         let mut no = state.new_observers.borrow_mut();
-        let rc: Rc<InternalObserver<T>> = Rc::new(internal_observer);
+        let rc: &'a InternalObserver<'a, T> = Rc::new(internal_observer);
         no.push(Rc::downgrade(&rc) as Weak<dyn ErasedObserver>);
         rc
     }
 
-    // pub fn set_var<T: Debug + Clone + 'static>(&self, var: &mut Var<T>, value: T) {
+    // pub fn set_var<T: Debug + Clone + 'a>(&self, var: &mut Var<T>, value: T) {
     //     match self.status.get() {
     //         IncrStatus::NotStabilising => {
     //             self.num_var_sets.set(self.num_var_sets.get() + 1);

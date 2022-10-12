@@ -1,14 +1,14 @@
 use std::rc::Weak;
 
-use super::{adjust_heights_heap::NodeRef, node::WeakNode, BindScope};
+use super::{adjust_heights_heap::NodeRef, BindScope};
 
 #[derive(Debug, Clone)]
-pub(crate) enum Scope {
+pub(crate) enum Scope<'a> {
     Top,
-    Bind(Weak<dyn BindScope>),
+    Bind(Weak<dyn BindScope<'a>>),
 }
 
-impl Scope {
+impl<'a> Scope<'a> {
     fn equals(&self, other: &Self) -> bool {
         match self {
             Scope::Top => match other {
@@ -39,7 +39,7 @@ impl Scope {
             }
         }
     }
-    pub(crate) fn add_node(&self, node: NodeRef) {
+    pub(crate) fn add_node(&self, node: NodeRef<'a>) {
         assert!(node.created_in().equals(self));
         match self {
             Self::Top => {}

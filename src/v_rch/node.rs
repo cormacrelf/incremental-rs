@@ -10,7 +10,6 @@ use core::fmt::Debug;
 use super::stabilisation_num::StabilisationNum;
 use std::{
     cell::{Cell, RefCell},
-    rc::{Rc, Weak},
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -31,8 +30,8 @@ impl NodeId {
 
 /// Needs a better name but ok
 #[derive(Debug)]
-pub(crate) struct NodeInner {
-    pub state: Rc<State>,
+pub(crate) struct NodeInner<'a> {
+    pub state: &'a State<'a>,
     // cutoff
     // num_on_update_handlers
     // TODO: optimise the one parent case
@@ -42,39 +41,38 @@ pub(crate) struct NodeInner {
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
     // next_node_in_same_scope
-    pub(crate) prev_in_recompute_heap: Option<PackedNode>,
-    pub(crate) next_in_recompute_heap: Option<PackedNode>,
+    pub(crate) prev_in_recompute_heap: Option<PackedNode<'a>>,
+    pub(crate) next_in_recompute_heap: Option<PackedNode<'a>>,
     pub(crate) force_necessary: bool,
-    pub(crate) parents: Vec<Option<WeakNode>>,
-    pub(crate) observers: Vec<Weak<dyn ErasedObserver>>,
+    pub(crate) parents: Vec<Option<WeakNode<'a>>>,
+    pub(crate) observers: Vec<&'a dyn ErasedObserver<'a>>,
 }
 
-pub(crate) struct Node<G: NodeGenerics> {
+pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub(crate) id: NodeId,
-    pub(crate) inner: RefCell<NodeInner>,
-    pub(crate) kind: RefCell<Kind<G>>,
+    pub(crate) inner: RefCell<NodeInner<'a>>,
+    pub(crate) kind: RefCell<Kind<'a, G>>,
     pub(crate) value_opt: RefCell<Option<G::R>>,
     pub(crate) old_value_opt: RefCell<Option<G::R>>,
     pub height: Cell<i32>,
     pub old_height: Cell<i32>,
     pub height_in_recompute_heap: Cell<i32>,
     pub height_in_adjust_heights_heap: Cell<i32>,
-    pub(crate) created_in: Scope,
+    pub(crate) created_in: Scope<'a>,
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
-    pub(crate) weak_self: Weak<dyn ErasedNode>,
 }
 
-pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
+pub(crate) type Input<'a, R> = &'a dyn Incremental<'a, R>;
 
-pub(crate) trait Incremental<R>: ErasedNode + Debug {
-    fn as_input(self: Rc<Self>) -> Input<R>;
+pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
+    fn as_input(self: &'a Self) -> Input<'a, R>;
     fn latest(&self) -> R;
     fn value_opt(&self) -> Option<R>;
 }
 
-impl<G: NodeGenerics + 'static> Incremental<G::R> for Node<G> {
-    fn as_input(self: Rc<Self>) -> Input<G::R> {
+impl<'a, G: NodeGenerics<'a>> Incremental<'a, G::R> for Node<'a, G> {
+    fn as_input(self: &'a Self) -> Input<'a, G::R> {
         self as Input<G::R>
     }
     fn latest(&self) -> G::R {
@@ -85,15 +83,15 @@ impl<G: NodeGenerics + 'static> Incremental<G::R> for Node<G> {
     }
 }
 
-pub(crate) type PackedNode = Rc<dyn ErasedNode>;
-pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+pub(crate) type PackedNode<'a> = &'a dyn ErasedNode<'a>;
+pub(crate) type WeakNode<'a> = PackedNode<'a>;
 
 // pub type ParentNode<I> = Weak<dyn ParentNode<I>>;
 // pub trait ParentNode<I>: ErasedNode {
 //     fn child_changed(&self, child: Weak<dyn ErasedNode>, child_index: i32);
 // }
 
-pub(crate) trait ErasedNode: Debug {
+pub(crate) trait ErasedNode<'a>: Debug {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn height(&self) -> i32;
@@ -102,11 +100,11 @@ pub(crate) trait ErasedNode: Debug {
     fn set_height(&self, height: i32);
     fn old_height(&self) -> i32;
     fn set_old_height(&self, height: i32);
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode);
-    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode);
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode<'a>);
+    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode<'a>);
     fn is_stale(&self) -> bool;
     fn is_stale_with_respect_to_a_child(&self) -> bool;
-    fn edge_is_stale(&self, parent: WeakNode) -> bool;
+    fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool;
     fn is_necessary(&self) -> bool;
     fn needs_to_be_recomputed(&self) -> bool;
     fn became_necessary(&self);
@@ -117,35 +115,35 @@ pub(crate) trait ErasedNode: Debug {
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
     fn inner(&self) -> &RefCell<NodeInner>;
-    fn state(&self) -> Rc<State>;
-    fn weak(&self) -> Weak<dyn ErasedNode>;
-    fn packed(&self) -> Rc<dyn ErasedNode>;
+    fn state(&self) -> &'a State;
+    fn weak(&'a self) -> WeakNode<'a>;
+    fn packed(&'a self) -> PackedNode<'a>;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, PackedNode) -> ());
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate(&self);
     fn adjust_heights_bind_lhs_change(
         &self,
         ahh: &mut AdjustHeightsHeap,
-        oc: &NodeRef,
-        op: &NodeRef,
+        oc: &NodeRef<'a>,
+        op: &NodeRef<'a>,
     );
-    fn created_in(&self) -> Scope;
+    fn created_in(&self) -> Scope<'a>;
 }
 
-impl NodeInner {
+impl<'a> NodeInner<'a> {
     fn is_necessary(&self) -> bool {
         self.num_parents() > 0
             || !self.observers.is_empty()
             // || kind is freeze
             || self.force_necessary
     }
-    pub(crate) fn parents(&self) -> &[Option<WeakNode>] {
+    pub(crate) fn parents(&self) -> &[Option<WeakNode<'a>>] {
         &self.parents[..]
     }
     pub(crate) fn num_parents(&self) -> usize {
         self.parents.len()
     }
-    fn remove_parent(&mut self, child_index: i32, parent_weak: WeakNode) {
+    fn remove_parent(&mut self, child_index: i32, parent_weak: WeakNode<'a>) {
         // println!("remove_parent {self:?}, ix {child_index}");
         let parent = parent_weak.upgrade().unwrap();
         let parent_inner = parent.inner();
@@ -175,7 +173,7 @@ impl NodeInner {
             child.parents.swap_remove(parent_index as usize);
         }
     }
-    fn add_parent(&mut self, child_index: i32, parent_weak: WeakNode) {
+    fn add_parent(&mut self, child_index: i32, parent_weak: WeakNode<'a>) {
         let child = self;
         // we're appending here
         let parent_index = child.parents.len() as i32;
@@ -199,7 +197,7 @@ impl NodeInner {
     }
 }
 
-impl<G: NodeGenerics + 'static> Debug for Node<G> {
+impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
@@ -210,23 +208,20 @@ impl<G: NodeGenerics + 'static> Debug for Node<G> {
             .finish()
     }
 }
-impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
+impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn id(&self) -> NodeId {
         self.id
     }
-    fn weak(&self) -> Weak<dyn ErasedNode> {
-        self.weak_self.clone() as Weak<dyn ErasedNode>
+    fn weak(&'a self) -> WeakNode<'a> {
+        self
     }
-    fn packed(&self) -> PackedNode {
-        let Some(strong) = self.weak_self.upgrade() else {
-            panic!("Node not initialised properly (did not call into_rc())");
-        };
-        strong as Rc<dyn ErasedNode>
+    fn packed(&'a self) -> PackedNode<'a> {
+        self
     }
     fn inner(&self) -> &RefCell<NodeInner> {
         &self.inner
     }
-    fn state(&self) -> Rc<State> {
+    fn state(&self) -> &'a State {
         self.inner().borrow().state.clone()
     }
     fn is_valid(&self) -> bool {
@@ -256,7 +251,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
     fn set_old_height(&self, height: i32) {
         self.old_height.set(height);
     }
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode) {
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode<'a>) {
         println!("add_parent_without_adjusting_heights");
         debug_assert!({
             let Some(p) = parent_weak.upgrade() else { panic!() };
@@ -274,7 +269,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
             self.became_necessary();
         }
     }
-    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode) {
+    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode<'a>) {
         let parent = parent_weak.upgrade().unwrap();
         debug_assert!(parent.is_necessary());
         self.add_parent_without_adjusting_heights(child_index, parent_weak.clone());
@@ -330,7 +325,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         });
         is_stale
     }
-    fn edge_is_stale(&self, parent: WeakNode) -> bool {
+    fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool {
         let Some(parent) = parent.upgrade() else { return false };
         self.changed_at.get() > parent.recomputed_at().get()
     }
@@ -462,7 +457,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 self.maybe_change_value(new_value);
             }
             Kind::Map2(map2) => {
-                let map2: &Map2Node<G::F2, G::I1, G::I2, G::R> = map2;
+                let map2: &Map2Node<'a, G::F2, G::I1, G::I2, G::R> = map2;
                 let i1 = map2.one.latest();
                 let i2 = map2.two.latest();
                 let new_value = (map2.mapper)(i1, i2);
@@ -470,7 +465,7 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
                 self.maybe_change_value(new_value);
             }
             Kind::BindLhsChange(bind) => {
-                let bind: &mut Rc<BindNode<G::B1, G::I1, G::R>> = bind;
+                let bind: &mut &'a BindNode<G::B1, G::I1, G::R> = bind;
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let lhs = bind.lhs.latest();
@@ -567,8 +562,8 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
     fn adjust_heights_bind_lhs_change(
         &self,
         ahh: &mut AdjustHeightsHeap,
-        oc: &NodeRef,
-        op: &NodeRef,
+        oc: &NodeRef<'a>,
+        op: &NodeRef<'a>,
     ) {
         let kind = self.kind.borrow();
         match &*kind {
@@ -587,34 +582,25 @@ impl<G: NodeGenerics + 'static> ErasedNode for Node<G> {
         }
     }
 
-    fn created_in(&self) -> Scope {
+    fn created_in(&self) -> Scope<'a> {
         self.created_in.clone()
     }
 }
 
-fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode>) {
+fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
     for node in all_nodes_created_on_rhs.drain(..) {
         invalidate_node(node);
     }
 }
-fn invalidate_node(node: WeakNode) {
+fn invalidate_node(node: WeakNode<'_>) {
     let Some(node) = node.upgrade() else { return };
     node.invalidate();
 }
 
-impl<G: NodeGenerics + 'static> Node<G> {
-    pub fn into_rc(mut self) -> Rc<Self> {
-        let rc = Rc::<Self>::new_cyclic(|weak| {
-            self.weak_self = weak.clone();
-            self
-        });
-        rc.created_in.add_node(rc.clone());
-        rc
-    }
-    pub fn create(state: Rc<State>, created_in: Scope, kind: Kind<G>) -> Self {
+impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
+    pub fn create(state: &'a State<'a>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Self {
         Node {
             id: NodeId::next(),
-            weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
                 state,
                 prev_in_recompute_heap: None,
@@ -679,10 +665,10 @@ impl<G: NodeGenerics + 'static> Node<G> {
             }
         }
     }
-    fn change_child<T: Clone + Debug + 'static>(
+    fn change_child<T: Clone + Debug>(
         &self,
-        old_child: Option<Incr<T>>,
-        new_child: Incr<T>,
+        old_child: Option<Incr<'a, T>>,
+        new_child: Incr<'a, T>,
         child_index: i32,
     ) {
         match old_child {
@@ -717,7 +703,7 @@ impl<G: NodeGenerics + 'static> Node<G> {
         }
     }
 }
-impl<G: NodeGenerics + 'static> Node<G> {
+impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     fn copy_child(&self, child: Input<G::R>) {
         if child.is_valid() {
             self.maybe_change_value(child.latest());
@@ -728,28 +714,28 @@ impl<G: NodeGenerics + 'static> Node<G> {
     }
 }
 
-pub trait NodeGenerics {
-    type Output: Debug + Clone + 'static;
-    type R: Debug + Clone + 'static;
-    type I1: Debug + Clone + 'static;
-    type I2: Debug + Clone + 'static;
-    type F1: Fn(Self::I1) -> Self::R + 'static;
-    type F2: Fn(Self::I1, Self::I2) -> Self::R + 'static;
-    type B1: Fn(Self::I1) -> Incr<Self::R> + 'static;
+pub trait NodeGenerics<'a> {
+    type Output: Debug + Clone + 'a;
+    type R: Debug + Clone + 'a;
+    type I1: Debug + Clone + 'a;
+    type I2: Debug + Clone + 'a;
+    type F1: Fn(Self::I1) -> Self::R + 'a;
+    type F2: Fn(Self::I1, Self::I2) -> Self::R + 'a;
+    type B1: Fn(Self::I1) -> Incr<'a, Self::R> + 'a;
 }
 
-pub(crate) enum Kind<G: NodeGenerics> {
+pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Invalid,
     Uninitialised,
-    Var(Rc<Var<G::R>>),
-    Map(MapNode<G::F1, G::I1, G::R>),
-    Map2(super::Map2Node<G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(Rc<super::BindNode<G::B1, G::I1, G::R>>),
-    BindMain(Rc<super::BindNode<G::B1, G::I1, G::R>>),
-    Cutoff(super::CutoffNode<G::R>),
+    Var(&'a Var<'a, G::R>),
+    Map(MapNode<'a, G::F1, G::I1, G::R>),
+    Map2(super::Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
+    BindLhsChange(&'a super::BindNode<'a, G::B1, G::I1, G::R>),
+    BindMain(&'a super::BindNode<'a, G::B1, G::I1, G::R>),
+    Cutoff(super::CutoffNode<'a, G::R>),
 }
 
-impl<G: NodeGenerics> Debug for Kind<G> {
+impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Kind::Invalid => write!(f, "Invalid"),
@@ -764,7 +750,7 @@ impl<G: NodeGenerics> Debug for Kind<G> {
     }
 }
 
-impl<G: NodeGenerics + 'static> Kind<G> {
+impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
     pub const BIND_RHS_CHILD_INDEX: i32 = 1;
     fn initial_num_children(&self) -> usize {
         match self {

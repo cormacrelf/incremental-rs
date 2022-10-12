@@ -7,27 +7,26 @@ use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 
-pub(crate) struct VarGenerics<T: Debug + Clone + 'static>(std::marker::PhantomData<T>);
-impl<R: Debug + Clone + 'static> NodeGenerics for VarGenerics<R> {
+pub(crate) struct VarGenerics<'a, T: Debug + Clone + 'a>(std::marker::PhantomData<&'a T>);
+impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for VarGenerics<'a, R> {
     type Output = R;
     type R = R;
     type I1 = ();
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<R>;
+    type B1 = fn(Self::I1) -> Incr<'a, R>;
 }
 
-pub struct Var<T: Debug + Clone + 'static> {
-    pub(crate) state: Rc<State>,
+pub struct Var<'a, T: Debug + Clone + 'a> {
+    pub(crate) state: &'a State<'a>,
     pub(crate) value: RefCell<T>,
     pub(crate) set_at: Cell<StabilisationNum>,
-    pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
+    pub(crate) node: RefCell<Option<&'a Node<'a, VarGenerics<'a, T>>>>,
 }
 
-impl<T: Debug + Clone + 'static> Debug for Var<T> {
+impl<'a, T: Debug + Clone + 'a> Debug for Var<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Var")
             .field("set_at", &self.set_at.get())
@@ -36,7 +35,7 @@ impl<T: Debug + Clone + 'static> Debug for Var<T> {
     }
 }
 
-impl<T: Debug + Clone + 'static> Var<T> {
+impl<'a, T: Debug + Clone + 'a> Var<'a, T> {
     pub fn get(&self) -> T {
         self.value.borrow().clone()
     }
@@ -71,7 +70,7 @@ impl<T: Debug + Clone + 'static> Var<T> {
             _ => todo!("setting variable while stabilising..."),
         }
     }
-    pub fn watch(&self) -> Incr<T> {
+    pub fn watch(&self) -> Incr<'a, T> {
         Incr {
             node: self
                 .node
@@ -84,7 +83,7 @@ impl<T: Debug + Clone + 'static> Var<T> {
 }
 
 #[cfg(test)]
-impl<T: Debug + Clone + 'static> Drop for Var<T> {
+impl<'a, T: Debug + Clone + 'a> Drop for Var<'a, T> {
     fn drop(&mut self) {
         println!(
             "$$$$$$$$$ Dropping var with id {:?}",

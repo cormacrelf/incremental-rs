@@ -2,17 +2,17 @@ use super::node::ErasedNode;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-type NodeRef = Rc<dyn ErasedNode>;
-type Queue = VecDeque<NodeRef>;
+type NodeRef<'a> = &'a dyn ErasedNode<'a>;
+type Queue<'a> = VecDeque<NodeRef<'a>>;
 
 #[derive(Debug)]
-pub(crate) struct RecomputeHeap {
-    queues: Vec<Queue>,
+pub(crate) struct RecomputeHeap<'a> {
+    queues: Vec<Queue<'a>>,
     height_lower_bound: i32,
     length: usize,
 }
 
-impl RecomputeHeap {
+impl<'a> RecomputeHeap<'a> {
     pub fn new(max_height_allowed: usize) -> Self {
         let queues = vec![VecDeque::new(); max_height_allowed + 1];
         Self {
@@ -22,7 +22,7 @@ impl RecomputeHeap {
         }
     }
 
-    pub fn insert(&mut self, node: NodeRef) {
+    pub fn insert(&mut self, node: NodeRef<'a>) {
         let inner = node.inner();
         let h = node.height();
         let Some(q) = self.get_queue(h) else { return };
@@ -44,11 +44,11 @@ impl RecomputeHeap {
         Some(self.queue_for(h))
     }
 
-    pub fn link(&mut self, node: NodeRef) {
+    pub fn link(&mut self, node: NodeRef<'a>) {
         let Some(q) = self.get_queue(node.height()) else { return };
         q.push_back(node);
     }
-    pub fn unlink(&mut self, node: &NodeRef, at_height: i32) {
+    pub fn unlink(&mut self, node: &NodeRef<'a>, at_height: i32) {
         let Some(q) = self.get_queue(at_height) else { return };
         // Unfortunately we must scan for the node
         // if this is slow, we should use a hash set or something instead with a fast "remove_any"
@@ -60,7 +60,7 @@ impl RecomputeHeap {
         q.swap_remove_back(indexof);
     }
 
-    pub fn remove(&mut self, node: NodeRef) {
+    pub fn remove(&mut self, node: NodeRef<'a>) {
         if node.height_in_recompute_heap().get() < 0 {
             return;
         }
@@ -78,7 +78,7 @@ impl RecomputeHeap {
             .expect("we just created this queue!")
     }
 
-    pub(crate) fn remove_min(&mut self) -> Option<NodeRef> {
+    pub(crate) fn remove_min(&mut self) -> Option<NodeRef<'a>> {
         if self.length == 0 {
             return None;
         }
@@ -97,7 +97,7 @@ impl RecomputeHeap {
     pub(crate) fn max_height_allowed(&self) -> i32 {
         self.queues.len() as i32 - 1
     }
-    pub(crate) fn increase_height(&mut self, node: &NodeRef, old_height: i32) {
+    pub(crate) fn increase_height(&mut self, node: &NodeRef<'a>, old_height: i32) {
         debug_assert!(node.old_height() >= 0);
         debug_assert!(node.height() > node.old_height());
         debug_assert!(node.height() > node.height_in_recompute_heap().get());

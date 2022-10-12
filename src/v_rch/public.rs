@@ -1,5 +1,4 @@
 use core::fmt::Debug;
-use std::rc::Rc;
 
 use super::internal_observer::InternalObserver;
 pub use super::internal_observer::ObserverError;
@@ -9,12 +8,12 @@ use super::var::Var as InternalVar;
 pub use super::Incr;
 
 #[derive(Clone)]
-pub struct Observer<T> {
-    internal: Rc<InternalObserver<T>>,
+pub struct Observer<'a, T> {
+    internal: &'a InternalObserver<'a, T>,
 }
 
-impl<T: Debug + Clone + 'static> Observer<T> {
-    pub(crate) fn new(internal: Rc<InternalObserver<T>>) -> Self {
+impl<'a, T: Debug + Clone + 'a> Observer<'a, T> {
+    pub(crate) fn new(internal: &'a InternalObserver<'a, T>) -> Self {
         Self { internal }
     }
     #[inline]
@@ -29,12 +28,12 @@ impl<T: Debug + Clone + 'static> Observer<T> {
 
 // Just to hide the Rc in the interface
 #[derive(Clone)]
-pub struct Var<T: Debug + Clone + 'static> {
-    internal: Rc<InternalVar<T>>,
+pub struct Var<'a, T: Debug + Clone + 'a> {
+    internal: &'a InternalVar<'a, T>,
 }
 
-impl<T: Debug + Clone + 'static> Var<T> {
-    pub(crate) fn new(internal: Rc<InternalVar<T>>) -> Self {
+impl<'a, T: Debug + Clone + 'a> Var<'a, T> {
+    pub(crate) fn new(internal: &'a InternalVar<'a, T>) -> Self {
         Self { internal }
     }
     #[inline]
@@ -46,7 +45,7 @@ impl<T: Debug + Clone + 'static> Var<T> {
         self.internal.get()
     }
     #[inline]
-    pub fn watch(&self) -> Incr<T> {
+    pub fn watch(&self) -> Incr<'a, T> {
         self.internal.watch()
     }
     #[inline]
@@ -55,14 +54,14 @@ impl<T: Debug + Clone + 'static> Var<T> {
     }
 }
 
-impl<T: Debug + Clone + 'static> Drop for Var<T> {
+impl<'a, T: Debug + Clone + 'a> Drop for Var<'a, T> {
     fn drop(&mut self) {
         // drop the reference to the node.
         // a reference may still be held by the .watch() Incr. but we only needed it in
         // order to create new .watch()s, and we have been dropped. so we're done.
         //
         // Does Node itself still need var's reference to itself? no. So it's fine for
-        // InternalVar to no longer store Rc<Node>.
+        // InternalVar to no longer store &'a Node.
         *self.internal.node.borrow_mut() = None;
     }
 }
