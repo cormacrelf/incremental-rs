@@ -12,10 +12,10 @@ mod var;
 use self::node::{ErasedNode, Node, NodeGenerics};
 use self::scope::Scope;
 use fmt::Debug;
+use refl::refl;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
-use refl::refl;
 
 pub mod public;
 use public::Observer;
@@ -228,7 +228,16 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     //     Incr { node: raw }
     // }
 
-    pub fn map<R: Clone + Debug + 'a, F: FnMut(T) -> R + 'a>(&self, f: F) -> Incr<'a, R> {
+    pub fn enumerate(&self) -> Incr<'a, (usize, T)> {
+        let mut counter = 0;
+        self.map(move |x| {
+            let v = (counter, x);
+            counter += 1;
+            v
+        })
+    }
+
+    pub fn map<R: Value<'a>, F: FnMut(T) -> R + 'a>(&self, f: F) -> Incr<'a, R> {
         let mapper = MapNode {
             input: self.clone().node,
             mapper: f.into(),
@@ -239,9 +248,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map(mapper),
         );
-        let map = Incr {
-            node,
-        };
+        let map = Incr { node };
         map
     }
 
@@ -262,9 +269,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             state.current_scope.borrow().clone(),
             node::Kind::Map2(mapper),
         );
-        let map = Incr {
-            node,
-        };
+        let map = Incr { node };
         map
     }
 
@@ -347,9 +352,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             state.current_scope(),
             node::Kind::Cutoff(cutoff),
         );
-        Incr {
-            node,
-        }
+        Incr { node }
     }
 }
 

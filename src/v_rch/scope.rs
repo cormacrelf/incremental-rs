@@ -1,6 +1,6 @@
 use std::rc::Weak;
 
-use super::{NodeRef, BindScope};
+use super::{BindScope, NodeRef};
 
 #[derive(Debug, Clone)]
 pub(crate) enum Scope<'a> {

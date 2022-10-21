@@ -1,6 +1,6 @@
+use super::NodeRef;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use super::NodeRef;
 
 type Queue<'a> = VecDeque<NodeRef<'a>>;
 

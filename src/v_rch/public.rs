@@ -23,7 +23,7 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
         self.internal.value()
     }
     #[inline]
-    pub fn value_unwrap(&self) -> T {
+    pub fn expect_value(&self) -> T {
         self.internal.value().unwrap()
     }
 }

@@ -85,10 +85,7 @@ impl<'a> State<'a> {
         public::Var::new(var)
     }
 
-    pub(crate) fn observe<T: Value<'a>>(
-        &self,
-        incr: Incr<'a, T>,
-    ) -> Rc<InternalObserver<'a, T>> {
+    pub(crate) fn observe<T: Value<'a>>(&self, incr: Incr<'a, T>) -> Rc<InternalObserver<'a, T>> {
         let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
         let mut no = state.new_observers.borrow_mut();

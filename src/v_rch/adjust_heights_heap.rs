@@ -1,7 +1,7 @@
 use crate::Invariant;
 
-use super::NodeRef;
 use super::recompute_heap::RecomputeHeap;
+use super::NodeRef;
 use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 

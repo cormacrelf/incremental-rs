@@ -4,7 +4,7 @@ use super::*;
 fn bind_if<T: Debug + Clone + 'static>(
     cond: Incr<bool>,
     thenn: Incr<T>,
-    elsee: Incr<T>
+    elsee: Incr<T>,
 ) -> Incr<T> {
     cond.bind(move |x| if x { thenn.clone() } else { elsee.clone() })
 }
@@ -123,5 +123,5 @@ fn multi_input() {
         var.stabilise();
     }
     println!("{:?}", list_all.value());
-    assert_eq!(&list_all.value(), &[2,2,2,2,2,1,1,1,1,1]);
+    assert_eq!(&list_all.value(), &[2, 2, 2, 2, 2, 1, 1, 1, 1, 1]);
 }

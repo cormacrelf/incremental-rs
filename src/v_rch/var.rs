@@ -103,4 +103,3 @@ fn var_drop() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
 }
-

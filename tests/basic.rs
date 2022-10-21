@@ -1,4 +1,6 @@
-use incremental::{ObserverError, State};
+use std::rc::Rc;
+
+use incremental::{Observer, ObserverError, State, Var};
 
 #[test]
 fn testit() {
@@ -275,4 +277,93 @@ fn observer_ugly() {
     unrelated.set(99);
     incr.stabilise();
     assert_eq!(o2.value(), Ok(Ok(700)));
+}
+
+#[test]
+fn enumerate() {
+    let g = std::cell::Cell::new(0);
+    let incr = State::new();
+    let v = incr.var("first");
+    let m = v.watch().enumerate().map(|(i, x)| {
+        g.set(i + 1);
+        x
+    });
+    let o = m.observe();
+    assert_eq!(g.get(), 0);
+    incr.stabilise();
+    assert_eq!(g.get(), 1);
+
+    v.set("second");
+    v.set("second again");
+    assert_eq!(g.get(), 1);
+    incr.stabilise();
+    assert_eq!(g.get(), 2);
+
+    v.set("third");
+    assert_eq!(g.get(), 2);
+    incr.stabilise();
+    assert_eq!(g.get(), 3);
+    // ensure observer is alive to keep the map function running
+    drop(o);
+}
+
+#[test]
+fn map_mutable() {
+    let mut global = String::new();
+    map_mutable_inner(&mut global);
+    assert_eq!(global, "abcde");
+}
+
+fn map_mutable_inner(global: &mut String) {
+    // this is just for fun
+    struct Computation<'a> {
+        incr: Rc<State<'a>>,
+        setter: Var<'a, &'static str>,
+        #[allow(dead_code)]
+        total_len: Observer<'a, usize>,
+    }
+
+    let incr = State::new();
+    let setter = incr.var("a");
+    let total_len = setter
+        .watch()
+        .map(|s| {
+            global.push_str(s);
+            global.len()
+        })
+        .observe();
+    let c = Computation {
+        incr: incr.clone(),
+        setter,
+        total_len,
+    };
+
+    c.incr.stabilise();
+    c.setter.set("ignored");
+    c.setter.set("bcde");
+    c.incr.stabilise();
+    assert_eq!(c.total_len.expect_value(), 5);
+}
+
+#[test]
+fn mutable_string() {
+    let incr = State::new();
+    let v = incr.var("hello");
+    let mut buf = String::new();
+    let o = v
+        .watch()
+        // We move buf so it's owned by the closure.
+        // We clone buf so we don't have a reference
+        // escaping the closure.
+        .map(move |s| {
+            buf.push_str(s);
+            buf.clone()
+        })
+        .observe();
+    incr.stabilise();
+    incr.stabilise();
+    assert_eq!(o.expect_value(), "hello");
+    v.set(", world");
+    incr.stabilise();
+    assert_eq!(o.expect_value(), "hello, world");
 }

@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display};
 use std::{cell::Cell, rc::Weak};
 
-use super::{NodeRef, Value};
 use super::Incr;
+use super::{NodeRef, Value};
 
 pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a>>;
 
