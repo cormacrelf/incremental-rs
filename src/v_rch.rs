@@ -35,11 +35,11 @@ pub struct Incr<'a, T> {
 
 pub(crate) struct Map2Node<'a, F, T1, T2, R>
 where
-    F: Fn(T1, T2) -> R + 'a,
+    F: FnMut(T1, T2) -> R + 'a,
 {
     one: Input<'a, T1>,
     two: Input<'a, T2>,
-    mapper: F,
+    mapper: RefCell<F>,
 }
 
 impl<'a, F, T1, T2, R> NodeGenerics<'a> for Map2Node<'a, F, T1, T2, R>
@@ -47,7 +47,7 @@ where
     T1: Debug + Clone + 'a,
     T2: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
-    F: Fn(T1, T2) -> R + 'a,
+    F: FnMut(T1, T2) -> R + 'a,
 {
     type R = R;
     type D = ();
@@ -60,7 +60,7 @@ where
 
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
 where
-    F: Fn(T1, T2) -> R + 'a,
+    F: FnMut(T1, T2) -> R + 'a,
     R: Debug + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -70,17 +70,17 @@ where
 
 pub(crate) struct MapNode<'a, F, T, R>
 where
-    F: Fn(T) -> R + 'a,
+    F: FnMut(T) -> R + 'a,
 {
     input: Input<'a, T>,
-    mapper: F,
+    mapper: RefCell<F>,
 }
 
 impl<'a, F, T, R> NodeGenerics<'a> for MapNode<'a, F, T, R>
 where
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
-    F: Fn(T) -> R + 'a,
+    F: FnMut(T) -> R + 'a,
 {
     type R = R;
     type D = ();
@@ -93,7 +93,7 @@ where
 
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
 where
-    F: Fn(T) -> R + 'a,
+    F: FnMut(T) -> R + 'a,
     R: Debug + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -105,12 +105,12 @@ pub(crate) struct BindNode<'a, F, T, R>
 where
     R: Value<'a>,
     T: Value<'a>,
-    F: Fn(T) -> Incr<'a, R> + 'a,
+    F: FnMut(T) -> Incr<'a, R> + 'a,
 {
     lhs_change: Rc<Node<'a, BindLhsChangeNodeGenerics<F, T, R>>>,
     main: Weak<Node<'a, BindNodeGenerics<F, T, R>>>,
     lhs: Input<'a, T>,
-    mapper: F,
+    mapper: RefCell<F>,
     rhs: RefCell<Option<Incr<'a, R>>>,
     rhs_scope: RefCell<Scope<'a>>,
     // to_disconnect: RefCell<Option<RefCell<Incr<'a, R>>>>,
@@ -128,7 +128,7 @@ impl<'a, F, T, R> BindScope<'a> for BindNode<'a, F, T, R>
 where
     R: Debug + Clone + 'a,
     T: Debug + Clone + 'a,
-    F: Fn(T) -> Incr<'a, R> + 'a,
+    F: FnMut(T) -> Incr<'a, R> + 'a,
 {
     fn is_valid(&self) -> bool {
         let Some(main) = self.main.upgrade() else { return false };
@@ -153,7 +153,7 @@ struct BindLhsChangeNodeGenerics<F, T, R> {
 
 impl<'a, F, T, R> NodeGenerics<'a> for BindLhsChangeNodeGenerics<F, T, R>
 where
-    F: Fn(T) -> Incr<'a, R> + 'a,
+    F: FnMut(T) -> Incr<'a, R> + 'a,
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
@@ -174,7 +174,7 @@ struct BindNodeGenerics<F, T, R> {
 
 impl<'a, F, T, R> NodeGenerics<'a> for BindNodeGenerics<F, T, R>
 where
-    F: Fn(T) -> Incr<'a, R> + 'a,
+    F: FnMut(T) -> Incr<'a, R> + 'a,
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
@@ -189,7 +189,7 @@ where
 
 impl<'a, F, T, R> Debug for BindNode<'a, F, T, R>
 where
-    F: Fn(T) -> Incr<'a, R> + 'a,
+    F: FnMut(T) -> Incr<'a, R> + 'a,
     R: Debug + Clone + 'a,
     T: Debug + Clone + 'a,
 {
@@ -228,10 +228,10 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     //     Incr { node: raw }
     // }
 
-    pub fn map<R: Clone + Debug + 'a, F: Fn(T) -> R + 'a>(&self, f: F) -> Incr<'a, R> {
+    pub fn map<R: Clone + Debug + 'a, F: FnMut(T) -> R + 'a>(&self, f: F) -> Incr<'a, R> {
         let mapper = MapNode {
             input: self.clone().node,
-            mapper: f,
+            mapper: f.into(),
         };
         let state = self.node.state();
         let node = Node::<MapNode<'a, F, T, R>>::create(
@@ -249,12 +249,12 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     where
         T2: Clone + Debug + 'a,
         R: Clone + Debug + 'a,
-        F: Fn(T, T2) -> R + 'a,
+        F: FnMut(T, T2) -> R + 'a,
     {
         let mapper = Map2Node {
             one: self.clone().node,
             two: other.clone().node,
-            mapper: f,
+            mapper: f.into(),
         };
         let state = self.node.state();
         let node = Node::<Map2Node<'a, F, T, T2, R>>::create(
@@ -288,7 +288,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     pub fn bind<F, R>(&self, f: F) -> Incr<'a, R>
     where
         R: Debug + Clone + 'a,
-        F: Fn(T) -> Incr<'a, R> + 'a,
+        F: FnMut(T) -> Incr<'a, R> + 'a,
     {
         let state = self.node.state();
         let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
@@ -311,7 +311,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         );
         let bind = Rc::new(BindNode {
             lhs: self.clone().node,
-            mapper: f,
+            mapper: f.into(),
             rhs: RefCell::new(None),
             rhs_scope: RefCell::new(Scope::Top),
             all_nodes_created_on_rhs: RefCell::new(vec![]),

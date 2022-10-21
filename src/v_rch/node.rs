@@ -450,7 +450,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::Map(map) => {
                 let map: &MapNode<G::F1, G::I1, G::R> = map;
                 let input = map.input.latest();
-                let new_value = (map.mapper)(input);
+                let mut f = map.mapper.borrow_mut();
+                let new_value = f(input);
                 println!("-- recomputing Map(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
@@ -458,7 +459,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let map2: &Map2Node<'a, G::F2, G::I1, G::I2, G::R> = map2;
                 let i1 = map2.one.latest();
                 let i2 = map2.two.latest();
-                let new_value = (map2.mapper)(i1, i2);
+                let mut f = map2.mapper.borrow_mut();
+                let new_value = f(i1, i2);
                 println!("-- recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
@@ -470,7 +472,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                     let old_scope = self.state().current_scope();
                     *self.state().current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
                     println!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
-                    let rhs = (bind.mapper)(lhs);
+                    let mut f = bind.mapper.borrow_mut();
+                    let rhs = f(lhs);
                     *self.state().current_scope.borrow_mut() = old_scope;
                     println!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
                     rhs
@@ -731,9 +734,9 @@ pub trait NodeGenerics<'a>: 'a {
     type D: Value<'a>;
     type I1: Value<'a>;
     type I2: Value<'a>;
-    type F1: Fn(Self::I1) -> Self::R + 'a;
-    type F2: Fn(Self::I1, Self::I2) -> Self::R + 'a;
-    type B1: Fn(Self::I1) -> Incr<'a, Self::D> + 'a;
+    type F1: FnMut(Self::I1) -> Self::R + 'a;
+    type F2: FnMut(Self::I1, Self::I2) -> Self::R + 'a;
+    type B1: FnMut(Self::I1) -> Incr<'a, Self::D> + 'a;
 }
 
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
