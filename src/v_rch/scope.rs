@@ -1,6 +1,6 @@
 use std::rc::Weak;
 
-use super::{adjust_heights_heap::NodeRef, BindScope};
+use super::{NodeRef, BindScope};
 
 #[derive(Debug, Clone)]
 pub(crate) enum Scope<'a> {

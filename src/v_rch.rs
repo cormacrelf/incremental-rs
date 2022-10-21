@@ -9,17 +9,24 @@ mod stabilisation_num;
 mod state;
 mod var;
 
-use self::node::{ErasedNode, Node, NodeGenerics, WeakNode};
+use self::node::{ErasedNode, Node, NodeGenerics};
 use self::scope::Scope;
 use fmt::Debug;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
+use refl::refl;
 
 pub mod public;
 use public::Observer;
 
 use node::Input;
+
+/// Trait alias for `Debug + Clone + 'a`
+pub trait Value<'a>: Debug + Clone + 'a {}
+impl<'a, T> Value<'a> for T where T: Debug + Clone + 'a {}
+pub(crate) type NodeRef<'a> = Rc<dyn ErasedNode<'a> + 'a>;
+pub(crate) type WeakNode<'a> = Weak<dyn ErasedNode<'a> + 'a>;
 
 #[derive(Clone, Debug)]
 pub struct Incr<'a, T> {
@@ -42,13 +49,13 @@ where
     R: Debug + Clone + 'a,
     F: Fn(T1, T2) -> R + 'a,
 {
-    type Output = R;
     type R = R;
+    type D = ();
     type I1 = T1;
     type I2 = T2;
     type F1 = fn(Self::I1) -> R;
     type F2 = F;
-    type B1 = fn(Self::I1) -> Incr<'a, R>;
+    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
 }
 
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
@@ -75,13 +82,13 @@ where
     R: Debug + Clone + 'a,
     F: Fn(T) -> R + 'a,
 {
-    type Output = R;
     type R = R;
+    type D = ();
     type I1 = T;
     type I2 = ();
     type F1 = F;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, R>;
+    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
 }
 
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
@@ -96,11 +103,11 @@ where
 
 pub(crate) struct BindNode<'a, F, T, R>
 where
-    R: Debug + Clone + 'a,
-    T: Debug + Clone + 'a,
+    R: Value<'a>,
+    T: Value<'a>,
     F: Fn(T) -> Incr<'a, R> + 'a,
 {
-    lhs_change: &'a Node<'a, BindLhsChangeNodeGenerics<F, T, R>>,
+    lhs_change: Rc<Node<'a, BindLhsChangeNodeGenerics<F, T, R>>>,
     main: Weak<Node<'a, BindNodeGenerics<F, T, R>>>,
     lhs: Input<'a, T>,
     mapper: F,
@@ -114,7 +121,7 @@ pub(crate) trait BindScope<'a>: Debug + 'a {
     fn is_valid(&self) -> bool;
     fn is_necessary(&self) -> bool;
     fn height(&self) -> i32;
-    fn add_node(&self, node: WeakNode);
+    fn add_node(&self, node: WeakNode<'a>);
 }
 
 impl<'a, F, T, R> BindScope<'a> for BindNode<'a, F, T, R>
@@ -134,7 +141,7 @@ where
     fn height(&self) -> i32 {
         self.lhs_change.height.get()
     }
-    fn add_node(&self, node: WeakNode) {
+    fn add_node(&self, node: WeakNode<'a>) {
         let mut all = self.all_nodes_created_on_rhs.borrow_mut();
         all.push(node);
     }
@@ -150,12 +157,14 @@ where
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
-    type Output = ();
-    type R = R;
+    // lhs change stores () nothing
+    type R = ();
+    // but we keep R hanging around as G::D
+    type D = R;
     type I1 = T;
     type I2 = ();
-    type F1 = fn(Self::I1) -> R;
-    type F2 = fn(Self::I1, Self::I2) -> R;
+    type F1 = fn(Self::I1) -> Self::R;
+    type F2 = fn(Self::I1, Self::I2) -> Self::R;
     type B1 = F;
 }
 
@@ -169,8 +178,8 @@ where
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
-    type Output = R;
     type R = R;
+    type D = R;
     type I1 = T;
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
@@ -207,7 +216,7 @@ where
             .finish()
     }
 }
-impl<'a, T: Clone + Debug + 'a> Incr<'a, T> {
+impl<'a, T: Value<'a>> Incr<'a, T> {
     pub(crate) fn ptr_eq(&self, other: &Incr<'a, T>) -> bool {
         Rc::ptr_eq(&self.node, &other.node)
     }
@@ -254,7 +263,7 @@ impl<'a, T: Clone + Debug + 'a> Incr<'a, T> {
             node::Kind::Map2(mapper),
         );
         let map = Incr {
-            node: node,
+            node,
         };
         map
     }
@@ -315,21 +324,13 @@ impl<'a, T: Clone + Debug + 'a> Incr<'a, T> {
 
         let main_incr = Incr { node: main.clone() };
         let mut main_kind = main.kind.borrow_mut();
-        *main_kind = node::Kind::BindMain(bind.clone());
+        *main_kind = node::Kind::BindMain(refl(), bind.clone());
         let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
-        *lhs_change_kind = node::Kind::BindLhsChange(bind.clone());
+        *lhs_change_kind = node::Kind::BindLhsChange(refl(), bind.clone());
         main_incr
     }
 
-    pub(crate) fn value(&self) -> T {
-        self.node.latest()
-    }
-
-    pub(crate) fn value_opt(&self) -> T {
-        self.node.latest()
-    }
-
-    pub fn observe(&self) -> Observer<T> {
+    pub fn observe(&self) -> Observer<'a, T> {
         let incr = self.clone();
         let internal = incr.node.state().observe(incr);
         Observer::new(internal)
@@ -347,7 +348,7 @@ impl<'a, T: Clone + Debug + 'a> Incr<'a, T> {
             node::Kind::Cutoff(cutoff),
         );
         Incr {
-            node: node,
+            node,
         }
     }
 }
@@ -358,13 +359,13 @@ pub(crate) struct CutoffNode<'a, R> {
 }
 
 impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for CutoffNode<'a, R> {
-    type Output = R;
     type R = R;
+    type D = ();
     type I1 = R;
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, R>;
+    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
 }
 
 impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {

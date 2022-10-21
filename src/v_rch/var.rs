@@ -7,23 +7,24 @@ use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 pub(crate) struct VarGenerics<'a, T: Debug + Clone + 'a>(std::marker::PhantomData<&'a T>);
 impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for VarGenerics<'a, R> {
-    type Output = R;
     type R = R;
+    type D = ();
     type I1 = ();
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, R>;
+    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
 }
 
 pub struct Var<'a, T: Debug + Clone + 'a> {
-    pub(crate) state: &'a State<'a>,
+    pub(crate) state: Rc<State<'a>>,
     pub(crate) value: RefCell<T>,
     pub(crate) set_at: Cell<StabilisationNum>,
-    pub(crate) node: RefCell<Option<&'a Node<'a, VarGenerics<'a, T>>>>,
+    pub(crate) node: RefCell<Option<Rc<Node<'a, VarGenerics<'a, T>>>>>,
 }
 
 impl<'a, T: Debug + Clone + 'a> Debug for Var<'a, T> {

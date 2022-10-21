@@ -1,8 +1,7 @@
-use super::node::ErasedNode;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use super::NodeRef;
 
-type NodeRef<'a> = &'a dyn ErasedNode<'a>;
 type Queue<'a> = VecDeque<NodeRef<'a>>;
 
 #[derive(Debug)]
@@ -35,7 +34,7 @@ impl<'a> RecomputeHeap<'a> {
         self.length += 1;
     }
 
-    pub fn get_queue(&mut self, height: i32) -> Option<&mut Queue> {
+    pub fn get_queue(&mut self, height: i32) -> Option<&mut Queue<'a>> {
         let h = if height < 0 {
             return None;
         } else {
@@ -69,7 +68,7 @@ impl<'a> RecomputeHeap<'a> {
         self.length -= 1;
     }
 
-    fn queue_for(&mut self, height: usize) -> &mut Queue {
+    fn queue_for(&mut self, height: usize) -> &mut Queue<'a> {
         while height > self.queues.len() {
             self.queues.push(Queue::new());
         }

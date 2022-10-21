@@ -1,5 +1,5 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
-use super::node::PackedNode;
+use super::{NodeRef, Value};
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
 use super::node::{Kind, Node};
@@ -25,8 +25,8 @@ pub struct State<'a> {
     pub(crate) num_nodes_became_necessary: Cell<usize>,
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
     pub(crate) num_nodes_invalidated: Cell<usize>,
-    pub(crate) new_observers: &'a RefCell<Vec<WeakObserver<'a>>>,
-    pub(crate) all_observers: &'a RefCell<Vec<WeakObserver<'a>>>,
+    pub(crate) new_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
+    pub(crate) all_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
     pub(crate) current_scope: RefCell<Scope<'a>>,
     _phantom: PhantomData<&'a ()>,
 }
@@ -43,7 +43,7 @@ impl<'a> State<'a> {
     pub(crate) fn current_scope(&self) -> Scope<'a> {
         self.current_scope.borrow().clone()
     }
-    pub fn new() -> &'a Self {
+    pub fn new() -> Rc<Self> {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Rc::new(State {
             recompute_heap: RefCell::new(RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
@@ -63,13 +63,12 @@ impl<'a> State<'a> {
         })
     }
 
-    pub fn var<T: Debug + Clone + 'a>(self: &'a Self, value: T) -> public::Var<'a, T> {
+    pub fn var<T: Debug + Clone + 'a>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.clone(),
             self.current_scope(),
             Kind::Uninitialised,
-        )
-        .into_rc();
+        );
         let var = Rc::new(Var {
             state: self.clone(),
             set_at: Cell::new(self.stabilisation_num.get()),
@@ -86,14 +85,14 @@ impl<'a> State<'a> {
         public::Var::new(var)
     }
 
-    pub(crate) fn observe<T: Debug + Clone + 'a>(
+    pub(crate) fn observe<T: Value<'a>>(
         &self,
         incr: Incr<'a, T>,
-    ) -> &'a InternalObserver<'a, T> {
+    ) -> Rc<InternalObserver<'a, T>> {
         let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
         let mut no = state.new_observers.borrow_mut();
-        let rc: &'a InternalObserver<'a, T> = Rc::new(internal_observer);
+        let rc = Rc::new(internal_observer);
         no.push(Rc::downgrade(&rc) as Weak<dyn ErasedObserver>);
         rc
     }
@@ -130,7 +129,7 @@ impl<'a> State<'a> {
                 ObState::Unlinked => {}
                 ObState::Created => {
                     obs.state().set(ObState::InUse);
-                    let src: PackedNode = obs.observing();
+                    let src: NodeRef<'a> = obs.observing();
                     let was_necessary = src.is_necessary();
                     {
                         let inner = src.inner();

@@ -1,16 +1,21 @@
 // use enum_dispatch::enum_dispatch;
 
-use super::adjust_heights_heap::{AdjustHeightsHeap, NodeRef};
+use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::internal_observer::ErasedObserver;
 use super::scope::Scope;
 use super::{state::State, var::Var};
-use super::{BindNode, CutoffNode, Incr, Map2Node, MapNode};
+use super::{BindNode, CutoffNode, Incr, Map2Node, MapNode, NodeRef, Value, WeakNode};
 use core::fmt::Debug;
+use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
 use std::{
     cell::{Cell, RefCell},
+    rc::Rc,
 };
+
+use refl::{refl, Id};
+type Unit<T> = Id<(), T>;
 
 #[derive(Debug, Copy, Clone)]
 pub struct NodeId(usize);
@@ -31,7 +36,7 @@ impl NodeId {
 /// Needs a better name but ok
 #[derive(Debug)]
 pub(crate) struct NodeInner<'a> {
-    pub state: &'a State<'a>,
+    pub state: Rc<State<'a>>,
     // cutoff
     // num_on_update_handlers
     // TODO: optimise the one parent case
@@ -41,11 +46,11 @@ pub(crate) struct NodeInner<'a> {
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
     // next_node_in_same_scope
-    pub(crate) prev_in_recompute_heap: Option<PackedNode<'a>>,
-    pub(crate) next_in_recompute_heap: Option<PackedNode<'a>>,
+    pub(crate) prev_in_recompute_heap: Option<NodeRef<'a>>,
+    pub(crate) next_in_recompute_heap: Option<NodeRef<'a>>,
     pub(crate) force_necessary: bool,
     pub(crate) parents: Vec<Option<WeakNode<'a>>>,
-    pub(crate) observers: Vec<&'a dyn ErasedObserver<'a>>,
+    pub(crate) observers: Vec<Weak<dyn ErasedObserver<'a>>>,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
@@ -61,18 +66,19 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub(crate) created_in: Scope<'a>,
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
+    weak_self: Weak<Self>,
 }
 
-pub(crate) type Input<'a, R> = &'a dyn Incremental<'a, R>;
+pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
 
 pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
-    fn as_input(self: &'a Self) -> Input<'a, R>;
+    fn as_input(self: Rc<Self>) -> Input<'a, R>;
     fn latest(&self) -> R;
     fn value_opt(&self) -> Option<R>;
 }
 
-impl<'a, G: NodeGenerics<'a>> Incremental<'a, G::R> for Node<'a, G> {
-    fn as_input(self: &'a Self) -> Input<'a, G::R> {
+impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
+    fn as_input(self: Rc<Self>) -> Input<'a, G::R> {
         self as Input<G::R>
     }
     fn latest(&self) -> G::R {
@@ -82,14 +88,6 @@ impl<'a, G: NodeGenerics<'a>> Incremental<'a, G::R> for Node<'a, G> {
         self.value_opt.borrow().clone()
     }
 }
-
-pub(crate) type PackedNode<'a> = &'a dyn ErasedNode<'a>;
-pub(crate) type WeakNode<'a> = PackedNode<'a>;
-
-// pub type ParentNode<I> = Weak<dyn ParentNode<I>>;
-// pub trait ParentNode<I>: ErasedNode {
-//     fn child_changed(&self, child: Weak<dyn ErasedNode>, child_index: i32);
-// }
 
 pub(crate) trait ErasedNode<'a>: Debug {
     fn id(&self) -> NodeId;
@@ -110,20 +108,20 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn became_necessary(&self);
     fn became_unnecessary(&self);
     fn remove_children(&self);
-    fn remove_child(&self, child: PackedNode, child_index: i32);
+    fn remove_child(&self, child: NodeRef<'a>, child_index: i32);
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
-    fn inner(&self) -> &RefCell<NodeInner>;
-    fn state(&self) -> &'a State;
-    fn weak(&'a self) -> WeakNode<'a>;
-    fn packed(&'a self) -> PackedNode<'a>;
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, PackedNode) -> ());
+    fn inner(&self) -> &RefCell<NodeInner<'a>>;
+    fn state(&self) -> Rc<State<'a>>;
+    fn weak(&self) -> WeakNode<'a>;
+    fn packed(&self) -> NodeRef<'a>;
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ());
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate(&self);
     fn adjust_heights_bind_lhs_change(
         &self,
-        ahh: &mut AdjustHeightsHeap,
+        ahh: &mut AdjustHeightsHeap<'a>,
         oc: &NodeRef<'a>,
         op: &NodeRef<'a>,
     );
@@ -212,16 +210,16 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn id(&self) -> NodeId {
         self.id
     }
-    fn weak(&'a self) -> WeakNode<'a> {
-        self
+    fn weak(&self) -> WeakNode<'a> {
+        self.weak_self.clone()
     }
-    fn packed(&'a self) -> PackedNode<'a> {
-        self
+    fn packed(&self) -> NodeRef<'a> {
+        self.weak_self.upgrade().unwrap()
     }
-    fn inner(&self) -> &RefCell<NodeInner> {
+    fn inner(&self) -> &RefCell<NodeInner<'a>> {
         &self.inner
     }
-    fn state(&self) -> &'a State {
+    fn state(&self) -> Rc<State<'a>> {
         self.inner().borrow().state.clone()
     }
     fn is_valid(&self) -> bool {
@@ -306,7 +304,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
-            Kind::Map(_) | Kind::Map2(_) | Kind::BindLhsChange(_) | Kind::BindMain(_) => {
+            Kind::Map(_) | Kind::Map2(_) | Kind::BindLhsChange(..) | Kind::BindMain(..) => {
                 self.recomputed_at.get() == StabilisationNum(-1)
                     || self.is_stale_with_respect_to_a_child()
             }
@@ -396,7 +394,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             rch.remove(self.packed());
         }
     }
-    fn remove_child(&self, child: PackedNode, child_index: i32) {
+    fn remove_child(&self, child: NodeRef<'a>, child_index: i32) {
         {
             let child_inner = child.inner();
             let mut ci = child_inner.borrow_mut();
@@ -407,7 +405,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn remove_children(&self) {
         self.foreach_child(&mut |ix, child| self.remove_child(child, ix));
     }
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, PackedNode) -> ()) {
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ()) {
         let k = self.kind.borrow();
         match &*k {
             Kind::Invalid => {}
@@ -417,8 +415,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
-            Kind::BindLhsChange(bind) => f(0, bind.lhs.packed()),
-            Kind::BindMain(bind) => {
+            Kind::BindLhsChange(_, bind) => f(0, bind.lhs.packed()),
+            Kind::BindMain(_, bind) => {
                 f(0, bind.lhs_change.packed());
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
                     f(1, rhs.node.packed())
@@ -438,10 +436,10 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let t = self.inner.borrow().state.clone();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
         self.recomputed_at.set(t.stabilisation_num.get());
-        let mut k = self.kind.borrow_mut();
+        let k = self.kind.borrow();
         let id = self.id;
         let height = self.height();
-        match &mut *k {
+        match &*k {
             Kind::Var(var) => {
                 let value = var.value.borrow();
                 let v = value.clone();
@@ -450,7 +448,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.maybe_change_value(v);
             }
             Kind::Map(map) => {
-                let map: &mut MapNode<G::F1, G::I1, G::R> = map;
+                let map: &MapNode<G::F1, G::I1, G::R> = map;
                 let input = map.input.latest();
                 let new_value = (map.mapper)(input);
                 println!("-- recomputing Map(id={id:?}) <- {new_value:?}");
@@ -464,8 +462,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 println!("-- recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
-            Kind::BindLhsChange(bind) => {
-                let bind: &mut &'a BindNode<G::B1, G::I1, G::R> = bind;
+            Kind::BindLhsChange(unit, bind) => {
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let lhs = bind.lhs.latest();
@@ -507,12 +504,12 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 // debug_assert!(self.is_valid());
-                self.maybe_change_value_opt(None);
+                self.maybe_change_value(unit.cast(()));
             }
-            Kind::BindMain(bind) => {
+            Kind::BindMain(token, bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
-                self.copy_child(rhs.node);
+                self.copy_child_d(&rhs.node, *token);
             }
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
             _ => {}
@@ -550,7 +547,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             //  | _ -> ());
             let mut kind = self.kind.borrow_mut();
             match &*kind {
-                Kind::BindMain(bind) => {
+                Kind::BindMain(_, bind) => {
                     let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
                     invalidate_nodes_created_on_rhs(&mut all);
                 }
@@ -561,13 +558,13 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
     fn adjust_heights_bind_lhs_change(
         &self,
-        ahh: &mut AdjustHeightsHeap,
+        ahh: &mut AdjustHeightsHeap<'a>,
         oc: &NodeRef<'a>,
         op: &NodeRef<'a>,
     ) {
         let kind = self.kind.borrow();
         match &*kind {
-            Kind::BindLhsChange(bind) => {
+            Kind::BindLhsChange(_, bind) => {
                 println!("adjust_heights_bind_lhs_change {:?}", bind);
                 let all = bind.all_nodes_created_on_rhs.borrow();
                 for rnode_weak in all.iter() {
@@ -598,9 +595,19 @@ fn invalidate_node(node: WeakNode<'_>) {
 }
 
 impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
-    pub fn create(state: &'a State<'a>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Self {
+    pub fn into_rc(mut self) -> Rc<Self> {
+        let rc = Rc::<Self>::new_cyclic(|weak| {
+            self.weak_self = weak.clone();
+            self
+        });
+        rc.created_in.add_node(rc.clone());
+        rc
+    }
+
+    pub fn create(state: Rc<State<'a>>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Rc<Self> {
         Node {
             id: NodeId::next(),
+            weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
                 state,
                 prev_in_recompute_heap: None,
@@ -622,19 +629,15 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             old_value_opt: RefCell::new(None),
             kind: RefCell::new(kind),
         }
+        .into_rc()
     }
     fn value(&self) -> G::R {
         self.value_opt.borrow().clone().unwrap()
     }
     fn maybe_change_value(&self, value: G::R) {
-        self.maybe_change_value_opt(Some(value));
-    }
-    /// BindLhsChange doesn't want a Default bound. So we let ourselves set value_opt to None.
-    /// Don't abuse this privilege! We make sure we don't read the bind lhs node's value.
-    fn maybe_change_value_opt(&self, value: Option<G::R>) {
         self.old_value_opt.replace(None);
         self.old_value_opt.swap(&self.value_opt);
-        self.value_opt.replace(value);
+        self.value_opt.replace(Some(value));
         let inner = self.inner.borrow();
         self.changed_at.set(inner.state.stabilisation_num.get());
         inner
@@ -665,7 +668,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             }
         }
     }
-    fn change_child<T: Clone + Debug>(
+    fn change_child<T: Value<'a>>(
         &self,
         old_child: Option<Incr<'a, T>>,
         new_child: Incr<'a, T>,
@@ -704,7 +707,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     }
 }
 impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
-    fn copy_child(&self, child: Input<G::R>) {
+    fn copy_child(&self, child: &Input<G::R>) {
         if child.is_valid() {
             self.maybe_change_value(child.latest());
         } else {
@@ -712,26 +715,35 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             self.state().propagate_invalidity();
         }
     }
+    fn copy_child_d(&self, child: &Input<G::D>, token: Id<G::D, G::R>) {
+        if child.is_valid() {
+            let latest = child.latest();
+            self.maybe_change_value(token.cast(latest));
+        } else {
+            self.invalidate();
+            self.state().propagate_invalidity();
+        }
+    }
 }
 
-pub trait NodeGenerics<'a> {
-    type Output: Debug + Clone + 'a;
-    type R: Debug + Clone + 'a;
-    type I1: Debug + Clone + 'a;
-    type I2: Debug + Clone + 'a;
+pub trait NodeGenerics<'a>: 'a {
+    type R: Value<'a>;
+    type D: Value<'a>;
+    type I1: Value<'a>;
+    type I2: Value<'a>;
     type F1: Fn(Self::I1) -> Self::R + 'a;
     type F2: Fn(Self::I1, Self::I2) -> Self::R + 'a;
-    type B1: Fn(Self::I1) -> Incr<'a, Self::R> + 'a;
+    type B1: Fn(Self::I1) -> Incr<'a, Self::D> + 'a;
 }
 
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Invalid,
     Uninitialised,
-    Var(&'a Var<'a, G::R>),
+    Var(Rc<Var<'a, G::R>>),
     Map(MapNode<'a, G::F1, G::I1, G::R>),
     Map2(super::Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(&'a super::BindNode<'a, G::B1, G::I1, G::R>),
-    BindMain(&'a super::BindNode<'a, G::B1, G::I1, G::R>),
+    BindLhsChange(Unit<G::R>, Rc<super::BindNode<'a, G::B1, G::I1, G::D>>),
+    BindMain(Id<G::D, G::R>, Rc<super::BindNode<'a, G::B1, G::I1, G::D>>),
     Cutoff(super::CutoffNode<'a, G::R>),
 }
 
@@ -743,8 +755,8 @@ impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
             Kind::Var(var) => write!(f, "Var({:?})", var),
             Kind::Map(map) => write!(f, "Map({:?})", map),
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
-            Kind::BindLhsChange(bind) => write!(f, "BindLhsChange({:?})", bind),
-            Kind::BindMain(bind) => write!(f, "BindMain({:?})", bind),
+            Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
+            Kind::BindMain(_, bind) => write!(f, "BindMain({:?})", bind),
             Kind::Cutoff(cutoff) => write!(f, "Cutoff({:?})", cutoff),
         }
     }
@@ -759,8 +771,8 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
             Self::Var(_) => 0,
             Self::Map(_) | Self::Cutoff(_) => 1,
             Self::Map2(_) => 2,
-            Self::BindLhsChange(_) => 1,
-            Self::BindMain(_) => 2,
+            Self::BindLhsChange(..) => 1,
+            Self::BindMain(..) => 2,
         }
     }
 }

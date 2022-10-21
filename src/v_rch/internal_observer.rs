@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 use std::{cell::Cell, rc::Weak};
 
-use super::node::PackedNode;
+use super::{NodeRef, Value};
 use super::Incr;
 
 pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a>>;
@@ -9,7 +9,7 @@ pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a>>;
 pub(crate) trait ErasedObserver<'a>: Debug + 'a {
     fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<State>;
-    fn observing(&self) -> PackedNode;
+    fn observing(&self) -> NodeRef<'a>;
 }
 
 pub struct InternalObserver<'a, T> {
@@ -39,7 +39,7 @@ impl Display for ObserverError {
 }
 impl std::error::Error for ObserverError {}
 
-impl<'a, T: Debug> Debug for InternalObserver<'a, T> {
+impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalObserver")
             .field("state", &self.state.get())
@@ -48,7 +48,7 @@ impl<'a, T: Debug> Debug for InternalObserver<'a, T> {
     }
 }
 
-impl<'a, T: Debug + Clone + 'a> InternalObserver<'a, T> {
+impl<'a, T: Value<'a>> InternalObserver<'a, T> {
     pub(crate) fn new(observing: Incr<'a, T>) -> Self {
         Self {
             state: Cell::new(State::Created),
@@ -68,7 +68,7 @@ impl<'a, T: Debug + Clone + 'a> InternalObserver<'a, T> {
         }
     }
 }
-impl<'a, T: 'a> ErasedObserver<'a> for InternalObserver<'a, T> {
+impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
     fn use_is_allowed(&self) -> bool {
         match self.state.get() {
             State::Created | State::InUse => true,
@@ -78,7 +78,7 @@ impl<'a, T: 'a> ErasedObserver<'a> for InternalObserver<'a, T> {
     fn state(&self) -> &Cell<State> {
         &self.state
     }
-    fn observing(&self) -> PackedNode {
+    fn observing(&self) -> NodeRef<'a> {
         self.observing.node.clone().packed()
     }
 }

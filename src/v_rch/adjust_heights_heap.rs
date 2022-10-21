@@ -1,11 +1,10 @@
 use crate::Invariant;
 
-use super::node::ErasedNode;
+use super::NodeRef;
 use super::recompute_heap::RecomputeHeap;
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
-pub(crate) type NodeRef<'a> = &'a dyn ErasedNode<'a>;
 type Queue<'a> = VecDeque<NodeRef<'a>>;
 
 #[derive(Debug)]
@@ -53,7 +52,7 @@ impl<'a> AdjustHeightsHeap<'a> {
             q.push_back(node);
         }
     }
-    pub(crate) fn remove_min(&mut self) -> Option<NodeRef<'a>> {
+    pub(crate) fn remove_min(&'_ mut self) -> Option<NodeRef<'a>> {
         if self.is_empty() {
             return None;
         }
@@ -136,7 +135,7 @@ impl<'a> AdjustHeightsHeap<'a> {
             let ci = inner.borrow();
             if ci.num_parents() > 0 {
                 for parent in ci.parents() {
-                    let parent = parent.as_ref().unwrap().upgrade().unwrap();
+                    let parent = parent.as_ref().and_then(Weak::upgrade).unwrap();
                     self.ensure_height_requirement(
                         &original_child,
                         &original_parent,

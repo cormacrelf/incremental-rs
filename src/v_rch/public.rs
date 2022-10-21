@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use std::rc::Rc;
 
 use super::internal_observer::InternalObserver;
 pub use super::internal_observer::ObserverError;
@@ -6,14 +7,15 @@ use super::node::NodeId;
 pub use super::state::State;
 use super::var::Var as InternalVar;
 pub use super::Incr;
+pub use super::Value;
 
 #[derive(Clone)]
 pub struct Observer<'a, T> {
-    internal: &'a InternalObserver<'a, T>,
+    internal: Rc<InternalObserver<'a, T>>,
 }
 
-impl<'a, T: Debug + Clone + 'a> Observer<'a, T> {
-    pub(crate) fn new(internal: &'a InternalObserver<'a, T>) -> Self {
+impl<'a, T: Value<'a>> Observer<'a, T> {
+    pub(crate) fn new(internal: Rc<InternalObserver<'a, T>>) -> Self {
         Self { internal }
     }
     #[inline]
@@ -29,11 +31,11 @@ impl<'a, T: Debug + Clone + 'a> Observer<'a, T> {
 // Just to hide the Rc in the interface
 #[derive(Clone)]
 pub struct Var<'a, T: Debug + Clone + 'a> {
-    internal: &'a InternalVar<'a, T>,
+    internal: Rc<InternalVar<'a, T>>,
 }
 
-impl<'a, T: Debug + Clone + 'a> Var<'a, T> {
-    pub(crate) fn new(internal: &'a InternalVar<'a, T>) -> Self {
+impl<'a, T: Value<'a>> Var<'a, T> {
+    pub(crate) fn new(internal: Rc<InternalVar<'a, T>>) -> Self {
         Self { internal }
     }
     #[inline]
