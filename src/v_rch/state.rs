@@ -1,4 +1,5 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
+use super::array_fold::ArrayFold;
 use super::{NodeRef, Value};
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
@@ -63,7 +64,28 @@ impl<'a> State<'a> {
         })
     }
 
-    pub fn var<T: Debug + Clone + 'a>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
+    pub fn fold<F, T: Value<'a>, R: Value<'a>>(
+        self: &Rc<Self>,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, T) -> R + 'a,
+    {
+        let node = Node::<ArrayFold<'a, F, T, R>>::create(
+            self.clone(),
+            self.current_scope(),
+            Kind::ArrayFold(ArrayFold {
+                init,
+                fold: f.into(),
+                children: vec,
+            }),
+        );
+        Incr { node }
+    }
+
+    pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.clone(),
             self.current_scope(),

@@ -367,3 +367,40 @@ fn mutable_string() {
     incr.stabilise();
     assert_eq!(o.expect_value(), "hello, world");
 }
+
+#[test]
+fn fold() {
+    let incr = State::new();
+    let vars = [incr.var(10), incr.var(20), incr.var(30)];
+    let watches = vars.iter().map(Var::watch).collect();
+    let sum = incr.fold(watches, 0, |acc, x| acc + x);
+    let obs = sum.observe();
+    incr.stabilise();
+    assert_eq!(obs.expect_value(), 60);
+    vars[0].set(30);
+    vars[0].set(40);
+    incr.stabilise();
+    assert_eq!(obs.expect_value(), 90);
+}
+
+#[test]
+fn bind_fold() {
+    let incr = State::new();
+    let v1 = incr.var(10i32);
+    let v2 = incr.var(20);
+    let v3 = incr.var(30);
+    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+    let sum = vars.watch().binds(|incr, vars| {
+        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+        incr.fold(watches, 0, |acc, x| acc + x)
+    });
+    let obs = sum.observe();
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(60));
+    v1.set(40);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(90));
+    vars.set(vec![v1.clone()]);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(40));
+}

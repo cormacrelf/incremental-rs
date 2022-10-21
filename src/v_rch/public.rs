@@ -29,8 +29,8 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
 }
 
 // Just to hide the Rc in the interface
-#[derive(Clone)]
-pub struct Var<'a, T: Debug + Clone + 'a> {
+#[derive(Debug, Clone)]
+pub struct Var<'a, T: Value<'a>> {
     internal: Rc<InternalVar<'a, T>>,
 }
 
@@ -56,14 +56,17 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
 }
 
-impl<'a, T: Debug + Clone + 'a> Drop for Var<'a, T> {
+impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        // drop the reference to the node.
-        // a reference may still be held by the .watch() Incr. but we only needed it in
-        // order to create new .watch()s, and we have been dropped. so we're done.
-        //
-        // Does Node itself still need var's reference to itself? no. So it's fine for
-        // InternalVar to no longer store &'a Node.
-        *self.internal.node.borrow_mut() = None;
+        // check that we're the last public::Var holding a reference to the internal Var.
+        if let Some(internal) = Rc::get_mut(&mut self.internal) {
+            // drop the reference to the node.
+            // a reference may still be held by the .watch() Incr. but we only needed it in
+            // order to create new .watch()s, and we have been dropped. so we're done.
+            //
+            // Does Node itself still need var's reference to itself? no. So it's fine for
+            // InternalVar to no longer store &'a Node.
+            *internal.node.borrow_mut() = None;
+        }
     }
 }

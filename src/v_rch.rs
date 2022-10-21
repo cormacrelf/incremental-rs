@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 mod adjust_heights_heap;
+mod array_fold;
 mod internal_observer;
 mod node;
 mod recompute_heap;
@@ -8,6 +9,8 @@ mod scope;
 mod stabilisation_num;
 mod state;
 mod var;
+
+use crate::State;
 
 use self::node::{ErasedNode, Node, NodeGenerics};
 use self::scope::Scope;
@@ -56,6 +59,7 @@ where
     type F1 = fn(Self::I1) -> R;
     type F2 = F;
     type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
@@ -89,6 +93,7 @@ where
     type F1 = F;
     type F2 = fn(Self::I1, Self::I2) -> R;
     type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
@@ -166,6 +171,7 @@ where
     type F1 = fn(Self::I1) -> Self::R;
     type F2 = fn(Self::I1, Self::I2) -> Self::R;
     type B1 = F;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 struct BindNodeGenerics<F, T, R> {
@@ -185,6 +191,7 @@ where
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
     type B1 = F;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T, R> Debug for BindNode<'a, F, T, R>
@@ -200,26 +207,11 @@ where
     }
 }
 
-pub(crate) struct ListAllNode<'a, R> {
-    inputs: Vec<Incr<'a, R>>,
-    output: RefCell<Vec<R>>,
-    prev: RefCell<Option<Vec<Incr<'a, R>>>>,
-}
-
-impl<'a, R> Debug for ListAllNode<'a, R>
-where
-    R: Debug + 'a,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ListAllNode")
-            // .field("inputs", &self.inputs)
-            .finish()
-    }
-}
 impl<'a, T: Value<'a>> Incr<'a, T> {
     pub(crate) fn ptr_eq(&self, other: &Incr<'a, T>) -> bool {
         Rc::ptr_eq(&self.node, &other.node)
     }
+
     // pub fn new(value: T) -> Self {
     //     let raw = Rc::new(RawValue {
     //         value: RefCell::new(value),
@@ -290,7 +282,16 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     //     new
     // }
 
-    pub fn bind<F, R>(&self, f: F) -> Incr<'a, R>
+    pub fn binds<F, R>(&self, mut f: F) -> Incr<'a, R>
+    where
+        R: Debug + Clone + 'a,
+        F: FnMut(&Rc<State<'a>>, T) -> Incr<'a, R> + 'a,
+    {
+        let cloned = self.node.state();
+        self.bind(move |value: T| f(&cloned, value))
+    }
+
+    pub fn bind<F, R>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Debug + Clone + 'a,
         F: FnMut(T) -> Incr<'a, R> + 'a,
@@ -369,6 +370,7 @@ impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for CutoffNode<'a, R> {
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
     type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {

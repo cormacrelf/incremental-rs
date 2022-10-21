@@ -1,6 +1,7 @@
 // use enum_dispatch::enum_dispatch;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
+use super::array_fold::ArrayFold;
 use super::internal_observer::ErasedObserver;
 use super::scope::Scope;
 use super::{state::State, var::Var};
@@ -304,7 +305,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
-            Kind::Map(_) | Kind::Map2(_) | Kind::BindLhsChange(..) | Kind::BindMain(..) => {
+            Kind::ArrayFold(_)
+            | Kind::Map(_)
+            | Kind::Map2(_)
+            | Kind::BindLhsChange(..)
+            | Kind::BindMain(..) => {
                 self.recomputed_at.get() == StabilisationNum(-1)
                     || self.is_stale_with_respect_to_a_child()
             }
@@ -422,6 +427,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                     f(1, rhs.node.packed())
                 }
             }
+            Kind::ArrayFold(af) => {
+                for (ix, child) in af.children.iter().enumerate() {
+                    f(ix as i32, child.node.packed())
+                }
+            }
             Kind::Var(var) => {}
             Kind::Cutoff(CutoffNode { input, .. }) => f(0, input.clone().packed()),
         }
@@ -432,6 +442,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn recomputed_at(&self) -> &Cell<StabilisationNum> {
         &self.recomputed_at
     }
+
     fn recompute(&self) {
         let t = self.inner.borrow().state.clone();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
@@ -514,6 +525,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
                 self.copy_child_d(&rhs.node, *token);
             }
+            Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
             _ => {}
         }
@@ -634,39 +646,38 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         }
         .into_rc()
     }
-    fn value(&self) -> G::R {
-        self.value_opt.borrow().clone().unwrap()
-    }
     fn maybe_change_value(&self, value: G::R) {
-        self.old_value_opt.replace(None);
-        self.old_value_opt.swap(&self.value_opt);
-        self.value_opt.replace(Some(value));
+        let old = self.value_opt.replace(Some(value));
         let inner = self.inner.borrow();
-        self.changed_at.set(inner.state.stabilisation_num.get());
-        inner
-            .state
-            .num_nodes_changed
-            .set(inner.state.num_nodes_changed.get() + 1);
-        /* if node.num_on_update_handlers > 0
-        then (
-        node.old_value_opt <- old_value_opt;
-        handle_after_stabilization node); */
-        let i = self.inner.borrow();
-        if i.num_parents() >= 1 {
-            for (parent_index, parent) in i
-                .parents()
-                .iter()
-                .enumerate()
-                .filter_map(|(i, x)| x.as_ref().and_then(|a| a.upgrade()).map(|a| (i, a)))
-            {
-                if !parent.is_in_recompute_heap() {
-                    println!(
-                        "inserting parent into recompute heap at height {:?}",
-                        parent.height()
-                    );
-                    let t = self.state();
-                    let mut rch = t.recompute_heap.borrow_mut();
-                    rch.insert(parent.packed());
+        // TODO: cutoffs!
+        let should_cutoff = || false;
+        if old.is_none() || !should_cutoff() {
+            self.changed_at.set(inner.state.stabilisation_num.get());
+            inner
+                .state
+                .num_nodes_changed
+                .set(inner.state.num_nodes_changed.get() + 1);
+            /* if node.num_on_update_handlers > 0
+            then (
+            node.old_value_opt <- old_value_opt;
+            handle_after_stabilization node); */
+            let i = self.inner.borrow();
+            if i.num_parents() >= 1 {
+                for (parent_index, parent) in i
+                    .parents()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, x)| x.as_ref().and_then(|a| a.upgrade()).map(|a| (i, a)))
+                {
+                    if !parent.is_in_recompute_heap() {
+                        println!(
+                            "inserting parent into recompute heap at height {:?}",
+                            parent.height()
+                        );
+                        let t = self.state();
+                        let mut rch = t.recompute_heap.borrow_mut();
+                        rch.insert(parent.packed());
+                    }
                 }
             }
         }
@@ -737,16 +748,18 @@ pub trait NodeGenerics<'a>: 'a {
     type F1: FnMut(Self::I1) -> Self::R + 'a;
     type F2: FnMut(Self::I1, Self::I2) -> Self::R + 'a;
     type B1: FnMut(Self::I1) -> Incr<'a, Self::D> + 'a;
+    type Fold: FnMut(Self::R, Self::I1) -> Self::R + 'a;
 }
 
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Invalid,
     Uninitialised,
+    ArrayFold(ArrayFold<'a, G::Fold, G::I1, G::R>),
     Var(Rc<Var<'a, G::R>>),
     Map(MapNode<'a, G::F1, G::I1, G::R>),
     Map2(super::Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(Unit<G::R>, Rc<super::BindNode<'a, G::B1, G::I1, G::D>>),
-    BindMain(Id<G::D, G::R>, Rc<super::BindNode<'a, G::B1, G::I1, G::D>>),
+    BindLhsChange(Unit<G::R>, Rc<BindNode<'a, G::B1, G::I1, G::D>>),
+    BindMain(Id<G::D, G::R>, Rc<BindNode<'a, G::B1, G::I1, G::D>>),
     Cutoff(super::CutoffNode<'a, G::R>),
 }
 
@@ -755,6 +768,7 @@ impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
         match self {
             Kind::Invalid => write!(f, "Invalid"),
             Kind::Uninitialised => write!(f, "Uninitialised"),
+            Kind::ArrayFold(af) => write!(f, "Var({:?})", af),
             Kind::Var(var) => write!(f, "Var({:?})", var),
             Kind::Map(map) => write!(f, "Map({:?})", map),
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
@@ -771,6 +785,7 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
         match self {
             Self::Invalid => 0,
             Self::Uninitialised => 0,
+            Self::ArrayFold(ArrayFold { children, .. }) => children.len(),
             Self::Var(_) => 0,
             Self::Map(_) | Self::Cutoff(_) => 1,
             Self::Map2(_) => 2,

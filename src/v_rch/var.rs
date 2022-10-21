@@ -18,6 +18,7 @@ impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for VarGenerics<'a, R> {
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
     type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
 }
 
 pub struct Var<'a, T: Debug + Clone + 'a> {
