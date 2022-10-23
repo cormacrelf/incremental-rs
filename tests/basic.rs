@@ -404,3 +404,25 @@ fn bind_fold() {
     incr.stabilise();
     assert_eq!(obs.value(), Ok(40));
 }
+
+#[test]
+fn unordered_fold() {
+    let incr = State::new();
+    let v1 = incr.var(10i32);
+    let v2 = incr.var(20);
+    let v3 = incr.var(30);
+    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+    let sum = vars.watch().binds(|incr, vars| {
+        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+        incr.unordered_fold(watches, 0, |acc, x| acc + x, |acc, old, new| acc + new - old)
+    });
+    let obs = sum.observe();
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(60));
+    v1.set(40);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(90));
+    vars.set(vec![v1.clone()]);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(40));
+}

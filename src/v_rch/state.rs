@@ -1,5 +1,6 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
+use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value};
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
@@ -75,6 +76,29 @@ impl<'a> State<'a> {
         F: FnMut(R, T) -> R + 'a,
     {
         let node = Node::<ArrayFold<'a, F, T, R>>::create(
+            self.clone(),
+            self.current_scope(),
+            Kind::ArrayFold(ArrayFold {
+                init,
+                fold: f.into(),
+                children: vec,
+            }),
+        );
+        Incr { node }
+    }
+
+    pub fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
+        self: &Rc<Self>,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+        update: U,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, T) -> R + 'a,
+        U: FnMut(R, T, T) -> R + 'a,
+    {
+        let node = Node::<UnorderedArrayFold<'a, F, U, T, R>>::create(
             self.clone(),
             self.current_scope(),
             Kind::ArrayFold(ArrayFold {
