@@ -1,5 +1,6 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
+use super::symmetric_fold::BTreeMapSymmetricFold;
 use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value};
 
@@ -12,6 +13,7 @@ use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
@@ -108,6 +110,34 @@ impl<'a> State<'a> {
             }),
         );
         Incr { node }
+    }
+
+    pub fn btreemap_unordered_fold<FAdd, FRemove, K, V, R>(
+        self: &Rc<Self>,
+        map: Incr<'a, BTreeMap<K, V>>,
+        init: R,
+        mut add: FAdd,
+        mut remove: FRemove,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<'a, R>
+    where
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        R: Value<'a>,
+        FAdd: FnMut(R, &K, &V) -> R + 'a,
+        FRemove: FnMut(R, &K, &V) -> R + 'a,
+    {
+        map.with_old(move |old, new_in| match old {
+            None => new_in
+                .iter()
+                .fold(init.clone(), |acc, (k, v)| add(acc, k, v)),
+            Some((old_in, old_out)) => {
+                if revert_to_init_when_empty && new_in.is_empty() {
+                    return init.clone();
+                }
+                old_in.symmetric_fold(&new_in, old_out, &mut add, &mut remove)
+            }
+        })
     }
 
     pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {

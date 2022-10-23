@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use incremental::{Observer, ObserverError, State, Var};
 
@@ -414,7 +414,12 @@ fn unordered_fold() {
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
     let sum = vars.watch().binds(|incr, vars| {
         let watches: Vec<_> = vars.iter().map(Var::watch).collect();
-        incr.unordered_fold(watches, 0, |acc, x| acc + x, |acc, old, new| acc + new - old)
+        incr.unordered_fold(
+            watches,
+            0,
+            |acc, x| acc + x,
+            |acc, old, new| acc + new - old,
+        )
     });
     let obs = sum.observe();
     incr.stabilise();
@@ -425,4 +430,45 @@ fn unordered_fold() {
     vars.set(vec![v1.clone()]);
     incr.stabilise();
     assert_eq!(obs.value(), Ok(40));
+}
+
+#[test]
+fn incr_map_uf() {
+    let incr = State::new();
+    let mut b = BTreeMap::new();
+    b.insert("five", 5);
+    b.insert("eight", 8);
+
+    let setter = incr.var(b.clone());
+
+    // let list = vec![ 1, 2, 3 ];
+    // let sum = list.into_iter().fold(0, |acc, x| acc + x);
+
+    let sum = incr.btreemap_unordered_fold(
+        setter.watch(),
+        0i32,
+        |acc, _, new| dbg!(acc + new),
+        |acc, _, old| dbg!(acc - old),
+        true,
+    );
+
+    let o = sum.observe();
+
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(13));
+
+    b.remove("five");
+    setter.set(b.clone());
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(8));
+
+    b.insert("five", 100);
+    setter.set(b.clone());
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(108));
+
+    b.insert("five", 105);
+    setter.set(b.clone());
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(113));
 }

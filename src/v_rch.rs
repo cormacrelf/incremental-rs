@@ -9,6 +9,7 @@ mod recompute_heap;
 mod scope;
 mod stabilisation_num;
 mod state;
+mod symmetric_fold;
 mod unordered_fold;
 mod var;
 
@@ -242,6 +243,20 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             let v = (counter, x);
             counter += 1;
             v
+        })
+    }
+
+    pub fn with_old<R, F>(&self, mut f: F) -> Incr<'a, R>
+    where
+        R: Value<'a>,
+        F: FnMut(Option<(T, R)>, T) -> R + 'a,
+    {
+        let old: RefCell<Option<(T, R)>> = RefCell::new(None);
+        self.map(move |a| {
+            let mut o = old.borrow_mut();
+            let b: R = f(o.take(), a.clone());
+            *o = Some((a, b.clone()));
+            b
         })
     }
 
