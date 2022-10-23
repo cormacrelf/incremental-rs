@@ -1,22 +1,20 @@
 // use enum_dispatch::enum_dispatch;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
-use super::array_fold::ArrayFold;
 use super::internal_observer::ErasedObserver;
+use super::kind::{Kind, NodeGenerics};
 use super::scope::Scope;
-use super::{state::State, var::Var};
-use super::{BindNode, CutoffNode, Incr, Map2Node, MapNode, NodeRef, Value, WeakNode};
+use super::state::State;
+use super::{CutoffNode, Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
+use refl::Id;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-
-use refl::{refl, Id};
-type Unit<T> = Id<(), T>;
 
 #[derive(Debug, Copy, Clone)]
 pub struct NodeId(usize);
@@ -46,11 +44,7 @@ pub(crate) struct NodeInner<'a> {
     // parent1_and_beyond
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
-    // next_node_in_same_scope
-    pub(crate) prev_in_recompute_heap: Option<NodeRef<'a>>,
-    pub(crate) next_in_recompute_heap: Option<NodeRef<'a>>,
     pub(crate) force_necessary: bool,
-    pub(crate) parents: Vec<Option<WeakNode<'a>>>,
     pub(crate) observers: Vec<Weak<dyn ErasedObserver<'a>>>,
 }
 
@@ -68,6 +62,7 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
     weak_self: Weak<Self>,
+    pub(crate) parents: Vec<ParentRef<'a, G::R>>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -76,6 +71,9 @@ pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
     fn as_input(self: Rc<Self>) -> Input<'a, R>;
     fn latest(&self) -> R;
     fn value_opt(&self) -> Option<R>;
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
+    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
+    fn remove_parent(&mut self, child_index: i32, parent_weak: ParentRef<'a, R>);
 }
 
 impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
@@ -88,19 +86,133 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     fn value_opt(&self) -> Option<G::R> {
         self.value_opt.borrow().clone()
     }
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+        println!("add_parent_without_adjusting_heights");
+        debug_assert!({
+            let Some(p) = parent_weak.upgrade() else { panic!() };
+            p.is_necessary()
+        });
+        let was_necessary = self.is_necessary();
+        let mut child_i = self.inner.borrow_mut();
+        self.add_parent(child_index, parent_weak);
+        drop(child_i);
+        if !self.is_valid() {
+            println!("TODO: propagate_invalidity");
+            // child_i.state.propagate_invalidity.push(parent);
+        }
+        if !was_necessary {
+            self.became_necessary();
+        }
+    }
+    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+        let parent = parent_weak.upgrade().unwrap();
+        debug_assert!(parent.is_necessary());
+        self.add_parent_without_adjusting_heights(child_index, parent_weak);
+        if self.height() >= parent.height() {
+            // This happens when change_child whacks a neew child in
+            // What's happening here is that
+            println!(
+                "self.height() = {:?}, parent.height() = {:?}",
+                self.height(),
+                parent.height()
+                );
+            let t = self.state();
+            let mut ahh = t.adjust_heights_heap.borrow_mut();
+            let mut rch = t.recompute_heap.borrow_mut();
+            ahh.adjust_heights(&mut rch, self.packed(), parent.packed());
+        }
+        self.state().propagate_invalidity();
+        debug_assert!(parent.is_necessary());
+        /* we only add necessary parents */
+        if !parent.is_in_recompute_heap()
+            && (parent.recomputed_at().get().is_none() || self.edge_is_stale(parent.weak()))
+            {
+                let t = self.state();
+                let mut rch = t.recompute_heap.borrow_mut();
+                rch.insert(parent.packed());
+            }
+    }
+    fn remove_parent(&mut self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+        let child = self;
+        let child_inner = child.inner();
+        let mut ci = child_inner.borrow_mut();
+        // println!("remove_parent {self:?}, ix {child_index}");
+        let parent = parent_weak.upgrade().unwrap();
+        let parent_inner = parent.inner();
+        let mut parent_i = parent_inner.borrow_mut();
+
+        debug_assert!(child.num_parents() >= 1);
+        let parent_index = parent_i.my_parent_index_in_child_at_index[child_index as usize];
+        debug_assert!(parent_weak.ptr_eq(
+            &child.parents[parent_index as usize]
+                .clone()
+        ));
+        let last_parent_index = child.num_parents() - 1;
+        if (parent_index as usize) < last_parent_index {
+            // we swap the parent the end of the array into this one's position. This keeps the array
+            // small.
+            let end_p_weak = child.parents[last_parent_index].clone();
+            if let Some(end_p) = end_p_weak.upgrade() {
+                let end_p_inner = end_p.inner();
+                let mut end_p_i = end_p_inner.borrow_mut();
+                let end_child_index = ci.my_child_index_in_parent_at_index[last_parent_index];
+                // link parent_index & end_child_index
+                end_p_i.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
+                ci.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
+            }
+            // unlink last_parent_index & child_index
+            parent_i.my_parent_index_in_child_at_index[child_index as usize] = -1;
+            ci.my_child_index_in_parent_at_index[last_parent_index] = -1;
+            // now do what we just did but super easily in the actual Vec
+            child.parents.swap_remove(parent_index as usize);
+        }
+    }
+
+}
+
+pub(crate) trait ParentNode<'a, I>: Debug + ErasedNode<'a> {
+    // fn as_parent(&self) -> ParentRef<'a, I>;
+    fn child_changed(&mut self, child: &Input<'a, I>, child_index: i32, old_value_opt: Option<I>);
+}
+
+
+type ParentRef<'a, I> = Weak<dyn ParentNode<'a, I> + 'a>;
+
+impl<'a, G: NodeGenerics<'a>> ParentNode<'a, G::I1> for Node<'a, G> {
+    fn child_changed(
+        &mut self,
+        child: &Input<'a, G::I1>,
+        child_index: i32,
+        old_value_opt: Option<G::I1>,
+    ) {
+        let k = self.kind.borrow();
+        match &*k {
+            // Kind::Expert => ...,
+            Kind::UnorderedArrayFold(uaf) => {
+                let new_value = child.latest();
+                uaf.child_changed(child, child_index, old_value_opt, new_value)
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(crate) trait ErasedNode<'a>: Debug {
+    fn num_parents(&self) -> usize;
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32>;
+    fn ensure_parent_height_requirements(
+        &self,
+        ahh: &mut AdjustHeightsHeap<'a>,
+        original_child: &NodeRef,
+        original_parent: &NodeRef,
+    );
     fn set_height(&self, height: i32);
     fn old_height(&self) -> i32;
     fn set_old_height(&self, height: i32);
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode<'a>);
-    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode<'a>);
     fn is_stale(&self) -> bool;
     fn is_stale_with_respect_to_a_child(&self) -> bool;
     fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool;
@@ -108,8 +220,6 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn needs_to_be_recomputed(&self) -> bool;
     fn became_necessary(&self);
     fn became_unnecessary(&self);
-    fn remove_children(&self);
-    fn remove_child(&self, child: NodeRef<'a>, child_index: i32);
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
@@ -129,72 +239,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn created_in(&self) -> Scope<'a>;
 }
 
-impl<'a> NodeInner<'a> {
-    fn is_necessary(&self) -> bool {
-        self.num_parents() > 0
-            || !self.observers.is_empty()
-            // || kind is freeze
-            || self.force_necessary
-    }
-    pub(crate) fn parents(&self) -> &[Option<WeakNode<'a>>] {
-        &self.parents[..]
-    }
-    pub(crate) fn num_parents(&self) -> usize {
-        self.parents.len()
-    }
-    fn remove_parent(&mut self, child_index: i32, parent_weak: WeakNode<'a>) {
-        // println!("remove_parent {self:?}, ix {child_index}");
-        let parent = parent_weak.upgrade().unwrap();
-        let parent_inner = parent.inner();
-        let mut parent_i = parent_inner.borrow_mut();
-
-        let child = self;
-        debug_assert!(child.num_parents() >= 1);
-        let parent_index = parent_i.my_parent_index_in_child_at_index[child_index as usize];
-        debug_assert!(parent_weak.ptr_eq(&child.parents[parent_index as usize].clone().unwrap()));
-        let last_parent_index = child.num_parents() - 1;
-        if (parent_index as usize) < last_parent_index {
-            // we swap the parent the end of the array into this one's position. This keeps the array
-            // small.
-            let end_p_weak = child.parents[last_parent_index].clone().unwrap();
-            if let Some(end_p) = end_p_weak.upgrade() {
-                let end_p_inner = end_p.inner();
-                let mut end_p_i = end_p_inner.borrow_mut();
-                let end_child_index = child.my_child_index_in_parent_at_index[last_parent_index];
-                // link parent_index & end_child_index
-                end_p_i.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
-                child.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
-            }
-            // unlink last_parent_index & child_index
-            parent_i.my_parent_index_in_child_at_index[child_index as usize] = -1;
-            child.my_child_index_in_parent_at_index[last_parent_index] = -1;
-            // now do what we just did but super easily in the actual Vec
-            child.parents.swap_remove(parent_index as usize);
-        }
-    }
-    fn add_parent(&mut self, child_index: i32, parent_weak: WeakNode<'a>) {
-        let child = self;
-        // we're appending here
-        let parent_index = child.parents.len() as i32;
-        let parent = parent_weak.upgrade().unwrap();
-        let parent_inner = parent.inner();
-        let mut parent_i = parent_inner.borrow_mut();
-
-        while child.my_child_index_in_parent_at_index.len() <= parent_index as usize {
-            child.my_child_index_in_parent_at_index.push(-1);
-        }
-        println!("ci_in_pia[{parent_index}] = {child_index}");
-        child.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
-
-        while parent_i.my_parent_index_in_child_at_index.len() <= child_index as usize {
-            parent_i.my_parent_index_in_child_at_index.push(-1);
-        }
-        println!("pi_in_cia[{child_index}] = {parent_index}");
-        parent_i.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
-
-        child.parents.push(Some(parent_weak));
-    }
-}
+    
 
 impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -207,15 +252,16 @@ impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
             .finish()
     }
 }
+
 impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn id(&self) -> NodeId {
         self.id
     }
     fn weak(&self) -> WeakNode<'a> {
-        self.weak_self.clone()
+        self.weak_self.clone() as WeakNode<'a>
     }
     fn packed(&self) -> NodeRef<'a> {
-        self.weak_self.upgrade().unwrap()
+        self.weak_self.upgrade().unwrap() as NodeRef<'a>
     }
     fn inner(&self) -> &RefCell<NodeInner<'a>> {
         &self.inner
@@ -239,6 +285,22 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32> {
         &self.height_in_adjust_heights_heap
     }
+    fn ensure_parent_height_requirements(
+        &self,
+        ahh: &mut AdjustHeightsHeap<'a>,
+        original_child: &NodeRef,
+        original_parent: &NodeRef,
+    ) {
+        for parent in self.parents() {
+            let parent = parent.upgrade().unwrap().packed();
+            ahh.ensure_height_requirement(
+                &original_child,
+                &original_parent,
+                &self.packed(),
+                &parent,
+            );
+        }
+    }
     fn set_height(&self, height: i32) {
         println!("HHHHHHHHH node id={:?}, set height to {height}", self.id);
         // TODO: checks
@@ -249,52 +311,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
     fn set_old_height(&self, height: i32) {
         self.old_height.set(height);
-    }
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: WeakNode<'a>) {
-        println!("add_parent_without_adjusting_heights");
-        debug_assert!({
-            let Some(p) = parent_weak.upgrade() else { panic!() };
-            p.is_necessary()
-        });
-        let was_necessary = self.is_necessary();
-        let mut child_i = self.inner.borrow_mut();
-        child_i.add_parent(child_index, parent_weak);
-        drop(child_i);
-        if !self.is_valid() {
-            println!("TODO: propagate_invalidity");
-            // child_i.state.propagate_invalidity.push(parent);
-        }
-        if !was_necessary {
-            self.became_necessary();
-        }
-    }
-    fn state_add_parent(&self, child_index: i32, parent_weak: WeakNode<'a>) {
-        let parent = parent_weak.upgrade().unwrap();
-        debug_assert!(parent.is_necessary());
-        self.add_parent_without_adjusting_heights(child_index, parent_weak.clone());
-        if self.height() >= parent.height() {
-            // This happens when change_child whacks a neew child in
-            // What's happening here is that
-            println!(
-                "self.height() = {:?}, parent.height() = {:?}",
-                self.height(),
-                parent.height()
-            );
-            let t = self.state();
-            let mut ahh = t.adjust_heights_heap.borrow_mut();
-            let mut rch = t.recompute_heap.borrow_mut();
-            ahh.adjust_heights(&mut rch, self.packed(), parent.packed());
-        }
-        self.state().propagate_invalidity();
-        debug_assert!(parent.is_necessary());
-        /* we only add necessary parents */
-        if !parent.is_in_recompute_heap()
-            && (parent.recomputed_at().get().is_none() || self.edge_is_stale(parent_weak.clone()))
-        {
-            let t = self.state();
-            let mut rch = t.recompute_heap.borrow_mut();
-            rch.insert(parent);
-        }
     }
     fn is_stale(&self) -> bool {
         let k = self.kind.borrow();
@@ -334,10 +350,16 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
     fn is_necessary(&self) -> bool {
         let i = self.inner().borrow();
-        i.is_necessary() // || kind is freeze
+        self.num_parents() > 0
+            || !i.observers.is_empty()
+            // || kind is freeze
+            || i.force_necessary
     }
     fn needs_to_be_recomputed(&self) -> bool {
         self.is_necessary() && self.is_stale()
+    }
+    fn num_parents(&self) -> usize {
+        self.parents.len()
     }
     fn became_necessary(&self) {
         println!("became_necessary: {:?}", self);
@@ -353,19 +375,26 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         - set [node]'s height.
         - add [node] to the recompute heap, if necessary. */
         let weak = self.clone().weak();
-        let mut h = {
+        let as_parent = self.as_parent();
+        let h = Cell::new({
             self.set_height(self.created_in.height() + 1);
             self.height()
-        };
-        self.foreach_child(&mut |index, child| {
-            child.add_parent_without_adjusting_heights(index, weak.clone());
-            {
-                if child.height() >= h {
-                    h = child.height() + 1;
-                }
-            }
         });
-        self.set_height(h);
+        self.foreach_child_typed(ForeachChild {
+            i1: &|index, child| {
+                child.add_parent_without_adjusting_heights(index, self.as_parent());
+                if child.height() >= h.get() {
+                    h.set(child.height() + 1);
+                }
+            },
+            i2: &|index, child| {
+                child.add_parent_without_adjusting_heights(index, self.as_parent2());
+                if child.height() >= h.get() {
+                    h.set(child.height() + 1);
+                }
+            },
+        });
+        self.set_height(h.get());
         debug_assert!(!self.is_in_recompute_heap());
         debug_assert!(self.is_necessary());
         if self.is_stale() {
@@ -399,17 +428,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             rch.remove(self.packed());
         }
     }
-    fn remove_child(&self, child: NodeRef<'a>, child_index: i32) {
-        {
-            let child_inner = child.inner();
-            let mut ci = child_inner.borrow_mut();
-            ci.remove_parent(child_index, self.weak());
-        }
-        child.check_if_unnecessary();
-    }
-    fn remove_children(&self) {
-        self.foreach_child(&mut |ix, child| self.remove_child(child, ix));
-    }
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ()) {
         let k = self.kind.borrow();
         match &*k {
@@ -429,6 +447,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
             Kind::ArrayFold(af) => {
                 for (ix, child) in af.children.iter().enumerate() {
+                    f(ix as i32, child.node.packed())
+                }
+            }
+            Kind::UnorderedArrayFold(uaf) => {
+                for (ix, child) in uaf.children.iter().enumerate() {
                     f(ix as i32, child.node.packed())
                 }
             }
@@ -475,7 +498,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 println!("-- recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
-            Kind::BindLhsChange(unit, bind) => {
+            Kind::BindLhsChange(id, bind) => {
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let lhs = bind.lhs.latest();
@@ -499,7 +522,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 saying that [needs_to_be_computed bind_main] in [propagate_invalidity] */
                 self.changed_at.set(t.stabilisation_num.get());
                 if let Some(main) = bind.main.upgrade() {
-                    main.change_child(old_rhs.clone(), rhs, Kind::<G>::BIND_RHS_CHILD_INDEX);
+                    main.change_child_bind_rhs(old_rhs.clone(), rhs, Kind::<G>::BIND_RHS_CHILD_INDEX);
                 }
                 if old_rhs.is_some() {
                     /* We invalidate after [change_child], because invalidation changes the [kind] of
@@ -517,13 +540,13 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 }
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
-                // debug_assert!(self.is_valid());
-                self.maybe_change_value(unit.cast(()));
+                debug_assert!(self.is_valid());
+                self.maybe_change_value(id.r_unit.cast(()));
             }
-            Kind::BindMain(token, bind) => {
+            Kind::BindMain(id, bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
-                self.copy_child_d(&rhs.node, *token);
+                self.copy_child_d(&rhs.node, id.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
@@ -625,10 +648,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
                 state,
-                prev_in_recompute_heap: None,
-                next_in_recompute_heap: None,
                 observers: Default::default(),
-                parents: vec![],
                 my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
                 my_child_index_in_parent_at_index: vec![-1],
                 force_necessary: false,
@@ -643,9 +663,11 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             value_opt: RefCell::new(None),
             old_value_opt: RefCell::new(None),
             kind: RefCell::new(kind),
+            parents: vec![],
         }
         .into_rc()
     }
+
     fn maybe_change_value(&self, value: G::R) {
         let old = self.value_opt.replace(Some(value));
         let inner = self.inner.borrow();
@@ -661,14 +683,17 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             then (
             node.old_value_opt <- old_value_opt;
             handle_after_stabilization node); */
-            let i = self.inner.borrow();
-            if i.num_parents() >= 1 {
-                for (parent_index, parent) in i
-                    .parents()
+            if self.num_parents() >= 1 {
+                for (parent_index, parent) in self
+                    .parents
                     .iter()
                     .enumerate()
-                    .filter_map(|(i, x)| x.as_ref().and_then(|a| a.upgrade()).map(|a| (i, a)))
+                    .filter_map(|(i, x)| x.upgrade().map(|a| (i, a)))
                 {
+                    let i = self.inner().borrow();
+                    let child_index = i.my_child_index_in_parent_at_index[parent_index];
+                    parent.child_changed(&self.as_child(), child_index, old);
+                    debug_assert!(parent.needs_to_be_recomputed());
                     if !parent.is_in_recompute_heap() {
                         println!(
                             "inserting parent into recompute heap at height {:?}",
@@ -682,19 +707,26 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             }
         }
     }
-    fn change_child<T: Value<'a>>(
+
+    fn change_child_bind_rhs(
         &self,
-        old_child: Option<Incr<'a, T>>,
-        new_child: Incr<'a, T>,
+        old_child: Option<Incr<'a, G::BindRhs>>,
+        new_child: Incr<'a, G::BindRhs>,
         child_index: i32,
     ) {
+        let k = self.kind.borrow();
+        let id = match &*k {
+            Kind::BindMain(id, _) => id,
+            _ => return
+        };
+        let new_child_node = id.input_rhs_i1.cast(new_child.node);
         match old_child {
             None => {
                 println!(
                     "change_child simply adding parent to {:?} at child_index {child_index}",
-                    new_child.node
+                    new_child_node
                 );
-                new_child.node.state_add_parent(child_index, self.weak());
+                new_child_node.state_add_parent(child_index, self.as_parent());
             }
             Some(old_child) => {
                 if old_child.ptr_eq(&new_child) {
@@ -702,15 +734,16 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                     return;
                 }
                 {
-                    let oc_inner = old_child.node.inner();
-                    let mut oci = oc_inner.borrow_mut();
-                    oci.remove_parent(child_index, self.weak());
+                    let old_child_node = id.input_rhs_i1.cast(old_child.node);
+                    old_child_node.remove_parent(child_index, self.as_parent());
                     /* We force [old_child] to temporarily be necessary so that [add_parent] can't
                     mistakenly think it is unnecessary and transition it to necessary (which would
                     add duplicate edges and break things horribly). */
+                    let oc_inner = old_child.node.inner();
+                    let mut oci = oc_inner.borrow_mut();
                     oci.force_necessary = true;
                     {
-                        new_child.node.state_add_parent(child_index, self.weak());
+                        new_child_node.state_add_parent(child_index, self.as_parent());
                     }
                     oci.force_necessary = false;
                     drop(oci);
@@ -719,8 +752,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             }
         }
     }
-}
-impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
+
     fn copy_child(&self, child: &Input<G::R>) {
         if child.is_valid() {
             self.maybe_change_value(child.latest());
@@ -729,7 +761,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             self.state().propagate_invalidity();
         }
     }
-    fn copy_child_d(&self, child: &Input<G::D>, token: Id<G::D, G::R>) {
+
+    fn copy_child_d(&self, child: &Input<G::BindRhs>, token: Id<G::BindRhs, G::R>) {
         if child.is_valid() {
             let latest = child.latest();
             self.maybe_change_value(token.cast(latest));
@@ -738,59 +771,102 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             self.state().propagate_invalidity();
         }
     }
-}
 
-pub trait NodeGenerics<'a>: 'a {
-    type R: Value<'a>;
-    type D: Value<'a>;
-    type I1: Value<'a>;
-    type I2: Value<'a>;
-    type F1: FnMut(Self::I1) -> Self::R + 'a;
-    type F2: FnMut(Self::I1, Self::I2) -> Self::R + 'a;
-    type B1: FnMut(Self::I1) -> Incr<'a, Self::D> + 'a;
-    type Fold: FnMut(Self::R, Self::I1) -> Self::R + 'a;
-}
+    fn parents(&self) -> &[ParentRef<'a, G::R>] {
+        &self.parents[..]
+    }
+    fn num_parents(&self) -> usize {
+        self.parents.len()
+    }
+    fn add_parent(&mut self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+        let child = self;
+        let child_inner = self.inner();
+        let ci = child_inner.borrow_mut();
 
-pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
-    Invalid,
-    Uninitialised,
-    ArrayFold(ArrayFold<'a, G::Fold, G::I1, G::R>),
-    Var(Rc<Var<'a, G::R>>),
-    Map(MapNode<'a, G::F1, G::I1, G::R>),
-    Map2(super::Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(Unit<G::R>, Rc<BindNode<'a, G::B1, G::I1, G::D>>),
-    BindMain(Id<G::D, G::R>, Rc<BindNode<'a, G::B1, G::I1, G::D>>),
-    Cutoff(super::CutoffNode<'a, G::R>),
-}
+        // we're appending here
+        let parent = parent_weak.upgrade().unwrap();
+        let parent_index = child.parents.len() as i32;
+        let parent_inner = parent.inner();
+        let mut parent_i = parent_inner.borrow_mut();
 
-impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Kind::Invalid => write!(f, "Invalid"),
-            Kind::Uninitialised => write!(f, "Uninitialised"),
-            Kind::ArrayFold(af) => write!(f, "Var({:?})", af),
-            Kind::Var(var) => write!(f, "Var({:?})", var),
-            Kind::Map(map) => write!(f, "Map({:?})", map),
-            Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
-            Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
-            Kind::BindMain(_, bind) => write!(f, "BindMain({:?})", bind),
-            Kind::Cutoff(cutoff) => write!(f, "Cutoff({:?})", cutoff),
+        while ci.my_child_index_in_parent_at_index.len() <= parent_index as usize {
+            ci.my_child_index_in_parent_at_index.push(-1);
+        }
+        println!("ci_in_pia[{parent_index}] = {child_index}");
+        ci.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
+
+        while parent_i.my_parent_index_in_child_at_index.len() <= child_index as usize {
+            parent_i.my_parent_index_in_child_at_index.push(-1);
+        }
+        println!("pi_in_cia[{child_index}] = {parent_index}");
+        parent_i.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
+
+        child.parents.push(parent_weak);
+    }
+    
+    fn as_parent(&self) -> ParentRef<'a, G::I1> {
+        self.weak_self.clone()
+    }
+    fn as_parent2(&self) -> ParentRef<'a, G::I2> {
+        self.weak_self.clone()
+    }
+    fn as_child(&self) -> Input<'a, G::R> {
+        self.weak_self.clone().upgrade().unwrap()
+    }
+    fn foreach_child_typed(&self, mut f: ForeachChild<'a, G>) {
+        let k = self.kind.borrow();
+        match &*k {
+            Kind::Invalid => {}
+            Kind::Uninitialised => {}
+            Kind::Map(MapNode { input, .. }) => (f.i1)(0, input.clone().as_input()),
+            Kind::Map2(Map2Node { one, two, .. }) => {
+                (f.i1)(0, one.clone().as_input());
+                (f.i2)(1, two.clone().as_input());
+            }
+            Kind::BindLhsChange(id, bind) => {
+                let input = id.input_lhs_i2.cast(bind.lhs.as_input());
+                (f.i2)(0, input)
+            }
+            Kind::BindMain(id, bind) => {
+                let input = id.input_lhs_i2.cast(bind.lhs_change.as_input());
+                (f.i2)(0, input);
+                if let Some(rhs) = bind.rhs.borrow().as_ref() {
+                    let input = id.input_rhs_i1.cast(rhs.node.as_input());
+                    (f.i1)(1, input)
+                }
+            }
+            Kind::ArrayFold(af) => {
+                for (ix, child) in af.children.iter().enumerate() {
+                    (f.i1)(ix as i32, child.node.as_input())
+                }
+            }
+            Kind::UnorderedArrayFold(uaf) => {
+                for (ix, child) in uaf.children.iter().enumerate() {
+                    (f.i1)(ix as i32, child.node.as_input());
+                }
+            }
+            Kind::Var(var) => {}
+            Kind::Cutoff(_) => unimplemented!(),
+            // Kind::Cutoff(CutoffNode { input, .. }) => (f.i1)(0, input.as_input()),
         }
     }
+
+    fn remove_children(&self) {
+        self.foreach_child_typed( ForeachChild {
+            i1: &|index, child| {
+                child.remove_parent(index, self.as_parent());
+                child.check_if_unnecessary();
+            },
+            i2: &|index, child| {
+                child.remove_parent(index, self.as_parent2());
+                child.check_if_unnecessary();
+            },
+        })
+    }
+
 }
 
-impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
-    pub const BIND_RHS_CHILD_INDEX: i32 = 1;
-    fn initial_num_children(&self) -> usize {
-        match self {
-            Self::Invalid => 0,
-            Self::Uninitialised => 0,
-            Self::ArrayFold(ArrayFold { children, .. }) => children.len(),
-            Self::Var(_) => 0,
-            Self::Map(_) | Self::Cutoff(_) => 1,
-            Self::Map2(_) => 2,
-            Self::BindLhsChange(..) => 1,
-            Self::BindMain(..) => 2,
-        }
-    }
+struct ForeachChild<'a, G: NodeGenerics<'a>> {
+    i1: &'a dyn FnMut(i32, Input<'a, G::I1>),
+    i2: &'a dyn FnMut(i32, Input<'a, G::I2>),
 }

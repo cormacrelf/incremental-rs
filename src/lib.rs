@@ -1,3 +1,5 @@
+#![feature(type_alias_impl_trait)]
+
 mod order;
 mod v1;
 mod v_rch;

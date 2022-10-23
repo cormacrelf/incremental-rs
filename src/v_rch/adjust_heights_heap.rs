@@ -3,7 +3,7 @@ use crate::Invariant;
 use super::recompute_heap::RecomputeHeap;
 use super::NodeRef;
 use std::collections::VecDeque;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 type Queue<'a> = VecDeque<NodeRef<'a>>;
 
@@ -131,19 +131,7 @@ impl<'a> AdjustHeightsHeap<'a> {
             if child.is_in_recompute_heap() {
                 rch.increase_height(&child, child.old_height());
             }
-            let inner = child.inner();
-            let ci = inner.borrow();
-            if ci.num_parents() > 0 {
-                for parent in ci.parents() {
-                    let parent = parent.as_ref().and_then(Weak::upgrade).unwrap();
-                    self.ensure_height_requirement(
-                        &original_child,
-                        &original_parent,
-                        &child,
-                        &parent,
-                    );
-                }
-            }
+            child.ensure_parent_height_requirements(self, &original_child, &original_parent);
             child.adjust_heights_bind_lhs_change(self, &original_child, &original_parent);
         }
         debug_assert!(self.is_empty());
@@ -166,19 +154,19 @@ impl<'a> Invariant for AdjustHeightsHeap<'a> {
         }
         assert!(self.max_height_seen >= 0);
         assert!(self.max_height_seen <= self.max_height_allowed());
-        self.queues.invariant();
+        // self.queues.invariant();
     }
 }
 
-impl<'a> Invariant for Vec<Queue<'a>> {
-    fn invariant(&self) {
-        let queues: &[Queue<'a>] = self.as_slice();
-        for (height, q) in queues.iter().enumerate() {
-            let q: &Queue<'a> = q;
-            let height = height as i32;
-            for node in q.iter() {
-                assert!(node.height_in_adjust_heights_heap().get() == height);
-            }
-        }
-    }
-}
+// impl<'a> Invariant for Vec<VecDeque<NodeRef<'a>>> {
+//     fn invariant(&self) {
+//         let queues: &[Queue<'a>] = self.as_slice();
+//         for (height, q) in queues.iter().enumerate() {
+//             let q: &Queue<'a> = q;
+//             let height = height as i32;
+//             for node in q.iter() {
+//                 assert!(node.height_in_adjust_heights_heap().get() == height);
+//             }
+//         }
+//     }
+// }

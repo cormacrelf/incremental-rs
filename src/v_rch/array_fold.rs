@@ -1,4 +1,4 @@
-use super::node::NodeGenerics;
+use super::kind::NodeGenerics;
 use super::{Incr, Value};
 use std::cell::RefCell;
 use std::fmt::{self, Debug};
@@ -30,13 +30,15 @@ where
     F: FnMut(R, I) -> R + 'a,
 {
     type R = R;
-    type D = ();
+    type BindLhs = ();
+    type BindRhs = ();
     type I1 = I;
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = F;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 impl<'a, F, I, R> Debug for ArrayFold<'a, F, I, R>

@@ -3,16 +3,20 @@
 mod adjust_heights_heap;
 mod array_fold;
 mod internal_observer;
+mod kind;
 mod node;
 mod recompute_heap;
 mod scope;
 mod stabilisation_num;
 mod state;
+mod unordered_fold;
 mod var;
 
 use crate::State;
+use crate::v_rch::kind::BindMainId;
 
-use self::node::{ErasedNode, Node, NodeGenerics};
+use self::kind::Kind;
+use self::node::{ErasedNode, Node};
 use self::scope::Scope;
 use fmt::Debug;
 use refl::refl;
@@ -23,6 +27,7 @@ use std::rc::{Rc, Weak};
 pub mod public;
 use public::Observer;
 
+use kind::NodeGenerics;
 use node::Input;
 
 /// Trait alias for `Debug + Clone + 'a`
@@ -53,13 +58,15 @@ where
     F: FnMut(T1, T2) -> R + 'a,
 {
     type R = R;
-    type D = ();
+    type BindLhs = ();
+    type BindRhs = ();
     type I1 = T1;
     type I2 = T2;
     type F1 = fn(Self::I1) -> R;
     type F2 = F;
-    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
@@ -87,13 +94,15 @@ where
     F: FnMut(T) -> R + 'a,
 {
     type R = R;
-    type D = ();
+    type BindLhs = ();
+    type BindRhs = ();
     type I1 = T;
     type I2 = ();
     type F1 = F;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
@@ -113,7 +122,7 @@ where
     F: FnMut(T) -> Incr<'a, R> + 'a,
 {
     lhs_change: Rc<Node<'a, BindLhsChangeNodeGenerics<F, T, R>>>,
-    main: Weak<Node<'a, BindNodeGenerics<F, T, R>>>,
+    main: Weak<Node<'a, BindNodeMainGenerics<F, T, R>>>,
     lhs: Input<'a, T>,
     mapper: RefCell<F>,
     rhs: RefCell<Option<Incr<'a, R>>>,
@@ -162,36 +171,43 @@ where
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
-    // lhs change stores () nothing
+    // lhs change's Node stores () nothing. just a sentinel.
     type R = ();
-    // but we keep R hanging around as G::D
-    type D = R;
-    type I1 = T;
-    type I2 = ();
+    type BindLhs = T;
+    type BindRhs = R;
+    // swap order so we can use as_parent with I1
+    type I1 = ();
+    type I2 = T;
     type F1 = fn(Self::I1) -> Self::R;
     type F2 = fn(Self::I1, Self::I2) -> Self::R;
     type B1 = F;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
-struct BindNodeGenerics<F, T, R> {
+struct BindNodeMainGenerics<F, T, R> {
     _phantom: std::marker::PhantomData<(F, T, R)>,
 }
 
-impl<'a, F, T, R> NodeGenerics<'a> for BindNodeGenerics<F, T, R>
+impl<'a, F, T, R> NodeGenerics<'a> for BindNodeMainGenerics<F, T, R>
 where
     F: FnMut(T) -> Incr<'a, R> + 'a,
     T: Debug + Clone + 'a,
     R: Debug + Clone + 'a,
 {
+    // We copy the output of the Rhs
     type R = R;
-    type D = R;
-    type I1 = T;
+    type BindLhs = T;
+    type BindRhs = R;
+    /// BindLhsChange (a sentinel)
+    type I1 = R;
+    /// Rhs
     type I2 = ();
-    type F1 = fn(Self::I1) -> R;
-    type F2 = fn(Self::I1, Self::I2) -> R;
+    type F1 = fn(Self::I1) -> Self::R;
+    type F2 = fn(Self::I1, Self::I2) -> Self::R;
     type B1 = F;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 impl<'a, F, T, R> Debug for BindNode<'a, F, T, R>
@@ -238,7 +254,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let node = Node::<MapNode<'a, F, T, R>>::create(
             state.clone(),
             state.current_scope.borrow().clone(),
-            node::Kind::Map(mapper),
+            Kind::Map(mapper),
         );
         let map = Incr { node };
         map
@@ -259,7 +275,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let node = Node::<Map2Node<'a, F, T, T2, R>>::create(
             state.clone(),
             state.current_scope.borrow().clone(),
-            node::Kind::Map2(mapper),
+            Kind::Map2(mapper),
         );
         let map = Incr { node };
         map
@@ -300,16 +316,16 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
             state.clone(),
             state.current_scope(),
-            node::Kind::Uninitialised,
+            Kind::Uninitialised,
         );
         println!(
             "creating bind lhs with scope height {:?}",
             state.current_scope().height()
         );
-        let main = Node::<BindNodeGenerics<F, T, R>>::create(
+        let main = Node::<BindNodeMainGenerics<F, T, R>>::create(
             self.node.state(),
             state.current_scope(),
-            node::Kind::Uninitialised,
+            Kind::Uninitialised,
         );
         println!(
             "creating bind main with scope height {:?}",
@@ -330,9 +346,16 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
 
         let main_incr = Incr { node: main.clone() };
         let mut main_kind = main.kind.borrow_mut();
-        *main_kind = node::Kind::BindMain(refl(), bind.clone());
+        *main_kind = Kind::BindMain(BindMainId {
+            input_lhs_i2: refl(),
+            input_rhs_i1: refl(),
+            rhs_r: refl(),
+        }, bind.clone());
         let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
-        *lhs_change_kind = node::Kind::BindLhsChange(refl(), bind.clone());
+        *lhs_change_kind = Kind::BindLhsChange(kind::BindLhsId {
+            r_unit: refl(),
+            input_lhs_i2: refl(),
+        }, bind.clone());
         main_incr
     }
 
@@ -351,7 +374,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let node = Node::<CutoffNode<'a, T>>::create(
             state.clone(),
             state.current_scope(),
-            node::Kind::Cutoff(cutoff),
+            Kind::Cutoff(cutoff),
         );
         Incr { node }
     }
@@ -364,13 +387,15 @@ pub(crate) struct CutoffNode<'a, R> {
 
 impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for CutoffNode<'a, R> {
     type R = R;
-    type D = ();
+    type BindRhs = ();
+    type BindLhs = ();
     type I1 = R;
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {

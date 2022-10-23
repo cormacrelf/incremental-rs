@@ -1,7 +1,6 @@
-use super::node::ErasedNode;
 use super::state::IncrStatus;
-
-use super::node::{Incremental, Node, NodeGenerics};
+use super::node::{Incremental, Node, ErasedNode};
+use super::kind::NodeGenerics;
 use super::stabilisation_num::StabilisationNum;
 use super::state::State;
 use super::Incr;
@@ -12,13 +11,15 @@ use std::rc::Rc;
 pub(crate) struct VarGenerics<'a, T: Debug + Clone + 'a>(std::marker::PhantomData<&'a T>);
 impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for VarGenerics<'a, R> {
     type R = R;
-    type D = ();
+    type BindLhs = ();
+    type BindRhs = ();
     type I1 = ();
     type I2 = ();
     type F1 = fn(Self::I1) -> R;
     type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::I1) -> Incr<'a, Self::D>;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
 pub struct Var<'a, T: Debug + Clone + 'a> {
@@ -104,3 +105,8 @@ fn var_drop() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
 }
+
+
+
+
+

@@ -3,7 +3,8 @@ use super::array_fold::ArrayFold;
 use super::{NodeRef, Value};
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
-use super::node::{Kind, Node};
+use super::kind::Kind;
+use super::node::Node;
 use super::scope::Scope;
 use super::var::Var;
 use super::{public, Incr};
@@ -64,15 +65,7 @@ impl<'a> State<'a> {
         })
     }
 
-    pub fn fold<F, T: Value<'a>, R: Value<'a>>(
-        self: &Rc<Self>,
-        vec: Vec<Incr<'a, T>>,
-        init: R,
-        f: F,
-    ) -> Incr<'a, R>
-    where
-        F: FnMut(R, T) -> R + 'a,
-    {
+    pub fn fold<F, T: Value<'a>, R: Value<'a>>(self: &Rc<Self>, vec: Vec<Incr<'a, T>>, init: R, f: F) -> Incr<'a, R> where F: FnMut(R, T) -> R + 'a {
         let node = Node::<ArrayFold<'a, F, T, R>>::create(
             self.clone(),
             self.current_scope(),
@@ -80,7 +73,7 @@ impl<'a> State<'a> {
                 init,
                 fold: f.into(),
                 children: vec,
-            }),
+            })
         );
         Incr { node }
     }
@@ -107,7 +100,10 @@ impl<'a> State<'a> {
         public::Var::new(var)
     }
 
-    pub(crate) fn observe<T: Value<'a>>(&self, incr: Incr<'a, T>) -> Rc<InternalObserver<'a, T>> {
+    pub(crate) fn observe<T: Value<'a>>(
+        &self,
+        incr: Incr<'a, T>,
+    ) -> Rc<InternalObserver<'a, T>> {
         let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
         let mut no = state.new_observers.borrow_mut();
@@ -204,3 +200,11 @@ impl<'a> State<'a> {
         eprintln!("WARNING: propagate_invalidity not implemented");
     }
 }
+
+
+
+
+
+
+
+
