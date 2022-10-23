@@ -12,8 +12,8 @@ mod state;
 mod unordered_fold;
 mod var;
 
-use crate::State;
 use crate::v_rch::kind::BindMainId;
+use crate::State;
 
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
@@ -346,16 +346,22 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
 
         let main_incr = Incr { node: main.clone() };
         let mut main_kind = main.kind.borrow_mut();
-        *main_kind = Kind::BindMain(BindMainId {
-            input_lhs_i2: refl(),
-            input_rhs_i1: refl(),
-            rhs_r: refl(),
-        }, bind.clone());
+        *main_kind = Kind::BindMain(
+            BindMainId {
+                input_lhs_i2: refl(),
+                input_rhs_i1: refl(),
+                rhs_r: refl(),
+            },
+            bind.clone(),
+        );
         let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
-        *lhs_change_kind = Kind::BindLhsChange(kind::BindLhsId {
-            r_unit: refl(),
-            input_lhs_i2: refl(),
-        }, bind.clone());
+        *lhs_change_kind = Kind::BindLhsChange(
+            kind::BindLhsId {
+                r_unit: refl(),
+                input_lhs_i2: refl(),
+            },
+            bind.clone(),
+        );
         main_incr
     }
 

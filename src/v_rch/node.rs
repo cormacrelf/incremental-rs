@@ -88,7 +88,11 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     fn value_opt(&self) -> Option<G::R> {
         self.value_opt.borrow().clone()
     }
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+    fn add_parent_without_adjusting_heights(
+        &self,
+        child_index: i32,
+        parent_weak: ParentRef<'a, G::R>,
+    ) {
         println!("add_parent_without_adjusting_heights");
         debug_assert!({
             let Some(p) = parent_weak.upgrade_erased() else { panic!() };
@@ -115,7 +119,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
                 "self.height() = {:?}, parent.height() = {:?}",
                 self.height(),
                 parent.height()
-                );
+            );
             let t = self.state();
             let mut ahh = t.adjust_heights_heap.borrow_mut();
             let mut rch = t.recompute_heap.borrow_mut();
@@ -126,11 +130,11 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
         /* we only add necessary parents */
         if !parent.is_in_recompute_heap()
             && (parent.recomputed_at().get().is_none() || self.edge_is_stale(parent.weak()))
-            {
-                let t = self.state();
-                let mut rch = t.recompute_heap.borrow_mut();
-                rch.insert(parent.packed());
-            }
+        {
+            let t = self.state();
+            let mut rch = t.recompute_heap.borrow_mut();
+            rch.insert(parent.packed());
+        }
     }
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
         let child = self;
@@ -144,10 +148,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
 
         debug_assert!(child_parents.len() >= 1);
         let parent_index = parent_i.my_parent_index_in_child_at_index[child_index as usize];
-        debug_assert!(parent_weak.ptr_eq(
-            &child_parents[parent_index as usize]
-                .clone()
-        ));
+        debug_assert!(parent_weak.ptr_eq(&child_parents[parent_index as usize].clone()));
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
             // we swap the parent the end of the array into this one's position. This keeps the array
@@ -168,16 +169,15 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             child_parents.swap_remove(parent_index as usize);
         }
     }
-
 }
 
 pub(crate) trait ParentNode<'a, I> {
     fn child_changed(&self, child: &Input<'a, I>, child_index: i32, old_value_opt: Option<I>);
 }
-pub(crate) trait Parent1<'a, I>: Debug + ErasedNode<'a> { 
+pub(crate) trait Parent1<'a, I>: Debug + ErasedNode<'a> {
     fn child_changed(&self, child: &Input<'a, I>, child_index: i32, old_value_opt: Option<I>);
 }
-pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> { }
+pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> {}
 
 #[derive(Clone)]
 pub(crate) enum ParentRef<'a, T> {
@@ -213,7 +213,7 @@ impl<'a, T: Value<'a>> ParentNode<'a, T> for ParentRef<'a, T> {
         }
     }
 }
-impl<'a, G: NodeGenerics<'a>> Parent2<'a, G::I2> for Node<'a, G> { }
+impl<'a, G: NodeGenerics<'a>> Parent2<'a, G::I2> for Node<'a, G> {}
 impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
     fn child_changed(
         &self,
@@ -273,8 +273,6 @@ pub(crate) trait ErasedNode<'a>: Debug {
     );
     fn created_in(&self) -> Scope<'a>;
 }
-
-    
 
 impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -557,7 +555,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 saying that [needs_to_be_computed bind_main] in [propagate_invalidity] */
                 self.changed_at.set(t.stabilisation_num.get());
                 if let Some(main) = bind.main.upgrade() {
-                    main.change_child_bind_rhs(old_rhs.clone(), rhs, Kind::<G>::BIND_RHS_CHILD_INDEX);
+                    main.change_child_bind_rhs(
+                        old_rhs.clone(),
+                        rhs,
+                        Kind::<G>::BIND_RHS_CHILD_INDEX,
+                    );
                 }
                 if old_rhs.is_some() {
                     /* We invalidate after [change_child], because invalidation changes the [kind] of
@@ -719,7 +721,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             node.old_value_opt <- old_value_opt;
             handle_after_stabilization node); */
             let parents = self.parents.borrow();
-            for (parent_index, parent) in parents .iter() .enumerate() {
+            for (parent_index, parent) in parents.iter().enumerate() {
                 let Some(p) = parent.upgrade_erased() else { continue };
                 let i = self.inner().borrow();
                 let child_index = i.my_child_index_in_parent_at_index[parent_index];
@@ -747,7 +749,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         let k = self.kind.borrow();
         let id = match &*k {
             Kind::BindMain(id, _) => id,
-            _ => return
+            _ => return,
         };
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
         match old_child {
@@ -828,7 +830,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
 
         child_parents.push(parent_weak);
     }
-    
+
     fn as_parent(&self) -> ParentRef<'a, G::I1> {
         ParentRef::I1(self.weak_self.clone())
     }
@@ -877,7 +879,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     }
 
     fn remove_children(&self) {
-        self.foreach_child_typed( ForeachChild {
+        self.foreach_child_typed(ForeachChild {
             i1: &mut |index, child| {
                 child.remove_parent(index, self.as_parent());
                 child.check_if_unnecessary();
@@ -888,7 +890,6 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             },
         })
     }
-
 }
 
 struct ForeachChild<'a: 'b, 'b, G: NodeGenerics<'a>> {

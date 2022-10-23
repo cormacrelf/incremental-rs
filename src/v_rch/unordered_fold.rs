@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{Incr, Value};
 
-use super::node::Input;
 use super::kind::NodeGenerics;
+use super::node::Input;
 
 enum Update<'a, A, B, FInv, FUpd>
 where
@@ -119,5 +119,3 @@ where
     type Fold = F;
     type Update = U;
 }
-
-

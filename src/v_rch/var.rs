@@ -1,7 +1,7 @@
-use super::state::IncrStatus;
-use super::node::{Incremental, Node, ErasedNode};
 use super::kind::NodeGenerics;
+use super::node::{ErasedNode, Incremental, Node};
 use super::stabilisation_num::StabilisationNum;
+use super::state::IncrStatus;
 use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
@@ -105,8 +105,3 @@ fn var_drop() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
 }
-
-
-
-
-

@@ -1,16 +1,16 @@
-use std::rc::Rc;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 use crate::{Incr, Value};
 
 use refl::Id;
 type Unit<T> = Id<(), T>;
 
+use super::array_fold::ArrayFold;
 use super::node::Input;
 use super::unordered_fold::UnorderedArrayFold;
-use super::{BindNode, MapNode, Map2Node};
-use super::array_fold::ArrayFold;
 use super::var::Var;
+use super::{BindNode, Map2Node, MapNode};
 
 pub(crate) trait NodeGenerics<'a>: 'a {
     type R: Value<'a>;
@@ -33,8 +33,14 @@ pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Var(Rc<Var<'a, G::R>>),
     Map(MapNode<'a, G::F1, G::I1, G::R>),
     Map2(Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(BindLhsId<'a,G>, Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>),
-    BindMain(BindMainId<'a, G>, Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>),
+    BindLhsChange(
+        BindLhsId<'a, G>,
+        Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>,
+    ),
+    BindMain(
+        BindMainId<'a, G>,
+        Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>,
+    ),
     Cutoff(super::CutoffNode<'a, G::R>),
 }
 
@@ -45,8 +51,7 @@ pub(crate) struct BindLhsId<'a, G: NodeGenerics<'a>> {
 
 impl<'a, G: NodeGenerics<'a>> Debug for BindLhsId<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindLhsId")
-            .finish()
+        f.debug_struct("BindLhsId").finish()
     }
 }
 
@@ -98,5 +103,3 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
         }
     }
 }
-
-
