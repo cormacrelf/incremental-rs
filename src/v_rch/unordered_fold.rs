@@ -79,18 +79,18 @@ where
         self.fold_value.replace(Some(self.full_compute()));
     }
     pub(crate) fn child_changed(
-        &mut self,
+        &self,
         child: &Input<'a, I>,
         child_index: i32,
         old_value_opt: Option<I>,
         new_value: I,
     ) {
-        let own_child = self.children[child_index as usize];
+        let own_child = &self.children[child_index as usize];
         assert!(Rc::ptr_eq(&child.packed(), &own_child.node.packed()));
         // if t.num_changes_since_last_full_compute < t.full_compute_every_n_changes - 1
         // then (
         let _old = self.fold_value.replace_with(|old| {
-            let u = self.update.borrow_mut();
+            let mut u = self.update.borrow_mut();
             /* We only reach this case if we have already done a full compute, in which case
             [Uopt.is_some t.fold_value] and [Uopt.is_some old_value_opt]. */
             let x = (u)(
