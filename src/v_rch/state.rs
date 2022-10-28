@@ -8,7 +8,7 @@ use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
 use super::kind::Kind;
 use super::node::Node;
 use super::scope::Scope;
-use super::var::Var;
+use super::var::{ErasedVar, Var};
 use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
@@ -33,6 +33,7 @@ pub struct State<'a> {
     pub(crate) new_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
     pub(crate) all_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
     pub(crate) current_scope: RefCell<Scope<'a>>,
+    pub(crate) set_during_stabilisation: RefCell<Vec<ErasedVar<'a>>>,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -41,7 +42,9 @@ pub enum IncrStatus {
     RunningOnUpdateHandlers,
     NotStabilising,
     Stabilising,
-    StabilisePreviouslyRaised,
+    // This is a bit like Mutex panic poisoning. We don't currently need it because
+    // we don't use any std::panic::catch_unwind.
+    // StabilisePreviouslyRaised,
 }
 
 impl<'a> State<'a> {
@@ -64,6 +67,7 @@ impl<'a> State<'a> {
             new_observers: Rc::new(RefCell::new(Vec::new())),
             all_observers: Rc::new(RefCell::new(Vec::new())),
             current_scope: RefCell::new(Scope::Top),
+            set_during_stabilisation: Default::default(),
             _phantom: Default::default(),
         })
     }
@@ -253,6 +257,7 @@ impl<'a> State<'a> {
             value: RefCell::new(value),
             node_id: node.id,
             node: RefCell::new(Some(node)),
+            value_set_during_stabilisation: RefCell::new(None),
         });
         {
             let node = var.node.borrow();
@@ -309,18 +314,15 @@ impl<'a> State<'a> {
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
-        // while not (Stack.is_empty t.set_during_stabilization) do
-        //   let (T var) = Stack.pop_exn t.set_during_stabilization in
-        //   let value = Uopt.value_exn var.value_set_during_stabilization in
-        //   var.value_set_during_stabilization <- Uopt.none;
-        //   set_var_while_not_stabilizing var value
-        // done;
+        let mut stack = self.set_during_stabilisation.borrow_mut();
+        while let Some(var) = stack.pop() {
+            var.set_var_stabilise_end();
+        }
         // while not (Stack.is_empty t.handle_after_stabilization) do
         self.status.set(IncrStatus::RunningOnUpdateHandlers);
         self.status.set(IncrStatus::NotStabilising);
     }
     pub fn stabilise(&self) {
-        std::panic::catch_unwind(|| {
         assert_eq!(self.status.get(), IncrStatus::NotStabilising);
         println!("stabilise");
         let mut stdout = std::io::stdout();
@@ -335,7 +337,6 @@ impl<'a> State<'a> {
             min.recompute();
         }
         self.stabilise_end();
-        });
     }
     pub(crate) fn propagate_invalidity(&self) {
         // todo!();

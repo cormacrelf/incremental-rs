@@ -584,7 +584,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::BindMain(id, bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
-                self.copy_child_d(&rhs.node, id.rhs_r);
+                self.copy_child_bindrhs(&rhs.node, id.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
             Kind::UnorderedArrayFold(uaf) => {
@@ -790,16 +790,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         }
     }
 
-    fn copy_child(&self, child: &Input<G::R>) {
-        if child.is_valid() {
-            self.maybe_change_value(child.latest());
-        } else {
-            self.invalidate();
-            self.state().propagate_invalidity();
-        }
-    }
-
-    fn copy_child_d(&self, child: &Input<G::BindRhs>, token: Id<G::BindRhs, G::R>) {
+    fn copy_child_bindrhs(&self, child: &Input<G::BindRhs>, token: Id<G::BindRhs, G::R>) {
         if child.is_valid() {
             let latest = child.latest();
             self.maybe_change_value(token.cast(latest));

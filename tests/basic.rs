@@ -434,8 +434,9 @@ fn unordered_fold() {
 }
 
 #[derive(Debug)]
-struct CallCounter( &'static str, Cell<u32>);
+struct CallCounter(&'static str, Cell<u32>);
 
+#[allow(dead_code)]
 impl CallCounter {
     fn new(name: &'static str) -> Self {
         Self(name, Cell::new(0))
@@ -448,7 +449,7 @@ impl CallCounter {
     }
     fn wrap1<'a, A, R>(
         &'a self,
-        mut f: impl (FnMut(A) -> R) + 'a + Clone
+        mut f: impl (FnMut(A) -> R) + 'a + Clone,
     ) -> impl FnMut(A) -> R + 'a + Clone {
         move |a| {
             self.increment();
@@ -457,7 +458,7 @@ impl CallCounter {
     }
     fn wrap2<'a, A, B, R>(
         &'a self,
-        mut f: impl (FnMut(A, B) -> R) + 'a + Clone
+        mut f: impl (FnMut(A, B) -> R) + 'a + Clone,
     ) -> impl FnMut(A, B) -> R + 'a + Clone {
         move |a, b| {
             self.increment();
@@ -488,7 +489,7 @@ fn unordered_fold_inverse() {
             0,
             f.wrap2(|acc, x| dbg!(acc + x)),
             finv.wrap2(|acc, x| dbg!(acc) - dbg!(x)), // this time our update function is
-                                          // constructed for us.
+            // constructed for us.
             None,
         )
     });
@@ -628,4 +629,24 @@ fn primes_lt(bound: usize) -> Vec<usize> {
         .skip(2)
         .filter_map(|(i, p)| if p { Some(i) } else { None })
         .collect::<Vec<usize>>()
+}
+
+#[test]
+fn var_set_during_stabilisation() {
+    let incr = State::new();
+    let v = incr.var(10_i32);
+    let o = v
+        .watch()
+        .map(move |x| {
+            v.set(x + 10);
+            x
+        })
+        .observe();
+
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(10));
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(20));
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(30));
 }
