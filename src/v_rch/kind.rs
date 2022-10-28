@@ -28,6 +28,7 @@ pub(crate) trait NodeGenerics<'a>: 'a {
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Invalid,
     Uninitialised,
+    Constant(G::R),
     ArrayFold(ArrayFold<'a, G::Fold, G::I1, G::R>),
     UnorderedArrayFold(UnorderedArrayFold<'a, G::Fold, G::Update, G::I1, G::R>),
     Var(Rc<Var<'a, G::R>>),
@@ -75,6 +76,7 @@ impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
         match self {
             Kind::Invalid => write!(f, "Invalid"),
             Kind::Uninitialised => write!(f, "Uninitialised"),
+            Kind::Constant(v) => write!(f, "Constant({v:?})"),
             Kind::ArrayFold(af) => write!(f, "ArrayFold({af:?})"),
             Kind::UnorderedArrayFold(uaf) => write!(f, "UnorderedArrayFold({uaf:?})"),
             Kind::Var(var) => write!(f, "Var({:?})", var),
@@ -93,6 +95,7 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
         match self {
             Self::Invalid => 0,
             Self::Uninitialised => 0,
+            Self::Constant(_) => 0,
             Self::ArrayFold(af) => af.children.len(),
             Self::Var(_) => 0,
             Self::Map(_) | Self::Cutoff(_) => 1,
@@ -102,4 +105,19 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
             Self::UnorderedArrayFold(uaf) => uaf.children.len(),
         }
     }
+}
+
+pub(crate) struct Constant<'a, T>(std::marker::PhantomData<&'a T>);
+
+impl<'a, T: Value<'a>> NodeGenerics<'a> for Constant<'a, T> {
+    type R = T;
+    type BindLhs = ();
+    type BindRhs = ();
+    type I1 = ();
+    type I2 = ();
+    type F1 = fn(Self::I1) -> Self::R;
+    type F2 = fn(Self::I1, Self::I2) -> Self::R;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }

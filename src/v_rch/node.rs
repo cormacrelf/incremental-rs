@@ -356,6 +356,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
+            Kind::Constant(v) => self.recomputed_at.get() == StabilisationNum(-1),
             Kind::ArrayFold(_)
             | Kind::UnorderedArrayFold(_)
             | Kind::Map(_)
@@ -467,6 +468,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*k {
             Kind::Invalid => {}
             Kind::Uninitialised => {}
+            Kind::Constant(_) => {},
             Kind::Map(MapNode { input, .. }) => f(0, input.packed()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 f(0, one.clone().packed());
@@ -508,6 +510,9 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let id = self.id;
         let height = self.height();
         match &*k {
+            Kind::Constant(v) => {
+                self.maybe_change_value(v.clone());
+            }
             Kind::Var(var) => {
                 let value = var.value.borrow();
                 let v = value.clone();
@@ -592,7 +597,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.maybe_change_value(uaf.compute())
             },
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
-            _ => {}
+            Kind::Uninitialised => panic!("recomputing uninitialised node"),
+            Kind::Cutoff(_) => todo!(),
         }
     }
     fn invalidate(&self) {
@@ -841,6 +847,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         match &*k {
             Kind::Invalid => {}
             Kind::Uninitialised => {}
+            Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. }) => (f.i1)(0, input.clone().as_input()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 (f.i1)(0, one.clone().as_input());

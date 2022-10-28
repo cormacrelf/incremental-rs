@@ -5,7 +5,7 @@ use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value};
 
 use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
-use super::kind::Kind;
+use super::kind::{Constant, Kind};
 use super::node::Node;
 use super::scope::Scope;
 use super::var::{ErasedVar, Var};
@@ -70,6 +70,15 @@ impl<'a> State<'a> {
             set_during_stabilisation: Default::default(),
             _phantom: Default::default(),
         })
+    }
+
+    pub fn constant<T: Value<'a>>(self: &Rc<Self>, value: T) -> Incr<'a, T> {
+        let node = Node::<Constant<'a, T>>::create(
+            self.clone(),
+            self.current_scope(),
+            Kind::Constant(value),
+        );
+        Incr { node }
     }
 
     pub fn fold<F, T: Value<'a>, R: Value<'a>>(

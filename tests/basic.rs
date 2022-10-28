@@ -650,3 +650,22 @@ fn var_set_during_stabilisation() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(30));
 }
+
+#[test]
+fn test_constant() {
+    let incr = State::new();
+    let c = incr.constant(5);
+    let m = c.map(|x| x + 10);
+    let o = m.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(15));
+    let flip = incr.var(true);
+    let o2 = flip.watch()
+        .binds(|incr, t| if t { incr.constant(5) } else { incr.constant(10) })
+        .observe();
+    incr.stabilise();
+    assert_eq!(o2.value(), Ok(5));
+    flip.set(!flip.get());
+    incr.stabilise();
+    assert_eq!(o2.value(), Ok(10));
+}
