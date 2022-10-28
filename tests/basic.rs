@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, rc::Rc};
+use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
 use incremental::{Observer, ObserverError, State, Var};
 
@@ -419,6 +419,7 @@ fn unordered_fold() {
             0,
             |acc, x| acc + x,
             |acc, old, new| acc + new - old,
+            None,
         )
     });
     let obs = sum.observe();
@@ -430,6 +431,87 @@ fn unordered_fold() {
     vars.set(vec![v1.clone()]);
     incr.stabilise();
     assert_eq!(obs.value(), Ok(40));
+}
+
+#[derive(Debug)]
+struct CallCounter( &'static str, Cell<u32>);
+
+impl CallCounter {
+    fn new(name: &'static str) -> Self {
+        Self(name, Cell::new(0))
+    }
+    fn count(&self) -> u32 {
+        self.1.get()
+    }
+    fn increment(&self) {
+        self.1.set(self.1.get() + 1);
+    }
+    fn wrap1<'a, A, R>(
+        &'a self,
+        mut f: impl (FnMut(A) -> R) + 'a + Clone
+    ) -> impl FnMut(A) -> R + 'a + Clone {
+        move |a| {
+            self.increment();
+            f(a)
+        }
+    }
+    fn wrap2<'a, A, B, R>(
+        &'a self,
+        mut f: impl (FnMut(A, B) -> R) + 'a + Clone
+    ) -> impl FnMut(A, B) -> R + 'a + Clone {
+        move |a, b| {
+            self.increment();
+            f(a, b)
+        }
+    }
+}
+
+impl PartialEq<u32> for CallCounter {
+    fn eq(&self, other: &u32) -> bool {
+        self.1.get().eq(other)
+    }
+}
+
+#[test]
+fn unordered_fold_inverse() {
+    let f = CallCounter::new("f");
+    let finv = CallCounter::new("finv");
+    let incr = State::new();
+    let v1 = incr.var(10i32);
+    let v2 = incr.var(20);
+    let v3 = incr.var(30);
+    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+    let sum = vars.watch().binds(|incr, vars| {
+        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+        incr.unordered_fold_inverse(
+            watches,
+            0,
+            f.wrap2(|acc, x| dbg!(acc + x)),
+            finv.wrap2(|acc, x| dbg!(acc) - dbg!(x)), // this time our update function is
+                                          // constructed for us.
+            None,
+        )
+    });
+    let obs = sum.observe();
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(60));
+    assert_eq!(f, 3);
+    assert_eq!(finv, 0);
+
+    v1.set(40);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(90));
+    assert_eq!(f, 4);
+    assert_eq!(finv, 1);
+
+    vars.set(vec![v1.clone()]);
+    incr.stabilise();
+    assert_eq!(obs.value(), Ok(40));
+    assert_eq!(f, 5);
+    // we create a new UnorderedArrayFold in the bind.
+    // Hence finv was not needed, fold_value was zero
+    // and we just folded the array non-incrementally
+    assert_eq!(finv, 1);
 }
 
 #[test]
@@ -471,4 +553,79 @@ fn incr_map_uf() {
     setter.set(b.clone());
     incr.stabilise();
     assert_eq!(o.value(), Ok(113));
+}
+
+#[test]
+fn incr_map_filter_mapi() {
+    let incr = State::new();
+    let mut b = BTreeMap::new();
+    b.insert("five", 5);
+    b.insert("ten", 10);
+    let v = incr.var(b);
+    let filtered = incr
+        .btreemap_filter_mapi(v.watch(), |&k, &v| Some(v).filter(|_| k.len() > 3))
+        .observe();
+    incr.stabilise();
+    let x = IntoIterator::into_iter([("five", 5i32)]);
+    assert_eq!(filtered.expect_value(), x.collect());
+}
+
+#[test]
+fn incr_map_primes() {
+    let primes = primes_lt(1_000_000);
+    let incr = State::new();
+    let mut b = BTreeMap::new();
+    b.insert("five", 5);
+    b.insert("seven", 7);
+    b.insert("ten", 10);
+    let v = incr.var(b.clone());
+    let filtered = incr
+        .btreemap_filter_mapi(v.watch(), |_k, &v| {
+            Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes)))
+        })
+        .observe();
+
+    incr.stabilise();
+    let x = BTreeMap::from([("five", 5), ("seven", 7)]);
+    assert_eq!(filtered.expect_value(), x);
+
+    b.remove("seven");
+    b.insert("971", 971);
+    v.set(b.clone());
+    incr.stabilise();
+    let x = BTreeMap::from([("971", 971), ("five", 5)]);
+    assert_eq!(filtered.expect_value(), x);
+}
+
+// https://gist.github.com/glebm/440bbe2fc95e7abee40eb260ec82f85c
+fn is_prime(n: usize, primes: &Vec<usize>) -> bool {
+    for &p in primes {
+        let q = n / p;
+        if q < p {
+            return true;
+        };
+        let r = n - q * p;
+        if r == 0 {
+            return false;
+        };
+    }
+    panic!("too few primes")
+}
+fn primes_lt(bound: usize) -> Vec<usize> {
+    let mut primes: Vec<bool> = (0..bound + 1).map(|num| num == 2 || num & 1 != 0).collect();
+    let mut num = 3usize;
+    while num * num <= bound {
+        let mut j = num * num;
+        while j <= bound {
+            primes[j] = false;
+            j += num;
+        }
+        num += 2;
+    }
+    primes
+        .into_iter()
+        .enumerate()
+        .skip(2)
+        .filter_map(|(i, p)| if p { Some(i) } else { None })
+        .collect::<Vec<usize>>()
 }

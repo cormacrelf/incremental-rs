@@ -349,13 +349,15 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn is_stale(&self) -> bool {
         let k = self.kind.borrow();
         match &*k {
-            Kind::Invalid => panic!(),
+            Kind::Invalid
+            | Kind::Uninitialised => panic!(),
             Kind::Var(var) => {
                 let set_at = var.set_at.get();
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
             Kind::ArrayFold(_)
+            | Kind::UnorderedArrayFold(_)
             | Kind::Map(_)
             | Kind::Map2(_)
             | Kind::BindLhsChange(..)
@@ -363,8 +365,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.recomputed_at.get() == StabilisationNum(-1)
                     || self.is_stale_with_respect_to_a_child()
             }
-            // wrong
-            _ => false,
+            Kind::Cutoff(..) => unimplemented!(),
         }
     }
     fn is_stale_with_respect_to_a_child(&self) -> bool {
@@ -586,6 +587,10 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.copy_child_d(&rhs.node, id.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
+            Kind::UnorderedArrayFold(uaf) => {
+                println!("-- recomputing UAF {uaf:?}");
+                self.maybe_change_value(uaf.compute())
+            },
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
             _ => {}
         }

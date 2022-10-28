@@ -246,6 +246,21 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         })
     }
 
+    // TODO: offer this with fewer clones, using a customised map1 node.
+    pub fn with_old_borrowed<R, F>(&self, mut f: F) -> Incr<'a, R>
+    where
+        R: Value<'a>,
+        F: FnMut(Option<(T, R)>, &T) -> R + 'a,
+    {
+        let old: RefCell<Option<(T, R)>> = RefCell::new(None);
+        self.map(move |a| {
+            let mut o = old.borrow_mut();
+            let r: R = f(o.take(), &a);
+            *o = Some((a, r.clone()));
+            r
+        })
+    }
+
     pub fn with_old<R, F>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,

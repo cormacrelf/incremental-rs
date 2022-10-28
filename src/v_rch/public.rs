@@ -52,21 +52,24 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
     #[inline]
     pub fn id(&self) -> NodeId {
-        self.internal.node.borrow().as_ref().unwrap().id
+        self.internal.node_id
     }
 }
 
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        // check that we're the last public::Var holding a reference to the internal Var.
-        if let Some(internal) = Rc::get_mut(&mut self.internal) {
-            // drop the reference to the node.
-            // a reference may still be held by the .watch() Incr. but we only needed it in
-            // order to create new .watch()s, and we have been dropped. so we're done.
-            //
-            // Does Node itself still need var's reference to itself? no. So it's fine for
-            // InternalVar to no longer store &'a Node.
-            *internal.node.borrow_mut() = None;
-        }
+        println!("dropping public::Var with id {:?}", self.id());
+        // drop the reference to the node. This is necessary because Var and Node are in an Rc cycle,
+        // so one of them needs to manually drop its Rc handle lest they each never get dropped.
+        //
+        // What happens when we do this from here?
+        //
+        // The internal.node itself will live on, as long as it's a part of some computation graph.
+        // We only needed a ref to it here in order to create new .watch()s, and we have been
+        // dropped. so we're done.
+        //
+        // Does Node itself still need var's reference to the containing Node? No. So it's fine to
+        // kill the ref.
+        *self.internal.node.borrow_mut() = None;
     }
 }

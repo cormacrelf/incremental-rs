@@ -1,5 +1,5 @@
 use super::kind::NodeGenerics;
-use super::node::{ErasedNode, Incremental, Node};
+use super::node::{ErasedNode, Incremental, Node, NodeId};
 use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
 use super::state::State;
@@ -27,6 +27,7 @@ pub struct Var<'a, T: Debug + Clone + 'a> {
     pub(crate) value: RefCell<T>,
     pub(crate) set_at: Cell<StabilisationNum>,
     pub(crate) node: RefCell<Option<Rc<Node<'a, VarGenerics<'a, T>>>>>,
+    pub(crate) node_id: NodeId,
 }
 
 impl<'a, T: Debug + Clone + 'a> Debug for Var<'a, T> {
@@ -43,10 +44,8 @@ impl<'a, T: Debug + Clone + 'a> Var<'a, T> {
         self.value.borrow().clone()
     }
     pub fn set(&self, value: T) {
-        let Some(watch) = self.node.borrow().clone() else {
-            panic!("uninitialised var");
-        };
-        let t = watch.inner().borrow().state.clone();
+        let watch = self.node.borrow().clone().expect("uninitialised var");
+        let t = &self.state;
         match t.status.get() {
             IncrStatus::NotStabilising => {
                 t.num_var_sets.set(t.num_var_sets.get() + 1);
@@ -85,23 +84,31 @@ impl<'a, T: Debug + Clone + 'a> Var<'a, T> {
     }
 }
 
+thread_local! {
+    static DID_DROP: Cell<u32> = Cell::new(0);
+}
+
 #[cfg(test)]
 impl<'a, T: Debug + Clone + 'a> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        println!(
-            "$$$$$$$$$ Dropping var with id {:?}",
-            self.node.borrow().as_ref().map(|n| n.id)
-        );
+        println!("$$$$$$$$$ Dropping var with id {:?}", self.node_id);
+        DID_DROP.with(|cell| cell.set(cell.get() + 1));
     }
 }
 
 #[test]
 fn var_drop() {
-    let incr = State::new();
-    println!("before watch created");
-    let w = incr.var(10).watch();
-    println!("watch created");
-    let o = w.observe();
-    incr.stabilise();
-    assert_eq!(o.value(), Ok(10));
+    {
+        let incr = State::new();
+        println!("before var created");
+        let v = incr.var(10);
+        println!("before watch created");
+        let w = v.watch();
+        drop(v);
+        println!("watch created, public::Var dropped");
+        let o = w.observe();
+        incr.stabilise();
+        assert_eq!(o.value(), Ok(10));
+    }
+    assert_eq!(DID_DROP.with(|cell| cell.get()), 1);
 }

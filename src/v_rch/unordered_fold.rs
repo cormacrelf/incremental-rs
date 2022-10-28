@@ -1,34 +1,82 @@
+use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{Incr, Value};
+use crate::{Incr, State, Value};
 
 use super::kind::NodeGenerics;
 use super::node::Input;
 
-enum Update<'a, A, B, FInv, FUpd>
-where
-    FInv: FnMut(B, A) -> B + 'a,
-    FUpd: FnMut(B, A, A) -> B + 'a,
-{
-    FInverse(FInv),
-    Update(FUpd),
-    _Phantom(
-        std::convert::Infallible,
-        std::marker::PhantomData<&'a (A, B)>,
-    ),
+#[derive(Copy, Clone, Debug)]
+enum Cycle {
+    EveryN {
+        current: u32,
+        n: u32,
+    },
+    Never,
 }
 
-impl<'a, A, B, FInv, FUpd> Update<'a, A, B, FInv, FUpd>
-where
-    FInv: FnMut(B, A) -> B + 'a,
-    FUpd: FnMut(B, A, A) -> B + 'a,
-{
-    fn update<F: FnMut(B, A) -> B + 'a>(mut self, mut f: F) -> impl FnMut(B, A, A) -> B + 'a {
-        move |fold_value, old_value, new_value| match &mut self {
-            Self::FInverse(ref mut f_inv) => f(f_inv(fold_value, old_value), new_value),
-            Self::Update(ref mut update) => update(fold_value, old_value, new_value),
-            Self::_Phantom(..) => unreachable!(),
+impl Cycle {
+    /// New cycle counter.
+    /// - None makes it never trigger.
+    /// - Some makes an EveryN cycle starting at N.
+    fn new(every_n: Option<u32>) -> Self {
+        match every_n {
+            Some(n) => Self::EveryN { current: 0, n },
+            None => Self::Never,
         }
+    }
+    fn reset(cell: &Cell<Self>) {
+        let v = match cell.get() {
+            Self::EveryN { n, ..} => Self::EveryN { current: n, n },
+            Self::Never => Self::Never,
+        };
+        cell.set(v);
+    }
+    fn increment(cell: &Cell<Self>) -> bool {
+        let mut v = cell.get();
+        let w = v.next();
+        cell.set(v);
+        w
+    }
+    fn next(&mut self) -> bool {
+        match self {
+            Self::EveryN { current, n } if *current + 1 >= *n => {
+                *current = 0;
+                true
+            },
+            Self::EveryN { current, .. } => {
+                *current += 1;
+                false
+            },
+            Self::Never => false,
+        }
+    }
+}
+
+#[test]
+fn test_cycle() {
+    let mut cycle = Cycle::EveryN { current: 8, n: 10 };
+    let wrapped = cycle.next();
+    assert_eq!(wrapped, false);
+    let wrapped = cycle.next();
+    assert_eq!(wrapped, true);
+    let wrapped = cycle.next();
+    assert_eq!(wrapped, false);
+}
+
+pub(crate) fn make_update_fn_from_inverse<B, A, F, FInv>(
+    mut f: F,
+    mut f_inv: FInv,
+) -> impl FnMut(B, A, A) -> B
+    where F: FnMut(B, A) -> B,
+          FInv: FnMut(B, A) -> B,
+{
+    move |fold_value, old_value, new_value| {
+        // imagine f     is |a, x| a + x
+        //         f_inv is |a, x| a - x
+        // this produces n update function
+        //         |a, old, new| (a - old) + new
+        f(f_inv(fold_value, old_value), new_value)
     }
 }
 
@@ -38,6 +86,7 @@ pub(crate) struct UnorderedArrayFold<'a, F, U, I, R> {
     pub(crate) update: RefCell<U>,
     pub(crate) fold_value: RefCell<Option<R>>,
     pub(crate) children: Vec<Incr<'a, I>>,
+    cycle: Cell<Cycle>,
 }
 
 impl<'a, F, U, I, R> std::fmt::Debug for UnorderedArrayFold<'a, F, U, I, R>
@@ -49,7 +98,8 @@ where
         f.debug_struct("UnorderedArrayFold")
             .field("init", &self.init)
             .field("num_children", &self.children.len())
-            .field("fold_value", &self.fold_value)
+            .field("fold_value", &self.fold_value.borrow())
+            .field("cycle", &self.cycle.get())
             .finish()
     }
 }
@@ -61,6 +111,31 @@ where
     I: Value<'a>,
     R: Value<'a>,
 {
+
+    pub(crate) fn create_node(
+        state: &Rc<State<'a>>,
+        vec: Vec<Incr<'a, I>>,
+        init: R,
+        f: F,
+        update: U,
+        full_compute_every_n_changes: Option<u32>,
+    ) -> Incr<'a, R>
+    {
+        let node = super::node::Node::<UnorderedArrayFold<'a, F, _, I, R>>::create(
+            state.clone(),
+            state.current_scope(),
+            super::kind::Kind::UnorderedArrayFold(UnorderedArrayFold {
+                init,
+                update: update.into(),
+                fold: f.into(),
+                children: vec,
+                fold_value: None.into(),
+                cycle: Cycle::new(full_compute_every_n_changes).into(),
+            }),
+        );
+        Incr { node }
+    }
+
     pub(crate) fn full_compute(&self) -> R {
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
@@ -69,15 +144,16 @@ where
             f(acc, v)
         })
     }
-    pub(crate) fn compute(&mut self) {
-        /*  let compute t =
-          if t.num_changes_since_last_full_compute = t.full_compute_every_n_changes
-          then (
-            t.num_changes_since_last_full_compute <- 0;
-            t.fold_value <- Uopt.some (full_compute t));
-        */
-        self.fold_value.replace(Some(self.full_compute()));
+
+    pub(crate) fn compute(&self) -> R {
+        let mut fv = self.fold_value.borrow_mut();
+        if fv.is_none() {
+            Cycle::reset(&self.cycle);
+            fv.replace(self.full_compute());
+        }
+        fv.as_ref().cloned().unwrap()
     }
+
     pub(crate) fn child_changed(
         &self,
         child: &Input<'a, I>,
@@ -87,18 +163,22 @@ where
     ) {
         let own_child = &self.children[child_index as usize];
         assert!(Rc::ptr_eq(&child.packed(), &own_child.node.packed()));
-        // if t.num_changes_since_last_full_compute < t.full_compute_every_n_changes - 1
-        // then (
-        let _old = self.fold_value.replace_with(|old| {
-            let mut u = self.update.borrow_mut();
-            /* We only reach this case if we have already done a full compute, in which case
-            [Uopt.is_some t.fold_value] and [Uopt.is_some old_value_opt]. */
-            let x = (u)(
-                old.as_ref().unwrap().clone(),
-                old_value_opt.unwrap(),
-                new_value,
-            );
-            Some(x)
+
+        self.fold_value.replace_with(|old| {
+            let wrapped = Cycle::increment(&self.cycle);
+            if wrapped || old.is_none() {
+                None
+            } else {
+                let mut update = self.update.borrow_mut();
+                /* We only reach this case if we have already done a full compute, in which case
+                [Uopt.is_some t.fold_value] and [Uopt.is_some old_value_opt]. */
+                let x = update(
+                    old.as_ref().unwrap().clone(),
+                    old_value_opt.unwrap(),
+                    new_value,
+                );
+                Some(x)
+            }
         });
     }
 }

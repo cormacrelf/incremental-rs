@@ -1,10 +1,9 @@
-use std::{
-    collections::{
-        btree_map::{Iter, Keys},
-        BTreeMap,
-    },
-    iter::Peekable,
+use std::cmp::Ordering;
+use std::collections::{
+    btree_map::{IntoIter, Keys},
+    BTreeMap,
 };
+use std::iter::Peekable;
 
 // Adapted from itertools.
 // For [1, 2, 3].merge([2, 4])
@@ -71,35 +70,91 @@ where
     }
 }
 
-pub(crate) struct SymmetricDifference<'a, K, V> {
+pub(crate) struct SymmetricDiffOwned<K, V> {
+    self_: Peekable<IntoIter<K, V>>,
+    other: Peekable<IntoIter<K, V>>,
+    fused: Option<bool>, // keys: MergeOnce<Keys<'a, K, V>, Keys<'a, K, V>>,
+}
+
+impl<K, V> Iterator for SymmetricDiffOwned<K, V>
+where
+    K: Ord,
+    V: PartialEq,
+{
+    type Item = DiffElement<(K, V)>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let less_than = loop {
+            match self.fused {
+                Some(lt) => break lt,
+                None => match (self.self_.peek(), self.other.peek()) {
+                    (Some((ka, va)), Some((kb, vb))) => match ka.cmp(kb) {
+                        Ordering::Less => break true,
+                        Ordering::Greater => break false,
+                        Ordering::Equal => {
+                            let unequal = va != vb;
+                            let (sk, sv) = self.self_.next()?;
+                            let (ok, ov) = self.other.next()?;
+                            if unequal {
+                                return Some(DiffElement::Unequal((sk, sv), (ok, ov)));
+                            } else {
+                                continue;
+                            }
+                        }
+                    },
+                    (Some(_), None) => {
+                        self.fused = Some(true);
+                        break true;
+                    }
+                    (None, Some(_)) => {
+                        self.fused = Some(false);
+                        break false;
+                    }
+                    (None, None) => return None,
+                },
+            }
+        };
+        if less_than {
+            self.self_.next().map(|(k, v)| DiffElement::Left((k, v)))
+        } else {
+            self.other.next().map(|(k, v)| DiffElement::Right((k, v)))
+        }
+    }
+}
+
+pub(crate) struct SymmetricDiff<'a, K: 'a, V: 'a> {
     self_: &'a BTreeMap<K, V>,
     other: &'a BTreeMap<K, V>,
     keys: MergeOnce<Keys<'a, K, V>, Keys<'a, K, V>>,
 }
 
-pub(crate) enum Has<V> {
-    Both(V, V),
-    Left(V),
-    Right(V),
-}
-
-impl<'a, K, V> Iterator for SymmetricDifference<'a, K, V>
+impl<'a, K: 'a, V: 'a> Iterator for SymmetricDiff<'a, K, V>
 where
     K: Ord,
+    V: PartialEq,
 {
-    type Item = (&'a K, Has<&'a V>);
+    type Item = DiffElement<(&'a K, &'a V)>;
     fn next(&mut self) -> Option<Self::Item> {
-        let key = self.keys.next()?;
-        let s = self.self_.get(key);
-        let o = self.other.get(key);
-        let has = match (s, o) {
-            (Some(a), Some(b)) => Has::Both(a, b),
-            (Some(a), _) => Has::Left(a),
-            (_, Some(b)) => Has::Right(b),
-            _ => return None,
+        let mut key;
+        let elem = loop {
+            key = self.keys.next()?;
+            let s = self.self_.get(key);
+            let o = self.other.get(key);
+            match (s, o) {
+                (Some(a), Some(b)) if a != b => break DiffElement::Unequal((key, a), (key, b)),
+                (Some(a), Some(b)) => continue,
+                (Some(a), _) => break DiffElement::Left((key, a)),
+                (_, Some(b)) => break DiffElement::Right((key, b)),
+                _ => return None,
+            }
         };
-        Some((key, has))
+        Some(elem)
     }
+}
+
+pub(crate) enum DiffElement<V> {
+    Unequal(V, V),
+    Left(V),
+    Right(V),
 }
 
 #[test]
@@ -110,31 +165,14 @@ fn test_merge_once() {
     assert_eq!(v, vec![1, 2, 3, 4]);
 }
 
-pub(crate) trait BTreeMapSymmetricFold<K: Ord, V: Eq> {
-    fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<'a, K, V>;
-    fn symmetric_fold<R, FAdd, FRemove>(
-        &self,
-        other: &BTreeMap<K, V>,
-        init: R,
-        add: FAdd,
-        remove: FRemove,
-    ) -> R
-    where
-        FAdd: FnMut(R, &K, &V) -> R,
-        FRemove: FnMut(R, &K, &V) -> R;
-}
+pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
+    type Iter: Iterator<Item = DiffElement<(&'a K, &'a V)>>;
 
-impl<K: Ord, V: Eq> BTreeMapSymmetricFold<K, V> for BTreeMap<K, V> {
-    fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<K, V> {
-        SymmetricDifference {
-            self_: self,
-            other,
-            keys: MergeOnce::new(self.keys(), other.keys()),
-        }
-    }
+    fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter;
+
     fn symmetric_fold<R, FAdd, FRemove>(
-        &self,
-        other: &BTreeMap<K, V>,
+        &'a self,
+        other: &'a Self,
         init: R,
         mut add: FAdd,
         mut remove: FRemove,
@@ -142,25 +180,70 @@ impl<K: Ord, V: Eq> BTreeMapSymmetricFold<K, V> for BTreeMap<K, V> {
     where
         FAdd: FnMut(R, &K, &V) -> R,
         FRemove: FnMut(R, &K, &V) -> R,
+        K: Ord,
+        V: Eq,
     {
-        let mut acc = init;
-        let iter = self.symmetric_difference(other);
-        for (key, has) in iter {
-            match has {
-                Has::Both(left, right) => {
-                    if left != right {
-                        acc = add(acc, key, right);
-                        acc = remove(acc, key, left);
-                    }
+        self.symmetric_diff(other)
+            .fold(init, |mut acc, elem| match elem {
+                DiffElement::Unequal(left, right) => {
+                    acc = add(acc, right.0, right.1);
+                    remove(acc, left.0, left.1)
                 }
-                Has::Left(left) => {
-                    acc = remove(acc, key, left);
+                DiffElement::Left(left) => remove(acc, left.0, left.1),
+                DiffElement::Right(right) => add(acc, right.0, right.1),
+            })
+    }
+}
+
+pub(crate) trait SymmetricDiffMapOwned<K, V> {
+    type Iter: Iterator<Item = DiffElement<(K, V)>>;
+
+    fn symmetric_diff_owned(self, other: Self) -> Self::Iter;
+
+    fn symmetric_fold_owned<R, FAdd, FRemove>(
+        self,
+        other: Self,
+        init: R,
+        mut add: FAdd,
+        mut remove: FRemove,
+    ) -> R
+    where
+        FAdd: FnMut(R, K, V) -> R,
+        FRemove: FnMut(R, K, V) -> R,
+        K: Ord,
+        V: Eq,
+        Self: Sized,
+    {
+        self.symmetric_diff_owned(other)
+            .fold(init, |mut acc, elem| match elem {
+                DiffElement::Unequal(left, right) => {
+                    acc = add(acc, right.0, right.1);
+                    remove(acc, left.0, left.1)
                 }
-                Has::Right(right) => {
-                    acc = add(acc, key, right);
-                }
-            }
+                DiffElement::Left(left) => remove(acc, left.0, left.1),
+                DiffElement::Right(right) => add(acc, right.0, right.1),
+            })
+    }
+}
+
+impl<'a, K: Ord + 'a, V: Eq + 'a> SymmetricDiffMap<'a, K, V> for BTreeMap<K, V> {
+    type Iter = SymmetricDiff<'a, K, V>;
+    fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter {
+        SymmetricDiff {
+            self_: self,
+            other,
+            keys: MergeOnce::new(self.keys(), other.keys()),
         }
-        acc
+    }
+}
+
+impl<K: Ord, V: Eq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
+    type Iter = SymmetricDiffOwned<K, V>;
+    fn symmetric_diff_owned(self, other: Self) -> SymmetricDiffOwned<K, V> {
+        SymmetricDiffOwned {
+            self_: self.into_iter().peekable(),
+            other: other.into_iter().peekable(),
+            fused: None,
+        }
     }
 }

@@ -1,6 +1,6 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
-use super::symmetric_fold::BTreeMapSymmetricFold;
+use super::symmetric_fold::{DiffElement, SymmetricDiffMap, SymmetricDiffMapOwned};
 use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value};
 
@@ -89,27 +89,128 @@ impl<'a> State<'a> {
         Incr { node }
     }
 
+    pub fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
+        self: &Rc<Self>,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+        f_inverse: FInv,
+        full_compute_every_n_changes: Option<u32>,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, T) -> R + Clone + 'a,
+        FInv: FnMut(R, T) -> R + 'a,
+    {
+        let update = super::unordered_fold::make_update_fn_from_inverse(f.clone(), f_inverse);
+        UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
+    }
+
     pub fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
         self: &Rc<Self>,
         vec: Vec<Incr<'a, T>>,
         init: R,
         f: F,
         update: U,
+        full_compute_every_n_changes: Option<u32>,
     ) -> Incr<'a, R>
     where
         F: FnMut(R, T) -> R + 'a,
         U: FnMut(R, T, T) -> R + 'a,
     {
-        let node = Node::<UnorderedArrayFold<'a, F, U, T, R>>::create(
-            self.clone(),
-            self.current_scope(),
-            Kind::ArrayFold(ArrayFold {
-                init,
-                fold: f.into(),
-                children: vec,
-            }),
-        );
-        Incr { node }
+        UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
+    }
+
+    pub fn btreemap_filter_mapi<F, K, V, V2>(
+        self: &Rc<Self>,
+        map: Incr<'a, BTreeMap<K, V>>,
+        mut f: F,
+    ) -> Incr<'a, BTreeMap<K, V2>>
+    where
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a>,
+        F: FnMut(&K, &V) -> Option<V2> + 'a,
+    {
+        map.with_old_borrowed(move |old, input| {
+            match (old, input.len()) {
+                (_, 0) | (None, _) => input
+                    .iter()
+                    .filter_map(|(k, v)| f(k, v).map(|v2| (k.clone(), v2)))
+                    .collect(),
+                (Some((old_in, mut old_out)), _) => {
+                    let _: &mut BTreeMap<K, V2> =
+                        old_in
+                            .symmetric_diff(input)
+                            .fold(&mut old_out, |out, change| {
+                                match change {
+                                    DiffElement::Left((key, _)) => {
+                                        out.remove(&key);
+                                    }
+                                    DiffElement::Right((key, newval)) => match f(key, newval) {
+                                        None => {
+                                            out.remove(&key);
+                                        }
+                                        Some(v) => {
+                                            out.insert(key.clone(), v);
+                                        }
+                                    },
+                                    DiffElement::Unequal((k1, _), (k2, newval)) => {
+                                        // we get two keys this time. Avoid the clone.
+                                        match f(k1, newval) {
+                                            None => {
+                                                out.remove(k2);
+                                            }
+                                            Some(v) => {
+                                                out.insert(k2.clone(), v);
+                                            }
+                                        }
+                                    }
+                                }
+                                out
+                            });
+                    old_out
+                }
+            }
+        })
+    }
+
+    pub fn btreemap_mapi<F, K, V, V2>(
+        self: &Rc<Self>,
+        map: Incr<'a, BTreeMap<K, V>>,
+        mut f: F,
+    ) -> Incr<'a, BTreeMap<K, V2>>
+    where
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a>,
+        F: FnMut(K, V) -> V2 + 'a,
+    {
+        map.with_old(move |old, input| match (old, input.len()) {
+            (_, 0) | (None, _) => input
+                .into_iter()
+                .map(|(k, v)| (k.clone(), f(k, v)))
+                .collect(),
+            (Some((old_in, mut old_out)), _) => {
+                let _: &mut BTreeMap<K, V2> =
+                    old_in
+                        .symmetric_diff_owned(input)
+                        .fold(&mut old_out, |out, change| {
+                            match change {
+                                DiffElement::Left((key, _)) => {
+                                    out.remove(&key);
+                                }
+                                DiffElement::Right((key, newval)) => {
+                                    out.insert(key.clone(), f(key, newval));
+                                }
+                                DiffElement::Unequal((k1, _), (k2, newval)) => {
+                                    out.insert(k1, f(k2, newval));
+                                }
+                            }
+                            out
+                        });
+                old_out
+            }
+        })
     }
 
     pub fn btreemap_unordered_fold<FAdd, FRemove, K, V, R>(
@@ -124,18 +225,18 @@ impl<'a> State<'a> {
         K: Value<'a> + Ord,
         V: Value<'a> + Eq,
         R: Value<'a>,
-        FAdd: FnMut(R, &K, &V) -> R + 'a,
-        FRemove: FnMut(R, &K, &V) -> R + 'a,
+        FAdd: FnMut(R, K, V) -> R + 'a,
+        FRemove: FnMut(R, K, V) -> R + 'a,
     {
         map.with_old(move |old, new_in| match old {
             None => new_in
-                .iter()
+                .into_iter()
                 .fold(init.clone(), |acc, (k, v)| add(acc, k, v)),
             Some((old_in, old_out)) => {
                 if revert_to_init_when_empty && new_in.is_empty() {
                     return init.clone();
                 }
-                old_in.symmetric_fold(&new_in, old_out, &mut add, &mut remove)
+                old_in.symmetric_fold_owned(new_in, old_out, &mut add, &mut remove)
             }
         })
     }
@@ -150,6 +251,7 @@ impl<'a> State<'a> {
             state: self.clone(),
             set_at: Cell::new(self.stabilisation_num.get()),
             value: RefCell::new(value),
+            node_id: node.id,
             node: RefCell::new(Some(node)),
         });
         {
@@ -170,27 +272,6 @@ impl<'a> State<'a> {
         no.push(Rc::downgrade(&rc) as Weak<dyn ErasedObserver>);
         rc
     }
-
-    // pub fn set_var<T: Debug + Clone + 'a>(&self, var: &mut Var<T>, value: T) {
-    //     match self.status.get() {
-    //         IncrStatus::NotStabilising => {
-    //             self.num_var_sets.set(self.num_var_sets.get() + 1);
-    //             let mut value_slot = var.value.borrow_mut();
-    //             *value_slot = value;
-    //             debug_assert!(var.node.is_stale());
-    //             if var.set_at.get().less_than(&self.stabilisation_num.get()) {
-    //                 var.set_at.set(self.stabilisation_num.get());
-    //                 let watch = var.node.clone();
-    //                 debug_assert!(watch.is_stale());
-    //                 if watch.is_necessary() && watch.is_in_recompute_heap() {
-    //                     let mut heap = self.recompute_heap.borrow_mut();
-    //                     heap.insert(watch.weak());
-    //                 }
-    //             }
-    //         }
-    //         _ => todo!("setting variable while stabilising..."),
-    //     }
-    // }
 
     fn add_new_observers(&self) {
         let mut no = self.new_observers.borrow_mut();
@@ -239,6 +320,7 @@ impl<'a> State<'a> {
         self.status.set(IncrStatus::NotStabilising);
     }
     pub fn stabilise(&self) {
+        std::panic::catch_unwind(|| {
         assert_eq!(self.status.get(), IncrStatus::NotStabilising);
         println!("stabilise");
         let mut stdout = std::io::stdout();
@@ -253,6 +335,7 @@ impl<'a> State<'a> {
             min.recompute();
         }
         self.stabilise_end();
+        });
     }
     pub(crate) fn propagate_invalidity(&self) {
         // todo!();
