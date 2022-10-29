@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::{Incr, Value};
 
@@ -38,7 +38,11 @@ pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Map2(Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
     BindLhsChange(
         BindLhsId<'a, G>,
-        Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>,
+        // Ownership goes
+        // a node with Kind::BindMain owns BindNode
+        // BindNode owns a node with Kind::LhsChange
+        // Hence it would be a cycle for Kind::LhsChange to own BindNode.
+        Weak<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>,
     ),
     BindMain(
         BindMainId<'a, G>,

@@ -36,26 +36,12 @@ pub(crate) struct InternalObserver<'a, T> {
 pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a> + 'a>;
 pub(crate) type StrongObserver<'a> = Rc<dyn ErasedObserver<'a> + 'a>;
 
-impl<'a> Hash for dyn ErasedObserver<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id().hash(state);
-    }
-}
-
-impl<'a> Eq for dyn ErasedObserver<'a> { }
-
-impl<'a> PartialEq for dyn ErasedObserver<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id().eq(&other.id())
-    }
-}
-
 pub(crate) trait ErasedObserver<'a>: Debug + 'a {
     fn id(&self) -> ObserverId;
     fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<ObserverState>;
     fn observing(&self) -> NodeRef<'a>;
-    fn disallow_future_use(&self);
+    fn disallow_future_use(&self, state: &State<'a>);
 }
 
 impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
@@ -74,19 +60,18 @@ impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
     fn observing(&self) -> NodeRef<'a> {
         self.observing.node.clone().packed()
     }
-    fn disallow_future_use(&self) {
-        let t = self.incr_state();
+    fn disallow_future_use(&self, state: &State<'a>) {
         match self.state.get() {
             Disallowed | Unlinked => {}
             Created => {
-                t.num_active_observers.set(t.num_active_observers.get() - 1);
+                state.num_active_observers.set(state.num_active_observers.get() - 1);
                 self.state.set(Unlinked);
                 // self.on_update_handlers = ();
             }
             InUse => {
-                t.num_active_observers.set(t.num_active_observers.get() - 1);
+                state.num_active_observers.set(state.num_active_observers.get() - 1);
                 self.state.set(Disallowed);
-                let mut dobs = t.disallowed_observers.borrow_mut();
+                let mut dobs = state.disallowed_observers.borrow_mut();
                 dobs.push(self.weak_self.clone());
             }
         }
@@ -103,8 +88,8 @@ impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
 }
 
 impl<'a, T: Value<'a>> InternalObserver<'a, T> {
-    fn incr_state(&self) -> Rc<State<'a>> {
-        self.observing.node.state()
+    pub(crate) fn incr_state(&self) -> Option<Rc<State<'a>>> {
+        self.observing.node.state_opt()
     }
     pub(crate) fn new(observing: Incr<'a, T>) -> Rc<Self> {
         Rc::new_cyclic(|weak_self| { Self {

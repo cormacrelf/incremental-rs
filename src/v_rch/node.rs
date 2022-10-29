@@ -264,6 +264,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
     fn inner(&self) -> &RefCell<NodeInner<'a>>;
+    fn state_opt(&self) -> Option<Rc<State<'a>>>;
     fn state(&self) -> Rc<State<'a>>;
     fn weak(&self) -> WeakNode<'a>;
     fn packed(&self) -> NodeRef<'a>;
@@ -310,8 +311,10 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn inner(&self) -> &RefCell<NodeInner<'a>> {
         &self.inner
     }
+    fn state_opt(&self) -> Option<Rc<State<'a>>> {
+        self.inner().borrow().state.upgrade()
+    }
     fn state(&self) -> Rc<State<'a>> {
-        // State is guaranteed to outlive us. Unwrap will always succeed.
         self.inner().borrow().state.upgrade().unwrap()
     }
     fn is_valid(&self) -> bool {
@@ -326,13 +329,15 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*k {
             Kind::Uninitialised => panic!(),
             Kind::Invalid | Kind::Constant(_) | Kind::Var(_) => false,
-            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..)
-                | Kind::Map(..)
-                | Kind::Map2(..)
-                => self.has_invalid_child(),
+            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..) | Kind::Map(..) | Kind::Map2(..) => {
+                self.has_invalid_child()
+            }
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
-               reason as above).  This is equivalent to [has_invalid_child t]. */
-            Kind::BindLhsChange(_, bind) => !bind.lhs.is_valid(),
+            reason as above).  This is equivalent to [has_invalid_child t]. */
+            Kind::BindLhsChange(_, bind) => {
+                let Some(bind) = bind.upgrade() else { return false };
+                !bind.lhs.is_valid()
+            }
             /* [Bind_main], [If_then_else], and [Join_main] are invalid if their *_change child is,
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
@@ -348,7 +353,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 #[cfg(debug_assertions)]
                 match kind {
                     Kind::BindMain(..) => (), // and IfThenElse, JoinMain
-                    _ => panic!("nodes with no children are never pushed on the stack")
+                    _ => panic!("nodes with no children are never pushed on the stack"),
                 }
             }
         }
@@ -400,8 +405,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn is_stale(&self) -> bool {
         let k = self.kind.borrow();
         match &*k {
-            Kind::Invalid
-            | Kind::Uninitialised => panic!(),
+            Kind::Invalid | Kind::Uninitialised => panic!(),
             Kind::Var(var) => {
                 let set_at = var.set_at.get();
                 let recomputed_at = self.recomputed_at.get();
@@ -526,13 +530,16 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*k {
             Kind::Invalid => {}
             Kind::Uninitialised => {}
-            Kind::Constant(_) => {},
+            Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. }) => f(0, input.packed()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
-            Kind::BindLhsChange(_, bind) => f(0, bind.lhs.packed()),
+            Kind::BindLhsChange(_, bind) => {
+                let Some(bind) = bind.upgrade() else { return };
+                f(0, bind.lhs.packed())
+            }
             Kind::BindMain(_, bind) => {
                 f(0, bind.lhs_change.packed());
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
@@ -596,6 +603,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.maybe_change_value(new_value);
             }
             Kind::BindLhsChange(id, bind) => {
+                let Some(bind) = bind.upgrade() else { return };
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let t = self.state();
@@ -658,48 +666,54 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::UnorderedArrayFold(uaf) => {
                 println!("-- recomputing UAF {uaf:?}");
                 self.maybe_change_value(uaf.compute())
-            },
+            }
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
             Kind::Uninitialised => panic!("recomputing uninitialised node"),
             Kind::Cutoff(_) => todo!(),
         }
     }
-  /* Note that the two following functions are not symmetric of one another: in [let y =
-     map x], [x] is always a child of [y] (assuming [x] doesn't become invalid) but [y] in
-     only a parent of [x] if y is necessary. */
-  // let assert_currently_running_node_is_child state node name =
-  //   let (T current) = currently_running_node_exn state name in
-  //   if not (Node.has_child node ~child:current)
-  //   then
-  //     raise_s
-  //       [%sexp
-  //         ("can only call " ^ name ^ " on parent nodes" : string)
-  //       , ~~(node.kind : _ Kind.t)
-  //       , ~~(current.kind : _ Kind.t)]
-  // ;;
-  //
-  // let assert_currently_running_node_is_parent state node name =
-  //   let (T current) = currently_running_node_exn state name in
-  //   if not (Node.has_parent ~parent:current node)
-  //   then
-  //     raise_s
-  //       [%sexp
-  //         ("can only call " ^ name ^ " on children nodes" : string)
-  //       , ~~(node.kind : _ Kind.t)
-  //       , ~~(current.kind : _ Kind.t)]
-  // ;;
-    #[cfg(debug_assertions)] 
+    /* Note that the two following functions are not symmetric of one another: in [let y =
+    map x], [x] is always a child of [y] (assuming [x] doesn't become invalid) but [y] in
+    only a parent of [x] if y is necessary. */
+    // let assert_currently_running_node_is_child state node name =
+    //   let (T current) = currently_running_node_exn state name in
+    //   if not (Node.has_child node ~child:current)
+    //   then
+    //     raise_s
+    //       [%sexp
+    //         ("can only call " ^ name ^ " on parent nodes" : string)
+    //       , ~~(node.kind : _ Kind.t)
+    //       , ~~(current.kind : _ Kind.t)]
+    // ;;
+    //
+    // let assert_currently_running_node_is_parent state node name =
+    //   let (T current) = currently_running_node_exn state name in
+    //   if not (Node.has_parent ~parent:current node)
+    //   then
+    //     raise_s
+    //       [%sexp
+    //         ("can only call " ^ name ^ " on children nodes" : string)
+    //       , ~~(node.kind : _ Kind.t)
+    //       , ~~(current.kind : _ Kind.t)]
+    // ;;
+    #[cfg(debug_assertions)]
     fn assert_currently_running_node_is_child(&self, name: &'static str) {
         let t = self.state();
         let current = t.only_in_debug.currently_running_node_exn(name);
-        assert!(self.has_child(&current), "({name}) currently running node was not a child");
+        assert!(
+            self.has_child(&current),
+            "({name}) currently running node was not a child"
+        );
     }
     #[cfg(debug_assertions)]
     fn assert_currently_running_node_is_parent(&self, name: &'static str) {
         let t = self.state();
         let current = t.only_in_debug.currently_running_node_exn(name);
         let Some(current) = current.upgrade() else { return };
-        assert!(current.has_child(&self.weak()), "({name}) currently running node was not a parent");
+        assert!(
+            current.has_child(&self.weak()),
+            "({name}) currently running node was not a parent"
+        );
     }
     fn has_child(&self, child: &WeakNode<'a>) -> bool {
         let Some(upgraded) = child.upgrade() else { return false };
@@ -729,16 +743,16 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             if self.is_necessary() {
                 self.remove_children();
                 /* The self doesn't have children anymore, so we can lower its height as much as
-                   possible, to one greater than the scope it was created in.  Also, because we
-                   are lowering the height, we don't need to adjust any of its ancestors' heights.
-                   We could leave the height alone, but we may as well lower it as much as
-                   possible to avoid making the heights of any future ancestors unnecessarily
-                   large. */
+                possible, to one greater than the scope it was created in.  Also, because we
+                are lowering the height, we don't need to adjust any of its ancestors' heights.
+                We could leave the height alone, but we may as well lower it as much as
+                possible to avoid making the heights of any future ancestors unnecessarily
+                large. */
                 let h = self.created_in.height() + 1;
                 self.set_height(h);
                 /* We don't set [node.created_in] or [node.next_node_in_same_scope]; we leave [node]
-                   in the scope it was created in.  If that scope is ever invalidated, then that
-                   will clear [node.next_node_in_same_scope] */
+                in the scope it was created in.  If that scope is ever invalidated, then that
+                will clear [node.next_node_in_same_scope] */
             }
             // (match node.kind with
             //  | At at -> remove_alarm at.clock at.alarm
@@ -767,6 +781,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let kind = self.kind.borrow();
         match &*kind {
             Kind::BindLhsChange(_, bind) => {
+                let Some(bind) = bind.upgrade() else { return };
                 println!("adjust_heights_bind_lhs_change {:?}", bind);
                 let all = bind.all_nodes_created_on_rhs.borrow();
                 for rnode_weak in all.iter() {
@@ -969,6 +984,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 (f.i2)(1, two.clone().as_input());
             }
             Kind::BindLhsChange(id, bind) => {
+                let Some(bind) = bind.upgrade() else { return };
                 let input = id.input_lhs_i2.cast(bind.lhs.as_input());
                 (f.i2)(0, input)
             }

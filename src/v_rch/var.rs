@@ -44,7 +44,9 @@ impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
             self.set_var_while_not_stabilising(v);
         }
     }
-    fn id(&self) -> NodeId { self.node_id }
+    fn id(&self) -> NodeId {
+        self.node_id
+    }
     fn break_rc_cycle(&self) {
         self.node.take();
     }
@@ -114,7 +116,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
                 println!(
                     "inserting var watch into recompute heap at height {:?}",
                     watch.height()
-                    );
+                );
                 let mut heap = t.recompute_heap.borrow_mut();
                 heap.insert(watch.packed());
             }
@@ -148,6 +150,7 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
 
 #[test]
 fn var_drop() {
+    DID_DROP.with(|cell| cell.set(0));
     {
         let incr = State::new();
         println!("before var created");
@@ -165,6 +168,7 @@ fn var_drop() {
 
 #[test]
 fn var_drop_delayed() {
+    DID_DROP.with(|cell| cell.set(0));
     {
         let incr = State::new();
         let v = incr.var(10);

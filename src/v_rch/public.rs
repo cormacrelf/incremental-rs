@@ -17,7 +17,10 @@ pub struct Observer<'a, T: Value<'a>> {
 
 impl<'a, T: Value<'a>> Observer<'a, T> {
     pub(crate) fn new(internal: Rc<InternalObserver<'a, T>>) -> Self {
-        Self { internal, sentinel: Rc::new(()) }
+        Self {
+            internal,
+            sentinel: Rc::new(()),
+        }
     }
     #[inline]
     pub fn value(&self) -> Result<T, ObserverError> {
@@ -34,8 +37,17 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
         // all_observers holds another strong reference to internal.
         // but we can be _sure_ we're the last public::Observer by using a sentinel Rc.
         if Rc::strong_count(&self.sentinel) <= 1 {
-            // causes it to eventually be dropped
-            self.internal.disallow_future_use();
+            if let Some(state) = self.internal.incr_state() {
+                // causes it to eventually be dropped
+                self.internal.disallow_future_use(&*state);
+            } else {
+                // if state is already dead, or is currently in the process of being dropped and
+                // has triggered Observer::drop because an Observer was owned by some other node
+                // by being used in its map() function etc (ugly, I know) then we don't need to
+                // do disallow_future_use.
+                // We'll just write this to be sure?
+                self.internal.state.set(super::internal_observer::ObserverState::Disallowed);
+            }
         }
     }
 }
@@ -49,7 +61,10 @@ pub struct Var<'a, T: Value<'a>> {
 
 impl<'a, T: Value<'a>> Var<'a, T> {
     pub(crate) fn new(internal: Rc<InternalVar<'a, T>>) -> Self {
-        Self { internal, sentinel: Rc::new(()) }
+        Self {
+            internal,
+            sentinel: Rc::new(()),
+        }
     }
     #[inline]
     pub fn set(&self, value: T) {
@@ -79,9 +94,16 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
         // we can be _sure_ we're the last public::Var by using a sentinel Rc.
         // i.e. this Var will never get set again.
         if Rc::strong_count(&self.sentinel) <= 1 {
-            let state = self.internal.state.upgrade().unwrap();
-            let mut dead_vars = state.dead_vars.borrow_mut();
-            dead_vars.push(self.internal.erased());
+            match self.internal.state.upgrade() {
+                Some(state) => {
+                    let mut dead_vars = state.dead_vars.borrow_mut();
+                    dead_vars.push(self.internal.erased());
+                }
+                None => {
+                    // state is dead. there is nobody to save you now.
+                    self.internal.node.take();
+                }
+            }
         }
     }
 }

@@ -383,7 +383,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
                 r_unit: refl(),
                 input_lhs_i2: refl(),
             },
-            bind.clone(),
+            Rc::downgrade(&bind),
         );
         main_incr
     }
@@ -434,4 +434,3 @@ impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {
             .finish()
     }
 }
-
