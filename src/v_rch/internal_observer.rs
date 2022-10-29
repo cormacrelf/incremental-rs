@@ -1,8 +1,8 @@
+use super::state::State;
 use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::rc::Rc;
 use std::{cell::Cell, rc::Weak};
-use super::state::State;
-use std::hash::Hash;
 
 use super::Incr;
 use super::{NodeRef, Value};
@@ -64,12 +64,16 @@ impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
         match self.state.get() {
             Disallowed | Unlinked => {}
             Created => {
-                state.num_active_observers.set(state.num_active_observers.get() - 1);
+                state
+                    .num_active_observers
+                    .set(state.num_active_observers.get() - 1);
                 self.state.set(Unlinked);
                 // self.on_update_handlers = ();
             }
             InUse => {
-                state.num_active_observers.set(state.num_active_observers.get() - 1);
+                state
+                    .num_active_observers
+                    .set(state.num_active_observers.get() - 1);
                 self.state.set(Disallowed);
                 let mut dobs = state.disallowed_observers.borrow_mut();
                 dobs.push(self.weak_self.clone());
@@ -92,13 +96,13 @@ impl<'a, T: Value<'a>> InternalObserver<'a, T> {
         self.observing.node.state_opt()
     }
     pub(crate) fn new(observing: Incr<'a, T>) -> Rc<Self> {
-        Rc::new_cyclic(|weak_self| { Self {
+        Rc::new_cyclic(|weak_self| Self {
             id: ObserverId::next(),
             state: Cell::new(Created),
             observing,
             on_update_handlers: (),
             weak_self: weak_self.clone() as WeakObserver<'a>,
-        } })
+        })
     }
     pub(crate) fn value(&self) -> Result<T, ObserverError> {
         match self.state.get() {
@@ -141,4 +145,3 @@ impl Display for ObserverError {
     }
 }
 impl std::error::Error for ObserverError {}
-

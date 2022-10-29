@@ -5,7 +5,7 @@ pub use super::internal_observer::ObserverError;
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
 pub use super::state::State;
-use super::var::Var as InternalVar;
+use super::var::{ErasedVariable, Var as InternalVar};
 pub use super::Incr;
 pub use super::Value;
 
@@ -46,7 +46,9 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
                 // by being used in its map() function etc (ugly, I know) then we don't need to
                 // do disallow_future_use.
                 // We'll just write this to be sure?
-                self.internal.state.set(super::internal_observer::ObserverState::Disallowed);
+                self.internal
+                    .state
+                    .set(super::internal_observer::ObserverState::Disallowed);
             }
         }
     }
@@ -94,15 +96,16 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
         // we can be _sure_ we're the last public::Var by using a sentinel Rc.
         // i.e. this Var will never get set again.
         if Rc::strong_count(&self.sentinel) <= 1 {
-            match self.internal.state.upgrade() {
-                Some(state) => {
-                    let mut dead_vars = state.dead_vars.borrow_mut();
-                    dead_vars.push(self.internal.erased());
-                }
-                None => {
-                    // state is dead. there is nobody to save you now.
-                    self.internal.node.take();
-                }
+            if let Some(state) = self.internal.state.upgrade() {
+                // we add the var to a delay queue, in order to ensure that
+                // `self.internal.break_rc_cyle()` happens after any potential use
+                // via set_during_stabilisation.
+                // See `impl Drop for State` for more.
+                let mut dead_vars = state.dead_vars.borrow_mut();
+                dead_vars.push(self.internal.erased());
+            } else {
+                // no stabilise will ever run, so we don't need to add this to a delay queue
+                self.internal.break_rc_cycle();
             }
         }
     }
