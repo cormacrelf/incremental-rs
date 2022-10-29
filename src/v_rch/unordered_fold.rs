@@ -8,10 +8,7 @@ use super::node::Input;
 
 #[derive(Copy, Clone, Debug)]
 enum Cycle {
-    EveryN {
-        current: u32,
-        n: u32,
-    },
+    EveryN { current: u32, n: u32 },
     Never,
 }
 
@@ -27,7 +24,7 @@ impl Cycle {
     }
     fn reset(cell: &Cell<Self>) {
         let v = match cell.get() {
-            Self::EveryN { n, ..} => Self::EveryN { current: n, n },
+            Self::EveryN { n, .. } => Self::EveryN { current: n, n },
             Self::Never => Self::Never,
         };
         cell.set(v);
@@ -43,11 +40,11 @@ impl Cycle {
             Self::EveryN { current, n } if *current + 1 >= *n => {
                 *current = 0;
                 true
-            },
+            }
             Self::EveryN { current, .. } => {
                 *current += 1;
                 false
-            },
+            }
             Self::Never => false,
         }
     }
@@ -68,8 +65,9 @@ pub(crate) fn make_update_fn_from_inverse<B, A, F, FInv>(
     mut f: F,
     mut f_inv: FInv,
 ) -> impl FnMut(B, A, A) -> B
-    where F: FnMut(B, A) -> B,
-          FInv: FnMut(B, A) -> B,
+where
+    F: FnMut(B, A) -> B,
+    FInv: FnMut(B, A) -> B,
 {
     move |fold_value, old_value, new_value| {
         // imagine f     is |a, x| a + x
@@ -111,7 +109,6 @@ where
     I: Value<'a>,
     R: Value<'a>,
 {
-
     pub(crate) fn create_node(
         state: &Rc<State<'a>>,
         vec: Vec<Incr<'a, I>>,
@@ -119,8 +116,7 @@ where
         f: F,
         update: U,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R>
-    {
+    ) -> Incr<'a, R> {
         let node = super::node::Node::<UnorderedArrayFold<'a, F, _, I, R>>::create(
             state.weak(),
             state.current_scope(),

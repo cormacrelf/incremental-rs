@@ -660,8 +660,15 @@ fn test_constant() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(15));
     let flip = incr.var(true);
-    let o2 = flip.watch()
-        .binds(|incr, t| if t { incr.constant(5) } else { incr.constant(10) })
+    let o2 = flip
+        .watch()
+        .binds(|incr, t| {
+            if t {
+                incr.constant(5)
+            } else {
+                incr.constant(10)
+            }
+        })
         .observe();
     incr.stabilise();
     assert_eq!(o2.value(), Ok(5));
@@ -677,9 +684,7 @@ fn two_worlds() {
     let two = State::new();
     let v2 = two.var(9);
     let v2_ = v2.clone();
-    let _o = one.constant(5).bind(move |_| {
-        v2_.watch()
-    }).observe();
+    let _o = one.constant(5).bind(move |_| v2_.watch()).observe();
     let _o2 = v2.watch().observe();
     two.stabilise();
     one.stabilise();

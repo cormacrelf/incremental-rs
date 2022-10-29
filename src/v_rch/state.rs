@@ -4,11 +4,13 @@ use super::symmetric_fold::{DiffElement, SymmetricDiffMap, SymmetricDiffMapOwned
 use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value, WeakNode};
 
-use super::internal_observer::{ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver};
+use super::internal_observer::{
+    ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
+};
 use super::kind::{Constant, Kind};
 use super::node::Node;
 use super::scope::Scope;
-use super::var::{WeakVar, Var};
+use super::var::{Var, WeakVar};
 use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
@@ -58,7 +60,7 @@ impl<'a> OnlyInDebug<'a> {
         let crn = self.currently_running_node.borrow();
         match &*crn {
             None => panic!("can only call {} during stabilisation", name),
-            Some(current) => current.clone()
+            Some(current) => current.clone(),
         }
     }
 }
@@ -315,7 +317,8 @@ impl<'a> State<'a> {
 
     pub(crate) fn observe<T: Value<'a>>(&self, incr: Incr<'a, T>) -> Rc<InternalObserver<'a, T>> {
         let internal_observer = InternalObserver::new(incr);
-        self.num_active_observers.set(self.num_active_observers.get() + 1);
+        self.num_active_observers
+            .set(self.num_active_observers.get() + 1);
         let mut no = self.new_observers.borrow_mut();
         no.push(Rc::downgrade(&internal_observer) as Weak<dyn ErasedObserver>);
         internal_observer
@@ -402,7 +405,10 @@ impl<'a> State<'a> {
             let Some(var) = var.upgrade() else {
                 continue
             };
-            println!("---------------------- dead_vars: found var with {:?}", var.id());
+            println!(
+                "---------------------- dead_vars: found var with {:?}",
+                var.id()
+            );
             var.break_rc_cycle();
         }
         drop(stack);
@@ -437,26 +443,26 @@ impl<'a> State<'a> {
                     node.invalidate_node();
                 } else {
                     /* [Node.needs_to_be_computed node] is true because
-                       - node is necessary. This is because children can only point to necessary parents
-                       - node is stale. This is because: For bind, if, join, this is true because
-                       - either the invalidation is caused by the lhs changing (in which case the
-                         lhs-change node being newer makes us stale).
-                       - or a child became invalid this stabilization cycle, in which case it has
-                         t.changed_at of [t.stabilization_num], and so [node] is stale
-                       - or [node] just became necessary and tried connecting to an already invalid
-                       child. In that case, [child.changed_at > node.recomputed_at] for that child,
-                       because if we had been recomputed when that child changed, we would have been
-                       made invalid back then.  For expert nodes, the argument is the same, except
-                       that instead of lhs-change nodes make the expert nodes stale, it's made stale
-                       explicitely when adding or removing children. */
+                    - node is necessary. This is because children can only point to necessary parents
+                    - node is stale. This is because: For bind, if, join, this is true because
+                    - either the invalidation is caused by the lhs changing (in which case the
+                      lhs-change node being newer makes us stale).
+                    - or a child became invalid this stabilization cycle, in which case it has
+                      t.changed_at of [t.stabilization_num], and so [node] is stale
+                    - or [node] just became necessary and tried connecting to an already invalid
+                    child. In that case, [child.changed_at > node.recomputed_at] for that child,
+                    because if we had been recomputed when that child changed, we would have been
+                    made invalid back then.  For expert nodes, the argument is the same, except
+                    that instead of lhs-change nodes make the expert nodes stale, it's made stale
+                    explicitely when adding or removing children. */
                     debug_assert!(node.needs_to_be_computed());
 
                     // ...
                     node.propagate_invalidity_helper();
 
                     /* We do not check [Node.needs_to_be_computed node] here, because it should be
-                       true, and because computing it takes O(number of children), node can be pushed
-                       on the stack once per child, and expert nodes can have lots of children. */
+                    true, and because computing it takes O(number of children), node can be pushed
+                    on the stack once per child, and expert nodes can have lots of children. */
                     if !node.is_in_recompute_heap() {
                         let mut rch = self.recompute_heap.borrow_mut();
                         rch.insert(node);
