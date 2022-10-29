@@ -8,7 +8,7 @@ use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub(crate) struct VarGenerics<'a, T: Value<'a>>(std::marker::PhantomData<&'a T>);
 impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
@@ -24,10 +24,14 @@ impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
 }
 
-pub(crate) type ErasedVar<'a> = Rc<dyn ErasedVariable<'a> + 'a>;
+// For the delayed variable set list (set_during_stabilisation).
+// We use Weak to ensure we don't interfere with the manual
+// Rc-cycle-breaking on public::Var.
+pub(crate) type ErasedVar<'a> = Weak<dyn ErasedVariable<'a> + 'a>;
 
 pub(crate) trait ErasedVariable<'a>: Debug {
     fn set_var_stabilise_end(&self);
+    fn id(&self) -> NodeId;
 }
 
 impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
@@ -37,6 +41,7 @@ impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
         drop(temporary);
         self.set_var_while_not_stabilising(v);
     }
+    fn id(&self) -> NodeId { self.node_id }
 }
 
 pub struct Var<'a, T: Value<'a>> {
@@ -59,7 +64,7 @@ impl<'a, T: Value<'a>> Debug for Var<'a, T> {
 
 impl<'a, T: Value<'a>> Var<'a, T> {
     pub(crate) fn erased(self: &Rc<Self>) -> ErasedVar<'a> {
-        self.clone() as ErasedVar<'a>
+        Rc::downgrade(self) as ErasedVar<'a>
     }
     pub(crate) fn get(&self) -> T {
         self.value.borrow().clone()
@@ -82,7 +87,9 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
 
     fn set_var_while_not_stabilising(&self, value: T) {
-        let watch = self.node.borrow().clone().expect("uninitialised var");
+        let Some(watch) = self.node.borrow().clone() else {
+            panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
+        };
         let t = &self.state;
         t.num_var_sets.set(t.num_var_sets.get() + 1);
         let mut value_slot = self.value.borrow_mut();
@@ -118,6 +125,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
 }
 
+#[cfg(test)]
 thread_local! {
     static DID_DROP: Cell<u32> = Cell::new(0);
 }
@@ -143,6 +151,25 @@ fn var_drop() {
         let o = w.observe();
         incr.stabilise();
         assert_eq!(o.value(), Ok(10));
+    }
+    assert_eq!(DID_DROP.with(|cell| cell.get()), 1);
+}
+
+#[test]
+fn var_drop_delayed() {
+    {
+        let incr = State::new();
+        let v = incr.var(10);
+        let w = v.watch();
+        let c = incr.constant(9).bind(move |x| {
+            v.set(99);
+            w.clone()
+        });
+        let o = c.observe();
+        incr.stabilise();
+        assert_eq!(o.value(), Ok(10));
+        incr.stabilise();
+        assert_eq!(o.value(), Ok(99));
     }
     assert_eq!(DID_DROP.with(|cell| cell.get()), 1);
 }

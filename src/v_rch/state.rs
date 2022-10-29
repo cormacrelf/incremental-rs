@@ -2,9 +2,9 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::symmetric_fold::{DiffElement, SymmetricDiffMap, SymmetricDiffMapOwned};
 use super::unordered_fold::UnorderedArrayFold;
-use super::{NodeRef, Value};
+use super::{NodeRef, Value, WeakNode};
 
-use super::internal_observer::{ErasedObserver, InternalObserver, WeakObserver};
+use super::internal_observer::{ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver};
 use super::kind::{Constant, Kind};
 use super::node::Node;
 use super::scope::Scope;
@@ -13,7 +13,7 @@ use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
@@ -30,11 +30,35 @@ pub struct State<'a> {
     pub(crate) num_nodes_became_necessary: Cell<usize>,
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
     pub(crate) num_nodes_invalidated: Cell<usize>,
-    pub(crate) new_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
-    pub(crate) all_observers: Rc<RefCell<Vec<WeakObserver<'a>>>>,
+    pub(crate) num_active_observers: Cell<usize>,
+    pub(crate) new_observers: RefCell<Vec<WeakObserver<'a>>>,
+    // use a strong reference, because the InternalObserver for a dropped public::Observer
+    // should stay alive until we've cleaned up after it.
+    pub(crate) all_observers: RefCell<HashMap<ObserverId, StrongObserver<'a>>>,
+    pub(crate) disallowed_observers: RefCell<Vec<WeakObserver<'a>>>,
     pub(crate) current_scope: RefCell<Scope<'a>>,
     pub(crate) set_during_stabilisation: RefCell<Vec<ErasedVar<'a>>>,
     _phantom: PhantomData<&'a ()>,
+
+    #[cfg(debug_assertions)]
+    pub(crate) only_in_debug: OnlyInDebug<'a>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Default)]
+pub(crate) struct OnlyInDebug<'a> {
+    currently_running_node: RefCell<Option<WeakNode<'a>>>,
+}
+
+#[cfg(debug_assertions)]
+impl<'a> OnlyInDebug<'a> {
+    pub(crate) fn currently_running_node_exn(&self, name: &'static str) -> WeakNode<'a> {
+        let crn = self.currently_running_node.borrow();
+        match &*crn {
+            None => panic!("can only call {} during stabilisation", name),
+            Some(current) => current.clone()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -63,12 +87,16 @@ impl<'a> State<'a> {
             num_nodes_became_necessary: Cell::new(0),
             num_nodes_became_unnecessary: Cell::new(0),
             num_nodes_invalidated: Cell::new(0),
+            num_active_observers: Cell::new(0),
             status: Cell::new(IncrStatus::NotStabilising),
-            new_observers: Rc::new(RefCell::new(Vec::new())),
-            all_observers: Rc::new(RefCell::new(Vec::new())),
+            all_observers: RefCell::new(HashMap::new()),
+            new_observers: RefCell::new(Vec::new()),
+            disallowed_observers: RefCell::new(Vec::new()),
             current_scope: RefCell::new(Scope::Top),
-            set_during_stabilisation: Default::default(),
+            set_during_stabilisation: RefCell::new(vec![]),
             _phantom: Default::default(),
+            #[cfg(debug_assertions)]
+            only_in_debug: OnlyInDebug::default(),
         })
     }
 
@@ -279,12 +307,11 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn observe<T: Value<'a>>(&self, incr: Incr<'a, T>) -> Rc<InternalObserver<'a, T>> {
-        let state = incr.node.state();
         let internal_observer = InternalObserver::new(incr);
-        let mut no = state.new_observers.borrow_mut();
-        let rc = Rc::new(internal_observer);
-        no.push(Rc::downgrade(&rc) as Weak<dyn ErasedObserver>);
-        rc
+        self.num_active_observers.set(self.num_active_observers.get() + 1);
+        let mut no = self.new_observers.borrow_mut();
+        no.push(Rc::downgrade(&internal_observer) as Weak<dyn ErasedObserver>);
+        internal_observer
     }
 
     fn add_new_observers(&self) {
@@ -292,39 +319,69 @@ impl<'a> State<'a> {
         let mut ao = self.all_observers.borrow_mut();
         for weak in no.drain(..) {
             let Some(obs) = weak.upgrade() else { continue };
-            use super::internal_observer::State as ObState;
             match obs.state().get() {
-                ObState::InUse | ObState::Disallowed => panic!(),
-                ObState::Unlinked => {}
-                ObState::Created => {
-                    obs.state().set(ObState::InUse);
+                ObserverState::InUse | ObserverState::Disallowed => panic!(),
+                ObserverState::Unlinked => {}
+                ObserverState::Created => {
+                    obs.state().set(ObserverState::InUse);
                     let src: NodeRef<'a> = obs.observing();
                     let was_necessary = src.is_necessary();
                     {
                         let inner = src.inner();
                         let mut i = inner.borrow_mut();
-                        i.observers.push(weak.clone());
+                        i.observers.insert(obs.id(), weak.clone());
                     }
-                    ao.push(weak);
+                    ao.insert(obs.id(), obs);
                     debug_assert!(src.is_necessary());
                     if !was_necessary {
-                        src.became_necessary();
+                        src.became_necessary_propagate();
                     }
                 }
             }
         }
     }
-    fn remove_disallowed_observers(&self) {}
+
+    // not required. We don't have a GC with dead-but-still-participating objects to account for.
+    // fn disallow_finalized_observers(&self) {}
+
+    fn unlink_disallowed_observers(&self) {
+        let mut disallowed = self.disallowed_observers.borrow_mut();
+        for obs_weak in disallowed.drain(..) {
+            let Some(obs) = obs_weak.upgrade() else { continue };
+            debug_assert_eq!(obs.state().get(), ObserverState::Disallowed);
+            obs.state().set(ObserverState::Unlinked);
+            // get a strong ref to the node, before we drop its owning InternalObserver
+            let observing = obs.observing();
+            {
+                // remove from the observed node's list of observers
+                let inner = observing.inner();
+                let mut i = inner.borrow_mut();
+                i.observers.remove(&obs.id());
+
+                // remove from all_observers (this finally drops the InternalObserver)
+                let mut ao = self.all_observers.borrow_mut();
+                ao.remove(&obs.id());
+            }
+            observing.check_if_unnecessary();
+        }
+    }
+
     fn stabilise_start(&self) {
         self.status.set(IncrStatus::Stabilising);
+        // self.disallow_finalized_observers();
         self.add_new_observers();
-        self.remove_disallowed_observers();
+        self.unlink_disallowed_observers();
     }
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
         let mut stack = self.set_during_stabilisation.borrow_mut();
         while let Some(var) = stack.pop() {
+            let Some(var) = var.upgrade() else {
+                // all public::Vars dropped, the watch node dropped too
+                continue
+            };
+            println!("set_during_stabilisation: found var with {:?}", var.id());
             var.set_var_stabilise_end();
         }
         // while not (Stack.is_empty t.handle_after_stabilization) do
@@ -348,7 +405,6 @@ impl<'a> State<'a> {
         self.stabilise_end();
     }
     pub(crate) fn propagate_invalidity(&self) {
-        // todo!();
         eprintln!("WARNING: propagate_invalidity not implemented");
     }
 }

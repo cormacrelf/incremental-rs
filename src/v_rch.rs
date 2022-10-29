@@ -38,6 +38,7 @@ pub(crate) type NodeRef<'a> = Rc<dyn ErasedNode<'a> + 'a>;
 pub(crate) type WeakNode<'a> = Weak<dyn ErasedNode<'a> + 'a>;
 
 #[derive(Clone, Debug)]
+#[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
 pub struct Incr<'a, T> {
     node: Input<'a, T>,
 }
@@ -229,14 +230,6 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         Rc::ptr_eq(&self.node, &other.node)
     }
 
-    // pub fn new(value: T) -> Self {
-    //     let raw = Rc::new(RawValue {
-    //         value: RefCell::new(value),
-    //     });
-    //     let node = Node::create(self.node.state(), node::Kind::<T, RawValue<T>>::Raw)
-    //     Incr { node: raw }
-    // }
-
     pub fn enumerate(&self) -> Incr<'a, (usize, T)> {
         let mut counter = 0;
         self.map(move |x| {
@@ -337,7 +330,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         self.bind(move |value: T| f(&cloned, value))
     }
 
-    pub fn bind<F, R>(&self, mut f: F) -> Incr<'a, R>
+    pub fn bind<F, R>(&self, f: F) -> Incr<'a, R>
     where
         R: Debug + Clone + 'a,
         F: FnMut(T) -> Incr<'a, R> + 'a,
@@ -442,17 +435,3 @@ impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {
     }
 }
 
-struct RawValue<T> {
-    value: T,
-}
-
-impl<T> Debug for RawValue<T>
-where
-    T: Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("RawValue")
-            .field("value", &self.value)
-            .finish()
-    }
-}

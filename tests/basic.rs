@@ -669,3 +669,18 @@ fn test_constant() {
     incr.stabilise();
     assert_eq!(o2.value(), Ok(10));
 }
+
+#[test]
+#[should_panic = "assertion failed: Rc::ptr_eq"]
+fn two_worlds() {
+    let one = State::new();
+    let two = State::new();
+    let v2 = two.var(9);
+    let v2_ = v2.clone();
+    let _o = one.constant(5).bind(move |_| {
+        v2_.watch()
+    }).observe();
+    let _o2 = v2.watch().observe();
+    two.stabilise();
+    one.stabilise();
+}

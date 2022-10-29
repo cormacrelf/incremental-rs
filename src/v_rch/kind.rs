@@ -31,6 +31,8 @@ pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     Constant(G::R),
     ArrayFold(ArrayFold<'a, G::Fold, G::I1, G::R>),
     UnorderedArrayFold(UnorderedArrayFold<'a, G::Fold, G::Update, G::I1, G::R>),
+    // We have a strong reference to the Var, because (e.g.) the user's public::Var
+    // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<'a, G::R>>),
     Map(MapNode<'a, G::F1, G::I1, G::R>),
     Map2(Map2Node<'a, G::F2, G::I1, G::I2, G::R>),

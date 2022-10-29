@@ -1,8 +1,8 @@
 use core::fmt::Debug;
 use std::rc::Rc;
 
-use super::internal_observer::InternalObserver;
 pub use super::internal_observer::ObserverError;
+use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
 pub use super::state::State;
 use super::var::Var as InternalVar;
@@ -10,7 +10,7 @@ pub use super::Incr;
 pub use super::Value;
 
 #[derive(Clone)]
-pub struct Observer<'a, T> {
+pub struct Observer<'a, T: Value<'a>> {
     internal: Rc<InternalObserver<'a, T>>,
 }
 
@@ -25,6 +25,15 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
     #[inline]
     pub fn expect_value(&self) -> T {
         self.internal.value().unwrap()
+    }
+}
+
+impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.internal) <= 2 {
+            // causes it to eventually be dropped
+            self.internal.disallow_future_use();
+        }
     }
 }
 
@@ -59,17 +68,11 @@ impl<'a, T: Value<'a>> Var<'a, T> {
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
         println!("dropping public::Var with id {:?}", self.id());
-        // drop the reference to the node. This is necessary because Var and Node are in an Rc cycle,
-        // so one of them needs to manually drop its Rc handle lest they each never get dropped.
-        //
-        // What happens when we do this from here?
-        //
-        // The internal.node itself will live on, as long as it's a part of some computation graph.
-        // We only needed a ref to it here in order to create new .watch()s, and we have been
-        // dropped. so we're done.
-        //
-        // Does Node itself still need var's reference to the containing Node? No. So it's fine to
-        // kill the ref.
-        *self.internal.node.borrow_mut() = None;
+        // one is for us; one is for the watch node.
+        // if it's down to 2 (i.e. all public::Vars have been dropped),
+        // then we need to break the Rc cycle between Var & Node (via Kind::Var(Rc<...>)).
+        if Rc::strong_count(&self.internal) <= 2 {
+            self.internal.node.take();
+        }
     }
 }

@@ -1,21 +1,139 @@
 use std::fmt::{Debug, Display};
+use std::rc::Rc;
 use std::{cell::Cell, rc::Weak};
+use super::state::State;
+use std::hash::Hash;
 
 use super::Incr;
 use super::{NodeRef, Value};
 
-pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a>>;
+use self::ObserverState::*;
 
-pub(crate) trait ErasedObserver<'a>: Debug + 'a {
-    fn use_is_allowed(&self) -> bool;
-    fn state(&self) -> &Cell<State>;
-    fn observing(&self) -> NodeRef<'a>;
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct ObserverId(usize);
+impl ObserverId {
+    fn next() -> Self {
+        thread_local! {
+            static OBSERVER_ID: Cell<usize> = Cell::new(0);
+        }
+
+        OBSERVER_ID.with(|x| {
+            let next = x.get() + 1;
+            x.set(next);
+            ObserverId(next)
+        })
+    }
 }
 
-pub struct InternalObserver<'a, T> {
-    state: Cell<State>,
+pub(crate) struct InternalObserver<'a, T> {
+    id: ObserverId,
+    pub(crate) state: Cell<ObserverState>,
     observing: Incr<'a, T>,
+    weak_self: WeakObserver<'a>,
     on_update_handlers: (),
+}
+
+pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a> + 'a>;
+pub(crate) type StrongObserver<'a> = Rc<dyn ErasedObserver<'a> + 'a>;
+
+impl<'a> Hash for dyn ErasedObserver<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+impl<'a> Eq for dyn ErasedObserver<'a> { }
+
+impl<'a> PartialEq for dyn ErasedObserver<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id().eq(&other.id())
+    }
+}
+
+pub(crate) trait ErasedObserver<'a>: Debug + 'a {
+    fn id(&self) -> ObserverId;
+    fn use_is_allowed(&self) -> bool;
+    fn state(&self) -> &Cell<ObserverState>;
+    fn observing(&self) -> NodeRef<'a>;
+    fn disallow_future_use(&self);
+}
+
+impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
+    fn id(&self) -> ObserverId {
+        self.id
+    }
+    fn use_is_allowed(&self) -> bool {
+        match self.state.get() {
+            Created | InUse => true,
+            Disallowed | Unlinked => false,
+        }
+    }
+    fn state(&self) -> &Cell<ObserverState> {
+        &self.state
+    }
+    fn observing(&self) -> NodeRef<'a> {
+        self.observing.node.clone().packed()
+    }
+    fn disallow_future_use(&self) {
+        let t = self.incr_state();
+        match self.state.get() {
+            Disallowed | Unlinked => {}
+            Created => {
+                t.num_active_observers.set(t.num_active_observers.get() - 1);
+                self.state.set(Unlinked);
+                // self.on_update_handlers = ();
+            }
+            InUse => {
+                t.num_active_observers.set(t.num_active_observers.get() - 1);
+                self.state.set(Disallowed);
+                let mut dobs = t.disallowed_observers.borrow_mut();
+                dobs.push(self.weak_self.clone());
+            }
+        }
+    }
+}
+
+impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InternalObserver")
+            .field("state", &self.state.get())
+            .field("value", &self.value())
+            .finish()
+    }
+}
+
+impl<'a, T: Value<'a>> InternalObserver<'a, T> {
+    fn incr_state(&self) -> Rc<State<'a>> {
+        self.observing.node.state()
+    }
+    pub(crate) fn new(observing: Incr<'a, T>) -> Rc<Self> {
+        Rc::new_cyclic(|weak_self| { Self {
+            id: ObserverId::next(),
+            state: Cell::new(Created),
+            observing,
+            on_update_handlers: (),
+            weak_self: weak_self.clone() as WeakObserver<'a>,
+        } })
+    }
+    pub(crate) fn value(&self) -> Result<T, ObserverError> {
+        match self.state.get() {
+            Created => Err(ObserverError::NeverStabilised),
+            InUse => self
+                .observing
+                .node
+                .value_opt()
+                .ok_or(ObserverError::ObservingInvalid),
+            Disallowed | Unlinked => Err(ObserverError::Disallowed),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) enum ObserverState {
+    Created,
+    InUse,
+    Disallowed,
+    Unlinked,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -39,54 +157,3 @@ impl Display for ObserverError {
 }
 impl std::error::Error for ObserverError {}
 
-impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InternalObserver")
-            .field("state", &self.state.get())
-            .field("value", &self.value())
-            .finish()
-    }
-}
-
-impl<'a, T: Value<'a>> InternalObserver<'a, T> {
-    pub(crate) fn new(observing: Incr<'a, T>) -> Self {
-        Self {
-            state: Cell::new(State::Created),
-            observing,
-            on_update_handlers: (),
-        }
-    }
-    pub(crate) fn value(&self) -> Result<T, ObserverError> {
-        match self.state.get() {
-            State::Created => Err(ObserverError::NeverStabilised),
-            State::InUse => self
-                .observing
-                .node
-                .value_opt()
-                .ok_or(ObserverError::ObservingInvalid),
-            State::Disallowed | State::Unlinked => Err(ObserverError::Disallowed),
-        }
-    }
-}
-impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
-    fn use_is_allowed(&self) -> bool {
-        match self.state.get() {
-            State::Created | State::InUse => true,
-            State::Disallowed | State::Unlinked => false,
-        }
-    }
-    fn state(&self) -> &Cell<State> {
-        &self.state
-    }
-    fn observing(&self) -> NodeRef<'a> {
-        self.observing.node.clone().packed()
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub(crate) enum State {
-    Created,
-    InUse,
-    Disallowed,
-    Unlinked,
-}

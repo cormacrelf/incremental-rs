@@ -3,12 +3,14 @@
 use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
-use super::internal_observer::ErasedObserver;
+use super::internal_observer::{ErasedObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::scope::Scope;
 use super::state::State;
 use super::{CutoffNode, Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
+use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
@@ -39,7 +41,7 @@ impl NodeId {
 pub(crate) struct NodeInner<'a> {
     pub state: Rc<State<'a>>,
     // cutoff
-    // num_on_update_handlers
+    num_on_update_handlers: i32,
     // TODO: optimise the one parent case
     // pub(crate) num_parents: i32,
     // parent0
@@ -47,7 +49,7 @@ pub(crate) struct NodeInner<'a> {
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
     pub(crate) force_necessary: bool,
-    pub(crate) observers: Vec<Weak<dyn ErasedObserver<'a>>>,
+    pub(crate) observers: HashMap<ObserverId, Weak<dyn ErasedObserver<'a>>>,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
@@ -254,6 +256,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn is_necessary(&self) -> bool;
     fn needs_to_be_recomputed(&self) -> bool;
     fn became_necessary(&self);
+    fn became_necessary_propagate(&self);
     fn became_unnecessary(&self);
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
@@ -265,6 +268,12 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ());
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate(&self);
+    fn invalidate_node(&self);
+    #[cfg(debug_assertions)]
+    fn assert_currently_running_node_is_child(&self, name: &'static str);
+    #[cfg(debug_assertions)]
+    fn assert_currently_running_node_is_parent(&self, name: &'static str);
+    fn has_child(&self, child: &WeakNode<'a>) -> bool;
     fn adjust_heights_bind_lhs_change(
         &self,
         ahh: &mut AdjustHeightsHeap<'a>,
@@ -393,6 +402,13 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
     fn needs_to_be_recomputed(&self) -> bool {
         self.is_necessary() && self.is_stale()
+    }
+    // Not used in add_parent_without_adjusting_heights, I think.
+    // Used for `set_freeze`, `add_observers`
+    fn became_necessary_propagate(&self) {
+        self.became_necessary();
+        let state = self.state();
+        state.propagate_invalidity();
     }
     fn became_necessary(&self) {
         println!("became_necessary: {:?}", self);
@@ -549,8 +565,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                     let rhs = f(lhs);
                     *self.state().current_scope.borrow_mut() = old_scope;
                     println!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
+                    // Check that the returned RHS node is from the same world.
+                    assert!(Rc::ptr_eq(&rhs.node.state(), &self.state()));
                     rhs
                 };
+
                 let mut old_rhs = Some(rhs.clone());
                 {
                     let mut bind_rhs = bind.rhs.borrow_mut();
@@ -601,10 +620,62 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::Cutoff(_) => todo!(),
         }
     }
+  /* Note that the two following functions are not symmetric of one another: in [let y =
+     map x], [x] is always a child of [y] (assuming [x] doesn't become invalid) but [y] in
+     only a parent of [x] if y is necessary. */
+  // let assert_currently_running_node_is_child state node name =
+  //   let (T current) = currently_running_node_exn state name in
+  //   if not (Node.has_child node ~child:current)
+  //   then
+  //     raise_s
+  //       [%sexp
+  //         ("can only call " ^ name ^ " on parent nodes" : string)
+  //       , ~~(node.kind : _ Kind.t)
+  //       , ~~(current.kind : _ Kind.t)]
+  // ;;
+  //
+  // let assert_currently_running_node_is_parent state node name =
+  //   let (T current) = currently_running_node_exn state name in
+  //   if not (Node.has_parent ~parent:current node)
+  //   then
+  //     raise_s
+  //       [%sexp
+  //         ("can only call " ^ name ^ " on children nodes" : string)
+  //       , ~~(node.kind : _ Kind.t)
+  //       , ~~(current.kind : _ Kind.t)]
+  // ;;
+    #[cfg(debug_assertions)] 
+    fn assert_currently_running_node_is_child(&self, name: &'static str) {
+        let t = self.state();
+        let current = t.only_in_debug.currently_running_node_exn(name);
+        assert!(self.has_child(&current), "({name}) currently running node was not a child");
+    }
+    #[cfg(debug_assertions)]
+    fn assert_currently_running_node_is_parent(&self, name: &'static str) {
+        let t = self.state();
+        let current = t.only_in_debug.currently_running_node_exn(name);
+        let Some(current) = current.upgrade() else { return };
+        assert!(current.has_child(&self.weak()), "({name}) currently running node was not a parent");
+    }
+    fn has_child(&self, child: &WeakNode<'a>) -> bool {
+        let Some(upgraded) = child.upgrade() else { return false };
+        let mut any = false;
+        self.foreach_child(&mut |_ix, child| {
+            any = any || Rc::ptr_eq(&child, &upgraded);
+        });
+        any
+    }
     fn invalidate(&self) {
+        let state = self.state();
+        #[cfg(debug_assertions)]
+        self.assert_currently_running_node_is_child("invalidate");
+        self.invalidate_node();
+        state.propagate_invalidity();
+    }
+    fn invalidate_node(&self) {
         if self.is_valid() {
             let t = self.state();
-            // if node.num_on_update_handlers > 0 then handle_after_stabilization node;
+            // if self.num_on_update_handlers > 0 then handle_after_stabilization self;
             *self.value_opt.borrow_mut() = None;
             debug_assert!(self.old_value_opt.borrow().is_none());
             self.changed_at.set(t.stabilisation_num.get());
@@ -613,17 +684,17 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 .set(t.num_nodes_invalidated.get() + 1);
             if self.is_necessary() {
                 self.remove_children();
-                /* The node doesn't have children anymore, so we can lower its height as much as
-                possible, to one greater than the scope it was created in.  Also, because we
-                are lowering the height, we don't need to adjust any of its ancestors' heights.
-                We could leave the height alone, but we may as well lower it as much as
-                possible to avoid making the heights of any future ancestors unnecessarily
-                large. */
+                /* The self doesn't have children anymore, so we can lower its height as much as
+                   possible, to one greater than the scope it was created in.  Also, because we
+                   are lowering the height, we don't need to adjust any of its ancestors' heights.
+                   We could leave the height alone, but we may as well lower it as much as
+                   possible to avoid making the heights of any future ancestors unnecessarily
+                   large. */
                 let h = self.created_in.height() + 1;
                 self.set_height(h);
                 /* We don't set [node.created_in] or [node.next_node_in_same_scope]; we leave [node]
-                in the scope it was created in.  If that scope is ever invalidated, then that
-                will clear [node.next_node_in_same_scope] */
+                   in the scope it was created in.  If that scope is ever invalidated, then that
+                   will clear [node.next_node_in_same_scope] */
             }
             // (match node.kind with
             //  | At at -> remove_alarm at.clock at.alarm
@@ -642,6 +713,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             *kind = Kind::Invalid;
         }
     }
+
     fn adjust_heights_bind_lhs_change(
         &self,
         ahh: &mut AdjustHeightsHeap<'a>,
@@ -672,12 +744,10 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
 
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
     for node in all_nodes_created_on_rhs.drain(..) {
-        invalidate_node(node);
+        if let Some(node) = node.upgrade() {
+            node.invalidate_node();
+        }
     }
-}
-fn invalidate_node(node: WeakNode<'_>) {
-    let Some(node) = node.upgrade() else { return };
-    node.invalidate();
 }
 
 impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
@@ -700,6 +770,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
                 my_child_index_in_parent_at_index: vec![-1],
                 force_necessary: false,
+                num_on_update_handlers: 0,
             }),
             created_in,
             changed_at: Cell::new(StabilisationNum::init()),
