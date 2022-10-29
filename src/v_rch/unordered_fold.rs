@@ -122,7 +122,7 @@ where
     ) -> Incr<'a, R>
     {
         let node = super::node::Node::<UnorderedArrayFold<'a, F, _, I, R>>::create(
-            state.clone(),
+            state.weak(),
             state.current_scope(),
             super::kind::Kind::UnorderedArrayFold(UnorderedArrayFold {
                 init,

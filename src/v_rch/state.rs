@@ -8,7 +8,7 @@ use super::internal_observer::{ErasedObserver, InternalObserver, ObserverId, Obs
 use super::kind::{Constant, Kind};
 use super::node::Node;
 use super::scope::Scope;
-use super::var::{ErasedVar, Var};
+use super::var::{WeakVar, Var};
 use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
@@ -31,13 +31,15 @@ pub struct State<'a> {
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
     pub(crate) num_nodes_invalidated: Cell<usize>,
     pub(crate) num_active_observers: Cell<usize>,
+    pub(crate) propagate_invalidity: RefCell<Vec<WeakNode<'a>>>,
     pub(crate) new_observers: RefCell<Vec<WeakObserver<'a>>>,
     // use a strong reference, because the InternalObserver for a dropped public::Observer
     // should stay alive until we've cleaned up after it.
     pub(crate) all_observers: RefCell<HashMap<ObserverId, StrongObserver<'a>>>,
     pub(crate) disallowed_observers: RefCell<Vec<WeakObserver<'a>>>,
     pub(crate) current_scope: RefCell<Scope<'a>>,
-    pub(crate) set_during_stabilisation: RefCell<Vec<ErasedVar<'a>>>,
+    pub(crate) set_during_stabilisation: RefCell<Vec<WeakVar<'a>>>,
+    pub(crate) dead_vars: RefCell<Vec<WeakVar<'a>>>,
     _phantom: PhantomData<&'a ()>,
 
     #[cfg(debug_assertions)]
@@ -72,6 +74,9 @@ pub enum IncrStatus {
 }
 
 impl<'a> State<'a> {
+    pub(crate) fn weak(self: &Rc<Self>) -> Weak<Self> {
+        Rc::downgrade(self)
+    }
     pub(crate) fn current_scope(&self) -> Scope<'a> {
         self.current_scope.borrow().clone()
     }
@@ -88,12 +93,14 @@ impl<'a> State<'a> {
             num_nodes_became_unnecessary: Cell::new(0),
             num_nodes_invalidated: Cell::new(0),
             num_active_observers: Cell::new(0),
+            propagate_invalidity: RefCell::new(vec![]),
             status: Cell::new(IncrStatus::NotStabilising),
             all_observers: RefCell::new(HashMap::new()),
             new_observers: RefCell::new(Vec::new()),
             disallowed_observers: RefCell::new(Vec::new()),
             current_scope: RefCell::new(Scope::Top),
             set_during_stabilisation: RefCell::new(vec![]),
+            dead_vars: RefCell::new(vec![]),
             _phantom: Default::default(),
             #[cfg(debug_assertions)]
             only_in_debug: OnlyInDebug::default(),
@@ -102,7 +109,7 @@ impl<'a> State<'a> {
 
     pub fn constant<T: Value<'a>>(self: &Rc<Self>, value: T) -> Incr<'a, T> {
         let node = Node::<Constant<'a, T>>::create(
-            self.clone(),
+            self.weak(),
             self.current_scope(),
             Kind::Constant(value),
         );
@@ -119,7 +126,7 @@ impl<'a> State<'a> {
         F: FnMut(R, T) -> R + 'a,
     {
         let node = Node::<ArrayFold<'a, F, T, R>>::create(
-            self.clone(),
+            self.weak(),
             self.current_scope(),
             Kind::ArrayFold(ArrayFold {
                 init,
@@ -284,12 +291,12 @@ impl<'a> State<'a> {
 
     pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
-            self.clone(),
+            self.weak(),
             self.current_scope(),
             Kind::Uninitialised,
         );
         let var = Rc::new(Var {
-            state: self.clone(),
+            state: self.weak(),
             set_at: Cell::new(self.stabilisation_num.get()),
             value: RefCell::new(value),
             node_id: node.id,
@@ -378,12 +385,27 @@ impl<'a> State<'a> {
         let mut stack = self.set_during_stabilisation.borrow_mut();
         while let Some(var) = stack.pop() {
             let Some(var) = var.upgrade() else {
-                // all public::Vars dropped, the watch node dropped too
                 continue
             };
             println!("set_during_stabilisation: found var with {:?}", var.id());
             var.set_var_stabilise_end();
         }
+        drop(stack);
+        // we may have the same var appear in the set_during_stabilisation stack,
+        // and also the dead_vars stack. That's ok! Being in dead_vars means it will
+        // never be set again, as the public::Var is gone & nobody can set it from
+        // outside any more. So killing the Var's internal reference to the watch Node
+        // will not be a problem, because the last time that was needed was back a few
+        // lines ago when we ran var.set_var_stabilise_end().
+        let mut stack = self.dead_vars.borrow_mut();
+        for var in stack.drain(..) {
+            let Some(var) = var.upgrade() else {
+                continue
+            };
+            println!("---------------------- dead_vars: found var with {:?}", var.id());
+            var.break_rc_cycle();
+        }
+        drop(stack);
         // while not (Stack.is_empty t.handle_after_stabilization) do
         self.status.set(IncrStatus::RunningOnUpdateHandlers);
         self.status.set(IncrStatus::NotStabilising);
@@ -405,6 +427,51 @@ impl<'a> State<'a> {
         self.stabilise_end();
     }
     pub(crate) fn propagate_invalidity(&self) {
-        eprintln!("WARNING: propagate_invalidity not implemented");
+        while let Some(node) = {
+            let mut pi = self.propagate_invalidity.borrow_mut();
+            pi.pop()
+        } {
+            let Some(node) = node.upgrade() else { continue };
+            if node.is_valid() {
+                if node.should_be_invalidated() {
+                    node.invalidate_node();
+                } else {
+                    /* [Node.needs_to_be_computed node] is true because
+                       - node is necessary. This is because children can only point to necessary parents
+                       - node is stale. This is because: For bind, if, join, this is true because
+                       - either the invalidation is caused by the lhs changing (in which case the
+                         lhs-change node being newer makes us stale).
+                       - or a child became invalid this stabilization cycle, in which case it has
+                         t.changed_at of [t.stabilization_num], and so [node] is stale
+                       - or [node] just became necessary and tried connecting to an already invalid
+                       child. In that case, [child.changed_at > node.recomputed_at] for that child,
+                       because if we had been recomputed when that child changed, we would have been
+                       made invalid back then.  For expert nodes, the argument is the same, except
+                       that instead of lhs-change nodes make the expert nodes stale, it's made stale
+                       explicitely when adding or removing children. */
+                    debug_assert!(node.needs_to_be_computed());
+
+                    // ...
+                    node.propagate_invalidity_helper();
+
+                    /* We do not check [Node.needs_to_be_computed node] here, because it should be
+                       true, and because computing it takes O(number of children), node can be pushed
+                       on the stack once per child, and expert nodes can have lots of children. */
+                    if !node.is_in_recompute_heap() {
+                        let mut rch = self.recompute_heap.borrow_mut();
+                        rch.insert(node);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Drop for State<'a> {
+    fn drop(&mut self) {
+        let dead_vars = self.dead_vars.get_mut();
+        for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {
+            var.break_rc_cycle();
+        }
     }
 }

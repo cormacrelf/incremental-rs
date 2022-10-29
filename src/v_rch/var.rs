@@ -27,25 +27,31 @@ impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
 // For the delayed variable set list (set_during_stabilisation).
 // We use Weak to ensure we don't interfere with the manual
 // Rc-cycle-breaking on public::Var.
-pub(crate) type ErasedVar<'a> = Weak<dyn ErasedVariable<'a> + 'a>;
+pub(crate) type WeakVar<'a> = Weak<dyn ErasedVariable<'a> + 'a>;
 
 pub(crate) trait ErasedVariable<'a>: Debug {
     fn set_var_stabilise_end(&self);
     fn id(&self) -> NodeId;
+    fn break_rc_cycle(&self);
 }
 
 impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
     fn set_var_stabilise_end(&self) {
-        let mut temporary = self.value_set_during_stabilisation.borrow_mut();
-        let v = temporary.take().unwrap();
-        drop(temporary);
-        self.set_var_while_not_stabilising(v);
+        let v_opt = self.value_set_during_stabilisation.borrow_mut().take();
+        // if it's None, then we were simply pushed onto the
+        // value_set_during_stabilisation stack twice. So ignore.
+        if let Some(v) = v_opt {
+            self.set_var_while_not_stabilising(v);
+        }
     }
     fn id(&self) -> NodeId { self.node_id }
+    fn break_rc_cycle(&self) {
+        self.node.take();
+    }
 }
 
 pub struct Var<'a, T: Value<'a>> {
-    pub(crate) state: Rc<State<'a>>,
+    pub(crate) state: Weak<State<'a>>,
     pub(crate) value: RefCell<T>,
     pub(crate) value_set_during_stabilisation: RefCell<Option<T>>,
     pub(crate) set_at: Cell<StabilisationNum>,
@@ -63,14 +69,16 @@ impl<'a, T: Value<'a>> Debug for Var<'a, T> {
 }
 
 impl<'a, T: Value<'a>> Var<'a, T> {
-    pub(crate) fn erased(self: &Rc<Self>) -> ErasedVar<'a> {
-        Rc::downgrade(self) as ErasedVar<'a>
+    pub(crate) fn erased(self: &Rc<Self>) -> WeakVar<'a> {
+        Rc::downgrade(self) as WeakVar<'a>
     }
+
     pub(crate) fn get(&self) -> T {
         self.value.borrow().clone()
     }
+
     pub(crate) fn set(self: &Rc<Self>, value: T) {
-        let t = &self.state;
+        let t = self.state.upgrade().unwrap();
         match t.status.get() {
             IncrStatus::RunningOnUpdateHandlers | IncrStatus::NotStabilising => {
                 self.set_var_while_not_stabilising(value);
@@ -90,7 +98,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         let Some(watch) = self.node.borrow().clone() else {
             panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
         };
-        let t = &self.state;
+        let t = self.state.upgrade().unwrap();
         t.num_var_sets.set(t.num_var_sets.get() + 1);
         let mut value_slot = self.value.borrow_mut();
         *value_slot = value;
@@ -99,7 +107,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
                 "variable set at t={:?}, current revision is t={:?}",
                 self.set_at.get().0,
                 t.stabilisation_num.get().0
-                );
+            );
             self.set_at.set(t.stabilisation_num.get());
             debug_assert!(watch.is_stale());
             if watch.is_necessary() && !watch.is_in_recompute_heap() {

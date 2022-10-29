@@ -275,7 +275,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         };
         let state = self.node.state();
         let node = Node::<MapNode<'a, F, T, R>>::create(
-            state.clone(),
+            state.weak(),
             state.current_scope.borrow().clone(),
             Kind::Map(mapper),
         );
@@ -296,7 +296,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         };
         let state = self.node.state();
         let node = Node::<Map2Node<'a, F, T, T2, R>>::create(
-            state.clone(),
+            state.weak(),
             state.current_scope.borrow().clone(),
             Kind::Map2(mapper),
         );
@@ -337,7 +337,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     {
         let state = self.node.state();
         let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
-            state.clone(),
+            state.weak(),
             state.current_scope(),
             Kind::Uninitialised,
         );
@@ -346,7 +346,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             state.current_scope().height()
         );
         let main = Node::<BindNodeMainGenerics<F, T, R>>::create(
-            self.node.state(),
+            state.weak(),
             state.current_scope(),
             Kind::Uninitialised,
         );
@@ -401,7 +401,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         };
         let state = self.node.state();
         let node = Node::<CutoffNode<'a, T>>::create(
-            state.clone(),
+            state.weak(),
             state.current_scope(),
             Kind::Cutoff(cutoff),
         );

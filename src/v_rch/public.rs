@@ -12,11 +12,12 @@ pub use super::Value;
 #[derive(Clone)]
 pub struct Observer<'a, T: Value<'a>> {
     internal: Rc<InternalObserver<'a, T>>,
+    sentinel: Rc<()>,
 }
 
 impl<'a, T: Value<'a>> Observer<'a, T> {
     pub(crate) fn new(internal: Rc<InternalObserver<'a, T>>) -> Self {
-        Self { internal }
+        Self { internal, sentinel: Rc::new(()) }
     }
     #[inline]
     pub fn value(&self) -> Result<T, ObserverError> {
@@ -30,7 +31,9 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
 
 impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
     fn drop(&mut self) {
-        if Rc::strong_count(&self.internal) <= 2 {
+        // all_observers holds another strong reference to internal.
+        // but we can be _sure_ we're the last public::Observer by using a sentinel Rc.
+        if Rc::strong_count(&self.sentinel) <= 1 {
             // causes it to eventually be dropped
             self.internal.disallow_future_use();
         }
@@ -41,11 +44,12 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
 #[derive(Debug, Clone)]
 pub struct Var<'a, T: Value<'a>> {
     internal: Rc<InternalVar<'a, T>>,
+    sentinel: Rc<()>,
 }
 
 impl<'a, T: Value<'a>> Var<'a, T> {
     pub(crate) fn new(internal: Rc<InternalVar<'a, T>>) -> Self {
-        Self { internal }
+        Self { internal, sentinel: Rc::new(()) }
     }
     #[inline]
     pub fn set(&self, value: T) {
@@ -71,8 +75,13 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
         // one is for us; one is for the watch node.
         // if it's down to 2 (i.e. all public::Vars have been dropped),
         // then we need to break the Rc cycle between Var & Node (via Kind::Var(Rc<...>)).
-        if Rc::strong_count(&self.internal) <= 2 {
-            self.internal.node.take();
+        //
+        // we can be _sure_ we're the last public::Var by using a sentinel Rc.
+        // i.e. this Var will never get set again.
+        if Rc::strong_count(&self.sentinel) <= 1 {
+            let state = self.internal.state.upgrade().unwrap();
+            let mut dead_vars = state.dead_vars.borrow_mut();
+            dead_vars.push(self.internal.erased());
         }
     }
 }

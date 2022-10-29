@@ -9,7 +9,6 @@ use super::scope::Scope;
 use super::state::State;
 use super::{CutoffNode, Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::rc::Weak;
 
@@ -39,7 +38,7 @@ impl NodeId {
 /// Needs a better name but ok
 #[derive(Debug)]
 pub(crate) struct NodeInner<'a> {
-    pub state: Rc<State<'a>>,
+    pub state: Weak<State<'a>>,
     // cutoff
     num_on_update_handlers: i32,
     // TODO: optimise the one parent case
@@ -96,15 +95,15 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
         parent_weak: ParentRef<'a, G::R>,
     ) {
         println!("add_parent_without_adjusting_heights");
-        debug_assert!({
-            let Some(p) = parent_weak.upgrade_erased() else { panic!() };
-            p.is_necessary()
-        });
+        let Some(p) = parent_weak.upgrade_erased() else { panic!() };
+        debug_assert!(p.is_necessary());
         let was_necessary = self.is_necessary();
         self.add_parent(child_index, parent_weak);
         if !self.is_valid() {
             println!("TODO: propagate_invalidity");
-            // child_i.state.propagate_invalidity.push(parent);
+            let t = self.state();
+            let mut pi = t.propagate_invalidity.borrow_mut();
+            pi.push(p.weak());
         }
         if !was_necessary {
             self.became_necessary();
@@ -238,6 +237,9 @@ impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
 pub(crate) trait ErasedNode<'a>: Debug {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
+    fn should_be_invalidated(&self) -> bool;
+    fn propagate_invalidity_helper(&self);
+    fn has_invalid_child(&self) -> bool;
     fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32>;
@@ -254,7 +256,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn is_stale_with_respect_to_a_child(&self) -> bool;
     fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool;
     fn is_necessary(&self) -> bool;
-    fn needs_to_be_recomputed(&self) -> bool;
+    fn needs_to_be_computed(&self) -> bool;
     fn became_necessary(&self);
     fn became_necessary_propagate(&self);
     fn became_unnecessary(&self);
@@ -309,7 +311,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         &self.inner
     }
     fn state(&self) -> Rc<State<'a>> {
-        self.inner().borrow().state.clone()
+        // State is guaranteed to outlive us. Unwrap will always succeed.
+        self.inner().borrow().state.upgrade().unwrap()
     }
     fn is_valid(&self) -> bool {
         let k = self.kind.borrow();
@@ -317,6 +320,45 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::Invalid => false,
             _ => true,
         }
+    }
+    fn should_be_invalidated(&self) -> bool {
+        let k = self.kind.borrow();
+        match &*k {
+            Kind::Uninitialised => panic!(),
+            Kind::Invalid | Kind::Constant(_) | Kind::Var(_) => false,
+            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..)
+                | Kind::Map(..)
+                | Kind::Map2(..)
+                => self.has_invalid_child(),
+            /* A *_change node is invalid if the node it is watching for changes is invalid (same
+               reason as above).  This is equivalent to [has_invalid_child t]. */
+            Kind::BindLhsChange(_, bind) => !bind.lhs.is_valid(),
+            /* [Bind_main], [If_then_else], and [Join_main] are invalid if their *_change child is,
+            but not necessarily if their other children are -- the graph may be restructured to
+            avoid the invalidity of those. */
+            Kind::BindMain(_, bind) => !bind.lhs_change.is_valid(),
+            Kind::Cutoff(_) => todo!(),
+        }
+    }
+    fn propagate_invalidity_helper(&self) {
+        let k = self.kind.borrow();
+        match &*k {
+            // Kind::Expert => ...
+            kind => {
+                #[cfg(debug_assertions)]
+                match kind {
+                    Kind::BindMain(..) => (), // and IfThenElse, JoinMain
+                    _ => panic!("nodes with no children are never pushed on the stack")
+                }
+            }
+        }
+    }
+    fn has_invalid_child(&self) -> bool {
+        let mut any = false;
+        self.foreach_child(&mut |ix, child| {
+            any = any || !child.is_valid();
+        });
+        any
     }
     fn height(&self) -> i32 {
         self.height.get()
@@ -400,7 +442,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             // || kind is freeze
             || i.force_necessary
     }
-    fn needs_to_be_recomputed(&self) -> bool {
+    fn needs_to_be_computed(&self) -> bool {
         self.is_necessary() && self.is_stale()
     }
     // Not used in add_parent_without_adjusting_heights, I think.
@@ -472,7 +514,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         | Unordered_array_fold u -> Unordered_array_fold.force_full_compute u
         | Expert p -> Expert.observability_change p ~is_now_observable:false
         | _ -> ()); */
-        debug_assert!(!self.needs_to_be_recomputed());
+        debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             let t = self.state();
             let mut rch = t.recompute_heap.borrow_mut();
@@ -519,7 +561,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
 
     fn recompute(&self) {
-        let t = self.inner.borrow().state.clone();
+        let t = self.state();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
         self.recomputed_at.set(t.stabilisation_num.get());
         let k = self.kind.borrow();
@@ -556,17 +598,18 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::BindLhsChange(id, bind) => {
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
+                let t = self.state();
                 let lhs = bind.lhs.latest();
                 let rhs = {
-                    let old_scope = self.state().current_scope();
-                    *self.state().current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
+                    let old_scope = t.current_scope();
+                    *t.current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
                     println!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
                     let mut f = bind.mapper.borrow_mut();
                     let rhs = f(lhs);
-                    *self.state().current_scope.borrow_mut() = old_scope;
+                    *t.current_scope.borrow_mut() = old_scope;
                     println!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
                     // Check that the returned RHS node is from the same world.
-                    assert!(Rc::ptr_eq(&rhs.node.state(), &self.state()));
+                    assert!(Rc::ptr_eq(&rhs.node.state(), &t));
                     rhs
                 };
 
@@ -599,6 +642,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                     } else {
                         panic!();
                     }
+                    t.propagate_invalidity();
                 }
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
@@ -760,7 +804,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         rc
     }
 
-    pub fn create(state: Rc<State<'a>>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Rc<Self> {
+    pub fn create(state: Weak<State<'a>>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Rc<Self> {
         Node {
             id: NodeId::next(),
             weak_self: Weak::<Self>::new(),
@@ -790,14 +834,14 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     fn maybe_change_value(&self, value: G::R) {
         let old = self.value_opt.replace(Some(value));
         let inner = self.inner.borrow();
+        let istate = inner.state.upgrade().unwrap();
         // TODO: cutoffs!
         let should_cutoff = || false;
         if old.is_none() || !should_cutoff() {
-            self.changed_at.set(inner.state.stabilisation_num.get());
-            inner
-                .state
+            self.changed_at.set(istate.stabilisation_num.get());
+            istate
                 .num_nodes_changed
-                .set(inner.state.num_nodes_changed.get() + 1);
+                .set(istate.num_nodes_changed.get() + 1);
             /* if node.num_on_update_handlers > 0
             then (
             node.old_value_opt <- old_value_opt;
@@ -808,7 +852,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 let i = self.inner().borrow();
                 let child_index = i.my_child_index_in_parent_at_index[parent_index];
                 parent.child_changed(&self.as_child(), child_index, old.clone());
-                debug_assert!(p.needs_to_be_recomputed());
+                debug_assert!(p.needs_to_be_computed());
                 if !p.is_in_recompute_heap() {
                     println!(
                         "inserting parent into recompute heap at height {:?}",
