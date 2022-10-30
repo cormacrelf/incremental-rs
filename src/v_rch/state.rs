@@ -390,7 +390,7 @@ impl<'a> State<'a> {
             let Some(var) = var.upgrade() else {
                 continue
             };
-            println!("set_during_stabilisation: found var with {:?}", var.id());
+            tracing::debug!("set_during_stabilisation: found var with {:?}", var.id());
             var.set_var_stabilise_end();
         }
         drop(stack);
@@ -405,8 +405,8 @@ impl<'a> State<'a> {
             let Some(var) = var.upgrade() else {
                 continue
             };
-            println!(
-                "---------------------- dead_vars: found var with {:?}",
+            tracing::debug!(
+                "dead_vars: found var with {:?}",
                 var.id()
             );
             var.break_rc_cycle();
@@ -416,21 +416,24 @@ impl<'a> State<'a> {
         self.status.set(IncrStatus::RunningOnUpdateHandlers);
         self.status.set(IncrStatus::NotStabilising);
     }
+
     pub fn stabilise(&self) {
-        assert_eq!(self.status.get(), IncrStatus::NotStabilising);
-        println!("stabilise");
-        let mut stdout = std::io::stdout();
-        stdout.flush().unwrap();
-        self.stabilise_start();
-        while let Some(min) = {
-            // we need to access rch in recompute() > maybe_change_value()
-            // so fine grained access here
-            let mut rch = self.recompute_heap.borrow_mut();
-            rch.remove_min()
-        } {
-            min.recompute();
-        }
-        self.stabilise_end();
+        let span = tracing::info_span!("stabilise");
+        span.in_scope(|| {
+            assert_eq!(self.status.get(), IncrStatus::NotStabilising);
+            let mut stdout = std::io::stdout();
+            stdout.flush().unwrap();
+            self.stabilise_start();
+            while let Some(min) = {
+                // we need to access rch in recompute() > maybe_change_value()
+                // so fine grained access here
+                let mut rch = self.recompute_heap.borrow_mut();
+                rch.remove_min()
+            } {
+                min.recompute();
+            }
+            self.stabilise_end();
+        });
     }
     pub(crate) fn propagate_invalidity(&self) {
         while let Some(node) = {

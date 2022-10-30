@@ -1,3 +1,6 @@
+#[cfg(test)]
+use test_log::test;
+
 use std::cmp::Ordering;
 use std::collections::{
     btree_map::{IntoIter, Keys},

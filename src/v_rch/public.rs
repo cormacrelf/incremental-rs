@@ -88,7 +88,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
 
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        println!("dropping public::Var with id {:?}", self.id());
+        tracing::debug!("dropping public::Var with id {:?}", self.id());
         // one is for us; one is for the watch node.
         // if it's down to 2 (i.e. all public::Vars have been dropped),
         // then we need to break the Rc cycle between Var & Node (via Kind::Var(Rc<...>)).

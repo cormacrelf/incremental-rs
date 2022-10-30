@@ -89,18 +89,18 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     fn value_opt(&self) -> Option<G::R> {
         self.value_opt.borrow().clone()
     }
+
+    // #[tracing::instrument]
     fn add_parent_without_adjusting_heights(
         &self,
         child_index: i32,
         parent_weak: ParentRef<'a, G::R>,
     ) {
-        println!("add_parent_without_adjusting_heights");
         let Some(p) = parent_weak.upgrade_erased() else { panic!() };
         debug_assert!(p.is_necessary());
         let was_necessary = self.is_necessary();
         self.add_parent(child_index, parent_weak);
         if !self.is_valid() {
-            println!("TODO: propagate_invalidity");
             let t = self.state();
             let mut pi = t.propagate_invalidity.borrow_mut();
             pi.push(p.weak());
@@ -116,7 +116,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
         if self.height() >= parent.height() {
             // This happens when change_child whacks a neew child in
             // What's happening here is that
-            println!(
+            tracing::debug!(
                 "self.height() = {:?}, parent.height() = {:?}",
                 self.height(),
                 parent.height()
@@ -142,7 +142,6 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
         let child_inner = child.inner();
         let mut ci = child_inner.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
-        // println!("remove_parent {self:?}, ix {child_index}");
         let parent = parent_weak.upgrade_erased().unwrap();
         let parent_inner = parent.inner();
         let mut parent_i = parent_inner.borrow_mut();
@@ -180,7 +179,7 @@ pub(crate) trait Parent1<'a, I>: Debug + ErasedNode<'a> {
 }
 pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum ParentRef<'a, T> {
     I1(Weak<dyn Parent1<'a, T> + 'a>),
     I2(Weak<dyn Parent2<'a, T> + 'a>),
@@ -290,8 +289,7 @@ impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            .field("value_opt", &self.value_opt.borrow())
-            .field("height", &self.height.get())
+            // .field("height", &self.height.get())
             .field("kind", &self.kind.borrow())
             // .field("inner", &self.inner)
             .finish()
@@ -392,7 +390,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
     fn set_height(&self, height: i32) {
-        println!("HHHHHHHHH node id={:?}, set height to {height}", self.id);
+        tracing::debug!("node id={:?}, set height to {height}", self.id);
         // TODO: checks
         self.height.set(height);
     }
@@ -456,8 +454,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let state = self.state();
         state.propagate_invalidity();
     }
+    // #[tracing::instrument]
     fn became_necessary(&self) {
-        println!("became_necessary: {:?}", self);
         if self.is_valid() && !self.created_in.is_necessary() {
             panic!("trying to make a node necessary whose defining bind is not necessary");
         }
@@ -497,9 +495,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         if self.is_stale() {
             let mut rch = t.recompute_heap.borrow_mut();
             rch.insert(self.packed());
-            println!("===> added self(id={:?}) to rch", self.id);
+            tracing::debug!("===> added self(id={:?}) to rch", self.id);
         }
-        println!("became_necessary(post): {:?}", self);
     }
     fn check_if_unnecessary(&self) {
         if !self.is_necessary() {
@@ -507,7 +504,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
     fn became_unnecessary(&self) {
-        println!("became_unnecessary: {:?}", self);
         let t = self.state();
         t.num_nodes_became_unnecessary
             .set(t.num_nodes_became_unnecessary.get() + 1);
@@ -567,6 +563,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         &self.recomputed_at
     }
 
+    // #[tracing::instrument]
     fn recompute(&self) {
         let t = self.state();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
@@ -581,7 +578,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::Var(var) => {
                 let value = var.value.borrow();
                 let v = value.clone();
-                println!("-- recomputing Var(id={id:?}) <- {v:?}");
+                tracing::debug!("recomputing Var(id={id:?}) <- {v:?}");
                 drop(value);
                 self.maybe_change_value(v);
             }
@@ -590,7 +587,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let input = map.input.latest();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(input);
-                println!("-- recomputing Map(id={id:?}) <- {new_value:?}");
+                tracing::debug!("recomputing Map(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
             Kind::Map2(map2) => {
@@ -599,7 +596,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let i2 = map2.two.latest();
                 let mut f = map2.mapper.borrow_mut();
                 let new_value = f(i1, i2);
-                println!("-- recomputing Map2(id={id:?}) <- {new_value:?}");
+                tracing::debug!("recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
             Kind::BindLhsChange(id, bind) => {
@@ -611,11 +608,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let rhs = {
                     let old_scope = t.current_scope();
                     *t.current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
-                    println!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
+                    tracing::debug!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
                     let mut f = bind.mapper.borrow_mut();
                     let rhs = f(lhs);
                     *t.current_scope.borrow_mut() = old_scope;
-                    println!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
+                    tracing::debug!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
                     // Check that the returned RHS node is from the same world.
                     assert!(Rc::ptr_eq(&rhs.node.state(), &t));
                     rhs
@@ -659,12 +656,12 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
             Kind::BindMain(id, bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
-                println!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
+                tracing::debug!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
                 self.copy_child_bindrhs(&rhs.node, id.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
             Kind::UnorderedArrayFold(uaf) => {
-                println!("-- recomputing UAF {uaf:?}");
+                tracing::debug!("-- recomputing UAF {uaf:?}");
                 self.maybe_change_value(uaf.compute())
             }
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
@@ -782,15 +779,17 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*kind {
             Kind::BindLhsChange(_, bind) => {
                 let Some(bind) = bind.upgrade() else { return };
-                println!("adjust_heights_bind_lhs_change {:?}", bind);
-                let all = bind.all_nodes_created_on_rhs.borrow();
-                for rnode_weak in all.iter() {
-                    let rnode = rnode_weak.upgrade().unwrap();
-                    println!("---- all_nodes_created_on_rhs: {:?}", rnode);
-                    if rnode.is_necessary() {
-                        ahh.ensure_height_requirement(oc, op, &self.packed(), &rnode)
+                let span = tracing::debug_span!("adjust_heights_bind_lhs_change");
+                span.in_scope(|| {
+                    let all = bind.all_nodes_created_on_rhs.borrow();
+                    for rnode_weak in all.iter() {
+                        let rnode = rnode_weak.upgrade().unwrap();
+                        tracing::debug!("all_nodes_created_on_rhs: {:?}", rnode);
+                        if rnode.is_necessary() {
+                            ahh.ensure_height_requirement(oc, op, &self.packed(), &rnode)
+                        }
                     }
-                }
+                })
             }
             _ => {}
         }
@@ -869,7 +868,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 parent.child_changed(&self.as_child(), child_index, old.clone());
                 debug_assert!(p.needs_to_be_computed());
                 if !p.is_in_recompute_heap() {
-                    println!(
+                    tracing::debug!(
                         "inserting parent into recompute heap at height {:?}",
                         p.height()
                     );
@@ -895,7 +894,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
         match old_child {
             None => {
-                println!(
+                tracing::debug!(
                     "change_child simply adding parent to {:?} at child_index {child_index}",
                     new_child_node
                 );
@@ -951,13 +950,13 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         while ci.my_child_index_in_parent_at_index.len() <= parent_index as usize {
             ci.my_child_index_in_parent_at_index.push(-1);
         }
-        println!("ci_in_pia[{parent_index}] = {child_index}");
+        tracing::debug!("ci_in_pia[{parent_index}] = {child_index}");
         ci.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
 
         while parent_i.my_parent_index_in_child_at_index.len() <= child_index as usize {
             parent_i.my_parent_index_in_child_at_index.push(-1);
         }
-        println!("pi_in_cia[{child_index}] = {parent_index}");
+        tracing::debug!("pi_in_cia[{child_index}] = {parent_index}");
         parent_i.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
 
         child_parents.push(parent_weak);
@@ -1029,4 +1028,16 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
 struct ForeachChild<'a: 'b, 'b, G: NodeGenerics<'a>> {
     i1: &'b mut dyn FnMut(i32, Input<'a, G::I1>),
     i2: &'b mut dyn FnMut(i32, Input<'a, G::I2>),
+}
+
+#[test]
+fn test_node_size() {
+    use super::kind::Constant;
+    let state = State::new();
+    let node = Node::<Constant<i32>>::create(
+        state.weak(),
+        state.current_scope(),
+        Kind::Constant(5i32),
+    );
+    assert_eq!(core::mem::size_of_val(&*node), 344);
 }

@@ -1,3 +1,6 @@
+#[cfg(test)]
+use test_log::test;
+
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
 use incremental::{Observer, ObserverError, State, Var};
@@ -157,12 +160,16 @@ fn create_var_in_bind() {
             // became_necessary, but for the dynamic nodes created by a bind.
             //
             let v = state.var(9);
-            println!("--------------------------------");
-            println!("created var in bind with id {:?}", v.id());
-            println!("--------------------------------");
+            tracing::debug!("--------------------------------");
+            tracing::debug!("created var in bind with id {:?}", v.id());
+            tracing::debug!("--------------------------------");
             v.watch()
         })
         .observe();
+    incr.stabilise();
+    incr.stabilise();
+    incr.stabilise();
+    lhs.set(false);
     incr.stabilise();
     assert_eq!(o.value(), Ok(9));
 }
@@ -487,8 +494,8 @@ fn unordered_fold_inverse() {
         incr.unordered_fold_inverse(
             watches,
             0,
-            f.wrap2(|acc, x| dbg!(acc + x)),
-            finv.wrap2(|acc, x| dbg!(acc) - dbg!(x)), // this time our update function is
+            f.wrap2(|acc, x| acc + x),
+            finv.wrap2(|acc, x| acc - x), // this time our update function is
             // constructed for us.
             None,
         )
@@ -530,8 +537,8 @@ fn incr_map_uf() {
     let sum = incr.btreemap_unordered_fold(
         setter.watch(),
         0i32,
-        |acc, _, new| dbg!(acc + new),
-        |acc, _, old| dbg!(acc - old),
+        |acc, _, new| acc + new,
+        |acc, _, old| acc - old,
         true,
     );
 
@@ -689,3 +696,4 @@ fn two_worlds() {
     two.stabilise();
     one.stabilise();
 }
+

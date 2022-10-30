@@ -1,3 +1,5 @@
+#[cfg(test)]
+use test_log::test;
 use crate::Value;
 
 use super::kind::NodeGenerics;
@@ -105,7 +107,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         let mut value_slot = self.value.borrow_mut();
         *value_slot = value;
         if self.set_at.get() < t.stabilisation_num.get() {
-            println!(
+            tracing::info!(
                 "variable set at t={:?}, current revision is t={:?}",
                 self.set_at.get().0,
                 t.stabilisation_num.get().0
@@ -113,7 +115,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
             self.set_at.set(t.stabilisation_num.get());
             debug_assert!(watch.is_stale());
             if watch.is_necessary() && !watch.is_in_recompute_heap() {
-                println!(
+                tracing::info!(
                     "inserting var watch into recompute heap at height {:?}",
                     watch.height()
                 );
@@ -143,7 +145,7 @@ thread_local! {
 #[cfg(test)]
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        println!("$$$$$$$$$ Dropping var with id {:?}", self.node_id);
+        tracing::info!("Dropping var with id {:?}", self.node_id);
         DID_DROP.with(|cell| cell.set(cell.get() + 1));
     }
 }

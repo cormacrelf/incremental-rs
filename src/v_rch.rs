@@ -341,18 +341,14 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             state.current_scope(),
             Kind::Uninitialised,
         );
-        println!(
-            "creating bind lhs with scope height {:?}",
+        tracing::debug!(
+            "creating bind with scope height {:?}",
             state.current_scope().height()
         );
         let main = Node::<BindNodeMainGenerics<F, T, R>>::create(
             state.weak(),
             state.current_scope(),
             Kind::Uninitialised,
-        );
-        println!(
-            "creating bind main with scope height {:?}",
-            state.current_scope().height()
         );
         let bind = Rc::new(BindNode {
             lhs: self.clone().node,

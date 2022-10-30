@@ -106,7 +106,7 @@ impl<'a> AdjustHeightsHeap<'a> {
         original_child: NodeRef<'a>,
         original_parent: NodeRef<'a>,
     ) {
-        println!(
+        tracing::debug!(
             "adjust_heights from child(id={:?},h={:?}) to parent(id={:?},h={:?})",
             original_child.id(),
             original_child.height(),
@@ -123,7 +123,7 @@ impl<'a> AdjustHeightsHeap<'a> {
             &original_parent,
         );
         while let Some(child) = self.remove_min() {
-            println!(
+            tracing::debug!(
                 "ahh popped(in_rch={:?}): {:?}",
                 child.is_in_recompute_heap(),
                 child
