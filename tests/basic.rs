@@ -714,7 +714,7 @@ fn cutoff_rc_ptr_eq() {
             c.increment();
             list.iter().sum::<i32>()
         })
-        .observe();
+.observe();
 
     incr.stabilise();
     assert_eq!(sum_counter, 1);
@@ -759,4 +759,35 @@ fn cutoff_sum() {
     incr.stabilise();
     assert_eq!(add10_counter, 2); // the crux again
     assert_eq!(o.value(), Ok(20));
+}
+
+#[test]
+fn map_with_old_reuse() {
+    let incr = State::new();
+    let v = incr.var(100);
+    let o = v
+        .watch()
+        .map_with_old(|old: Option<Rc<String>>, input: i32| {
+            let mut rc = old.unwrap_or_default();
+            if Rc::strong_count(&rc) != 1 {
+                panic!("Rc::make_mut was going to clone");
+            }
+            let string = Rc::make_mut(&mut rc);
+            tracing::info!("old: {:?}", &string);
+            string.clear();
+            use std::fmt::Write;
+            write!(string, "{}", input).unwrap();
+            (rc, true)
+        })
+        // we can ruin everything by doing this
+        // .map(|x| x)
+        .observe();
+
+    o.subscribe();
+
+    incr.stabilise();
+    assert_eq!(o.expect_value().to_string(), "100".to_string());
+    v.set(200);
+    incr.stabilise();
+    assert_eq!(o.expect_value().to_string(), "200".to_string());
 }

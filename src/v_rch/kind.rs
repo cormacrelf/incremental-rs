@@ -10,7 +10,7 @@ use super::array_fold::ArrayFold;
 use super::node::Input;
 use super::unordered_fold::UnorderedArrayFold;
 use super::var::Var;
-use super::{BindNode, Map2Node, MapNode};
+use super::{BindNode, Map2Node, MapNode, MapWithOld};
 
 pub(crate) trait NodeGenerics<'a>: 'a {
     type R: Value<'a>;
@@ -23,6 +23,7 @@ pub(crate) trait NodeGenerics<'a>: 'a {
     type B1: FnMut(Self::BindLhs) -> Incr<'a, Self::BindRhs> + 'a;
     type Fold: FnMut(Self::R, Self::I1) -> Self::R + 'a;
     type Update: FnMut(Self::R, Self::I1, Self::I1) -> Self::R + 'a;
+    type WithOld: FnMut(Option<Self::R>, Self::I1) -> (Self::R, bool) + 'a;
 }
 
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
@@ -35,6 +36,7 @@ pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<'a, G::R>>),
     Map(MapNode<'a, G::F1, G::I1, G::R>),
+    MapWithOld(MapWithOld<'a, G::WithOld, G::I1, G::R>),
     Map2(Map2Node<'a, G::F2, G::I1, G::I2, G::R>),
     BindLhsChange(
         BindLhsId<'a, G>,
@@ -86,6 +88,7 @@ impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
             Kind::UnorderedArrayFold(uaf) => write!(f, "UnorderedArrayFold({uaf:?})"),
             Kind::Var(var) => write!(f, "Var({:?})", var),
             Kind::Map(map) => write!(f, "Map({:?})", map),
+            Kind::MapWithOld(map) => write!(f, "MapWithOld({:?})", map),
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
             Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
             Kind::BindMain(_, bind) => write!(f, "BindMain({:?})", bind),
@@ -102,7 +105,7 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
             Self::Constant(_) => 0,
             Self::ArrayFold(af) => af.children.len(),
             Self::Var(_) => 0,
-            Self::Map(_) => 1,
+            Self::Map(_) | Self::MapWithOld(_) => 1,
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,
@@ -124,4 +127,5 @@ impl<'a, T: Value<'a>> NodeGenerics<'a> for Constant<'a, T> {
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }

@@ -24,6 +24,7 @@ impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 // For the delayed variable set list (set_during_stabilisation).

@@ -197,4 +197,5 @@ where
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = F;
     type Update = U;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }

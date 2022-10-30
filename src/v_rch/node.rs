@@ -1,6 +1,7 @@
 // use enum_dispatch::enum_dispatch;
 
 use crate::Value;
+use crate::v_rch::MapWithOld;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
@@ -332,7 +333,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*k {
             Kind::Uninitialised => panic!(),
             Kind::Invalid | Kind::Constant(_) | Kind::Var(_) => false,
-            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..) | Kind::Map(..) | Kind::Map2(..) => {
+            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..) | Kind::Map(..) | Kind::MapWithOld(..) | Kind::Map2(..) => {
                 self.has_invalid_child()
             }
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
@@ -417,6 +418,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::ArrayFold(_)
             | Kind::UnorderedArrayFold(_)
             | Kind::Map(_)
+            | Kind::MapWithOld(_)
             | Kind::Map2(_)
             | Kind::BindLhsChange(..)
             | Kind::BindMain(..) => {
@@ -531,6 +533,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::Uninitialised => {}
             Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. }) => f(0, input.packed()),
+            Kind::MapWithOld(MapWithOld { input, .. }) => f(0, input.packed()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
@@ -589,8 +592,18 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 let input = map.input.latest();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(input);
-                tracing::debug!("recomputing Map(id={id:?}) <- {new_value:?}");
+                tracing::debug!("<- {new_value:?}");
                 self.maybe_change_value(new_value);
+            }
+            Kind::MapWithOld(map) => {
+                let map: &MapWithOld<G::WithOld, G::I1, G::R> = map;
+                let input = map.input.latest();
+                let mut f = map.mapper.borrow_mut();
+                let old_value = self.value_opt.take();
+                let old_value_is_none = old_value.is_none();
+                let (new_value, did_change) = f(old_value, input);
+                tracing::debug!("<- {new_value:?}");
+                self.maybe_change_value_manual(None, new_value, old_value_is_none || did_change);
             }
             Kind::Map2(map2) => {
                 let map2: &Map2Node<'a, G::F2, G::I1, G::I2, G::R> = map2;
@@ -850,8 +863,13 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     fn maybe_change_value(&self, value: G::R) {
         let old_value_opt = self.value_opt.take();
         let cutoff = self.cutoff.get();
-        if old_value_opt.is_none() || !cutoff.should_cutoff(old_value_opt.as_ref().unwrap(), &value)
-        {
+        let should_change = old_value_opt.is_none()
+            || !cutoff.should_cutoff(old_value_opt.as_ref().unwrap(), &value);
+        self.maybe_change_value_manual(old_value_opt, value, should_change)
+    }
+
+    fn maybe_change_value_manual(&self, old_value_opt: Option<G::R>, value: G::R, should_change: bool) {
+        if should_change {
             let inner = self.inner.borrow();
             let istate = inner.state.upgrade().unwrap();
             self.value_opt.replace(Some(value));
@@ -986,6 +1004,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             Kind::Uninitialised => {}
             Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. }) => (f.i1)(0, input.clone().as_input()),
+            Kind::MapWithOld(MapWithOld { input, .. }) => (f.i1)(0, input.clone().as_input()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());

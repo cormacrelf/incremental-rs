@@ -72,6 +72,7 @@ where
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
@@ -108,6 +109,7 @@ where
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
@@ -117,6 +119,45 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapNode").finish()
+    }
+}
+
+/// Lets you dismantle the old R for parts.
+pub(crate) struct MapWithOld<'a, F, T, R>
+where
+    F: FnMut(Option<R>, T) -> (R, bool) + 'a,
+{
+    input: Input<'a, T>,
+    mapper: RefCell<F>,
+    _p: std::marker::PhantomData<R>,
+}
+
+impl<'a, F, T, R> NodeGenerics<'a> for MapWithOld<'a, F, T, R>
+where
+    T: Value<'a>,
+    R: Value<'a>,
+    F: FnMut(Option<R>, T) -> (R, bool) + 'a,
+{
+    type R = R;
+    type BindLhs = ();
+    type BindRhs = ();
+    type I1 = T;
+    type I2 = ();
+    type F1 = fn(Self::I1) -> R;
+    type F2 = fn(Self::I1, Self::I2) -> R;
+    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type Fold = fn(Self::R, Self::I1) -> Self::R;
+    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = F;
+}
+
+impl<'a, F, T, R> Debug for MapWithOld<'a, F, T, R>
+where
+    F: FnMut(Option<R>, T) -> (R, bool) + 'a,
+    R: Value<'a>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("MapWithOld").finish()
     }
 }
 
@@ -188,6 +229,7 @@ where
     type B1 = F;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 struct BindNodeMainGenerics<F, T, R> {
@@ -213,6 +255,7 @@ where
     type B1 = F;
     type Fold = fn(Self::R, Self::I1) -> Self::R;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 impl<'a, F, T, R> Debug for BindNode<'a, F, T, R>
@@ -260,14 +303,14 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     pub fn with_old<R, F>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
-        F: FnMut(Option<(T, R)>, T) -> R + 'a,
+        F: FnMut(Option<(T, R)>, T) -> (R, bool) + 'a,
     {
-        let old: RefCell<Option<(T, R)>> = RefCell::new(None);
-        self.map(move |a| {
-            let mut o = old.borrow_mut();
-            let b: R = f(o.take(), a.clone());
-            *o = Some((a, b.clone()));
-            b
+        let old_input: RefCell<Option<T>> = RefCell::new(None);
+        self.map_with_old(move |old_opt, a| {
+            let mut oi = old_input.borrow_mut();
+            let (b, didchange) = f(old_opt.and_then(|x| oi.take().map(|oi| (oi, x))), a.clone());
+            *oi = Some(a);
+            (b, didchange)
         })
     }
 
@@ -284,6 +327,24 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         );
         let map = Incr { node };
         map
+    }
+
+    pub fn map_with_old<R, F>(&self, f: F) -> Incr<'a, R>
+    where
+        R: Value<'a>,
+        F: FnMut(Option<R>, T) -> (R, bool) + 'a,
+    {
+        let state = self.node.state();
+        let node = Node::<MapWithOld<'a, F, T, R>>::create(
+            state.weak(),
+            state.current_scope(),
+            Kind::MapWithOld(MapWithOld {
+                input: self.clone().node,
+                mapper: f.into(),
+                _p: Default::default(),
+            })
+        );
+        Incr { node }
     }
 
     pub fn map2<F, T2, R>(&self, other: &Incr<'a, T2>, f: F) -> Incr<'a, R>

@@ -236,29 +236,36 @@ impl<'a> State<'a> {
         F: FnMut(K, V) -> V2 + 'a,
     {
         map.with_old(move |old, input| match (old, input.len()) {
-            (_, 0) | (None, _) => input
-                .into_iter()
-                .map(|(k, v)| (k.clone(), f(k, v)))
-                .collect(),
+            (o @ _, 0) | (o @ None, _) => {
+                let newmap = input
+                    .into_iter()
+                    .map(|(k, v)| (k.clone(), f(k, v)))
+                    .collect();
+                (newmap, true)
+            }
             (Some((old_in, mut old_out)), _) => {
+                let mut did_change = false;
                 let _: &mut BTreeMap<K, V2> =
                     old_in
                         .symmetric_diff_owned(input)
                         .fold(&mut old_out, |out, change| {
                             match change {
                                 DiffElement::Left((key, _)) => {
+                                    did_change = true;
                                     out.remove(&key);
                                 }
                                 DiffElement::Right((key, newval)) => {
+                                    did_change = true;
                                     out.insert(key.clone(), f(key, newval));
                                 }
                                 DiffElement::Unequal((k1, _), (k2, newval)) => {
+                                    did_change = true;
                                     out.insert(k1, f(k2, newval));
                                 }
                             }
                             out
                         });
-                old_out
+                (old_out, did_change)
             }
         })
     }
@@ -279,14 +286,37 @@ impl<'a> State<'a> {
         FRemove: FnMut(R, K, V) -> R + 'a,
     {
         map.with_old(move |old, new_in| match old {
-            None => new_in
+            None => {
+                let newmap = new_in
                 .into_iter()
-                .fold(init.clone(), |acc, (k, v)| add(acc, k, v)),
+                .fold(init.clone(), |acc, (k, v)| add(acc, k, v));
+                (newmap, true)
+            }
             Some((old_in, old_out)) => {
                 if revert_to_init_when_empty && new_in.is_empty() {
-                    return init.clone();
+                    return (init.clone(), !old_in.is_empty());
                 }
-                old_in.symmetric_fold_owned(new_in, old_out, &mut add, &mut remove)
+                let mut did_change = false;
+                let folded = old_in
+                    .symmetric_diff_owned(new_in)
+                    .fold(old_out, |mut acc, difference| {
+                        match difference {
+                            DiffElement::Left((key, value)) => {
+                                did_change = true;
+                                remove(acc, key, value)
+                            }
+                            DiffElement::Right((key, value)) => {
+                                did_change = true;
+                                add(acc, key, value)
+                            }
+                            DiffElement::Unequal((lk, lv), (rk, rv)) => {
+                                did_change = true;
+                                acc = remove(acc, lk, lv);
+                                add(acc, rk, rv)
+                            }
+                        }
+                    });
+                (folded, did_change)
             }
         })
     }

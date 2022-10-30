@@ -39,6 +39,7 @@ where
     type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = F;
     type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
 }
 
 impl<'a, F, I, R> Debug for ArrayFold<'a, F, I, R>
