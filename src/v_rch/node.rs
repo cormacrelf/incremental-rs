@@ -7,7 +7,7 @@ use super::internal_observer::{ErasedObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::scope::Scope;
 use super::state::State;
-use super::{CutoffNode, Incr, Map2Node, MapNode, NodeRef, WeakNode};
+use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::collections::HashMap;
 use std::rc::Weak;
@@ -340,7 +340,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
             Kind::BindMain(_, bind) => !bind.lhs_change.is_valid(),
-            Kind::Cutoff(_) => todo!(),
         }
     }
     fn propagate_invalidity_helper(&self) {
@@ -419,7 +418,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.recomputed_at.get() == StabilisationNum(-1)
                     || self.is_stale_with_respect_to_a_child()
             }
-            Kind::Cutoff(..) => unimplemented!(),
         }
     }
     fn is_stale_with_respect_to_a_child(&self) -> bool {
@@ -553,7 +551,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 }
             }
             Kind::Var(var) => {}
-            Kind::Cutoff(CutoffNode { input, .. }) => f(0, input.clone().packed()),
         }
     }
     fn is_in_recompute_heap(&self) -> bool {
@@ -666,7 +663,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
             Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
             Kind::Uninitialised => panic!("recomputing uninitialised node"),
-            Kind::Cutoff(_) => todo!(),
         }
     }
     /* Note that the two following functions are not symmetric of one another: in [let y =
@@ -1006,8 +1002,6 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 }
             }
             Kind::Var(var) => {}
-            Kind::Cutoff(_) => unimplemented!(),
-            // Kind::Cutoff(CutoffNode { input, .. }) => (f.i1)(0, input.as_input()),
         }
     }
 
@@ -1034,10 +1028,7 @@ struct ForeachChild<'a: 'b, 'b, G: NodeGenerics<'a>> {
 fn test_node_size() {
     use super::kind::Constant;
     let state = State::new();
-    let node = Node::<Constant<i32>>::create(
-        state.weak(),
-        state.current_scope(),
-        Kind::Constant(5i32),
-    );
+    let node =
+        Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
     assert_eq!(core::mem::size_of_val(&*node), 344);
 }

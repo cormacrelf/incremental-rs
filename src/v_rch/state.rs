@@ -405,10 +405,7 @@ impl<'a> State<'a> {
             let Some(var) = var.upgrade() else {
                 continue
             };
-            tracing::debug!(
-                "dead_vars: found var with {:?}",
-                var.id()
-            );
+            tracing::debug!("dead_vars: found var with {:?}", var.id());
             var.break_rc_cycle();
         }
         drop(stack);

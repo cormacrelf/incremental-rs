@@ -696,4 +696,3 @@ fn two_worlds() {
     two.stabilise();
     one.stabilise();
 }
-

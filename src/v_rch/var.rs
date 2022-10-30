@@ -1,6 +1,6 @@
+use crate::Value;
 #[cfg(test)]
 use test_log::test;
-use crate::Value;
 
 use super::kind::NodeGenerics;
 use super::node::{ErasedNode, Incremental, Node, NodeId};

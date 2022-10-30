@@ -389,44 +389,4 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let internal = incr.node.state().observe(incr);
         Observer::new(internal)
     }
-
-    pub fn filter(&self, should_emit: impl Fn(&T, &T) -> bool + 'a) -> Incr<'a, T> {
-        let cutoff = CutoffNode {
-            input: self.node.clone(),
-            should_emit: Box::new(should_emit),
-        };
-        let state = self.node.state();
-        let node = Node::<CutoffNode<'a, T>>::create(
-            state.weak(),
-            state.current_scope(),
-            Kind::Cutoff(cutoff),
-        );
-        Incr { node }
-    }
-}
-
-pub(crate) struct CutoffNode<'a, R> {
-    input: Input<'a, R>,
-    should_emit: Box<dyn Fn(&R, &R) -> bool + 'a>,
-}
-
-impl<'a, R: Debug + Clone + 'a> NodeGenerics<'a> for CutoffNode<'a, R> {
-    type R = R;
-    type BindRhs = ();
-    type BindLhs = ();
-    type I1 = R;
-    type I2 = ();
-    type F1 = fn(Self::I1) -> R;
-    type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
-    type Fold = fn(Self::R, Self::I1) -> Self::R;
-    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
-}
-
-impl<'a, R: Debug + 'a> Debug for CutoffNode<'a, R> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CutoffNode")
-            .field("value", &self.input.latest())
-            .finish()
-    }
 }

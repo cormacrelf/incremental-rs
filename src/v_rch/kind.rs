@@ -48,7 +48,6 @@ pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
         BindMainId<'a, G>,
         Rc<BindNode<'a, G::B1, G::BindLhs, G::BindRhs>>,
     ),
-    Cutoff(super::CutoffNode<'a, G::R>),
 }
 
 pub(crate) struct BindLhsId<'a, G: NodeGenerics<'a>> {
@@ -90,7 +89,6 @@ impl<'a, G: NodeGenerics<'a>> Debug for Kind<'a, G> {
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
             Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
             Kind::BindMain(_, bind) => write!(f, "BindMain({:?})", bind),
-            Kind::Cutoff(cutoff) => write!(f, "Cutoff({:?})", cutoff),
         }
     }
 }
@@ -104,7 +102,7 @@ impl<'a, G: NodeGenerics<'a>> Kind<'a, G> {
             Self::Constant(_) => 0,
             Self::ArrayFold(af) => af.children.len(),
             Self::Var(_) => 0,
-            Self::Map(_) | Self::Cutoff(_) => 1,
+            Self::Map(_) => 1,
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,

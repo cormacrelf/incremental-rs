@@ -1,7 +1,7 @@
-#[cfg(test)]
-use test_log::test;
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
+#[cfg(test)]
+use test_log::test;
 
 use crate::{Incr, State, Value};
 
