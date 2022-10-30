@@ -1,37 +1,54 @@
-use std::{
-    marker::PhantomData,
-    rc::{Rc, Weak},
-};
+use std::rc::{Rc, Weak};
 
-pub(crate) enum CutoffType<T> {
+#[non_exhaustive]
+pub enum Cutoff<T> {
     Always,
     Never,
-    PhysEqual,
     PartialEq,
-    _T(PhantomData<T>),
+    Custom(fn(&T, &T) -> bool),
 }
 
-// pub struct Cutoff<T>(CutoffType<T>);
+impl<T> Copy for Cutoff<T> {}
+impl<T> Clone for Cutoff<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Always => Self::Always,
+            Self::Never => Self::Never,
+            Self::PartialEq => Self::PartialEq,
+            Self::Custom(f) => Self::Custom(*f),
+        }
+    }
+}
 
-pub trait ShouldCutoff {
-    fn should_cutoff(&self, b: &Self) -> bool;
+impl<T> Cutoff<T>
+where
+    T: PartialEq,
+{
+    pub fn should_cutoff(&self, a: &T, b: &T) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::PartialEq => a.eq(b),
+            Self::Custom(comparator) => comparator(a, b),
+        }
+    }
 }
 
 // struct PartialEqKind;
 // struct PhysEqualKind;
 // struct CustomKind;
 
-impl<T> ShouldCutoff for T {
-    default fn should_cutoff(&self, b: &T) -> bool {
-        false
-    }
-}
+// impl<T> ShouldCutoff for CutoffType<T> {
+//     fn should_cutoff(&self, b: &T) -> bool {
+//         false
+//     }
+// }
 
-impl<T: PhysEqual> ShouldCutoff for T {
-    fn should_cutoff(&self, b: &T) -> bool {
-        self.phys_equal(b)
-    }
-}
+// impl<T: PhysEqual> ShouldCutoff for T {
+//     fn should_cutoff(&self, b: &T) -> bool {
+//         self.phys_equal(b)
+//     }
+// }
 
 // pub struct NeverCutoff;
 // impl<T> ShouldCutoff<T> for NeverCutoff {
@@ -57,7 +74,6 @@ impl<T: PhysEqual> ShouldCutoff for T {
 //     }
 // }
 
-#[rustc_specialization_trait]
 pub trait PhysEqual {
     fn phys_equal(&self, other: &Self) -> bool;
 }
@@ -92,6 +108,7 @@ impl<T> PhysEqual for *const T {
         std::ptr::eq(*self, *other)
     }
 }
+
 // impl<T> Cutoff<T> {
 //     fn always() -> Self {
 //         Self(CutoffType::Always)
@@ -112,4 +129,3 @@ impl<T> PhysEqual for *const T {
 //         Self(CutoffType::PartialEq(PartialEqCutoff::<T>(PhantomData)))
 //     }
 // }
-

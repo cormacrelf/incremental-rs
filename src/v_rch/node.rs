@@ -3,6 +3,7 @@
 use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
+use super::cutoff::Cutoff;
 use super::internal_observer::{ErasedObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::scope::Scope;
@@ -19,7 +20,7 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct NodeId(usize);
 impl NodeId {
     fn next() -> Self {
@@ -39,7 +40,6 @@ impl NodeId {
 #[derive(Debug)]
 pub(crate) struct NodeInner<'a> {
     pub state: Weak<State<'a>>,
-    // cutoff
     num_on_update_handlers: i32,
     // TODO: optimise the one parent case
     // pub(crate) num_parents: i32,
@@ -66,6 +66,7 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub changed_at: Cell<StabilisationNum>,
     weak_self: Weak<Self>,
     pub(crate) parents: RefCell<Vec<ParentRef<'a, G::R>>>,
+    pub(crate) cutoff: Cell<Cutoff<G::R>>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -77,6 +78,7 @@ pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
     fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
     fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
+    fn set_cutoff(&self, cutoff: Cutoff<R>);
 }
 
 impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
@@ -168,6 +170,9 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             // now do what we just did but super easily in the actual Vec
             child_parents.swap_remove(parent_index as usize);
         }
+    }
+    fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
+        self.cutoff.set(cutoff)
     }
 }
 
@@ -560,7 +565,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         &self.recomputed_at
     }
 
-    // #[tracing::instrument]
+    #[tracing::instrument]
     fn recompute(&self) {
         let t = self.state();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
@@ -837,17 +842,19 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             old_value_opt: RefCell::new(None),
             kind: RefCell::new(kind),
             parents: vec![].into(),
+            cutoff: Cutoff::PartialEq.into(),
         }
         .into_rc()
     }
 
     fn maybe_change_value(&self, value: G::R) {
-        let old = self.value_opt.replace(Some(value));
-        let inner = self.inner.borrow();
-        let istate = inner.state.upgrade().unwrap();
-        // TODO: cutoffs!
-        let should_cutoff = || false;
-        if old.is_none() || !should_cutoff() {
+        let old_value_opt = self.value_opt.take();
+        let cutoff = self.cutoff.get();
+        if old_value_opt.is_none() || !cutoff.should_cutoff(old_value_opt.as_ref().unwrap(), &value)
+        {
+            let inner = self.inner.borrow();
+            let istate = inner.state.upgrade().unwrap();
+            self.value_opt.replace(Some(value));
             self.changed_at.set(istate.stabilisation_num.get());
             istate
                 .num_nodes_changed
@@ -861,7 +868,9 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 let Some(p) = parent.upgrade_erased() else { continue };
                 let i = self.inner().borrow();
                 let child_index = i.my_child_index_in_parent_at_index[parent_index];
-                parent.child_changed(&self.as_child(), child_index, old.clone());
+                {
+                    parent.child_changed(&self.as_child(), child_index, old_value_opt.clone());
+                }
                 debug_assert!(p.needs_to_be_computed());
                 if !p.is_in_recompute_heap() {
                     tracing::debug!(
@@ -873,6 +882,13 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                     rch.insert(p.packed());
                 }
             }
+        } else if old_value_opt.is_some() {
+            tracing::warn!(
+                "cutoff value change from {:?} -> {:?}",
+                old_value_opt.as_ref().unwrap(),
+                &value
+            );
+            self.value_opt.replace(old_value_opt);
         }
     }
 

@@ -294,7 +294,8 @@ impl<'a> State<'a> {
     pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
         let node = Node::<super::var::VarGenerics<T>>::create(
             self.weak(),
-            self.current_scope(),
+            // TODO: use_current_scope option for self.current_scope(),
+            Scope::Top,
             Kind::Uninitialised,
         );
         let var = Rc::new(Var {
@@ -307,7 +308,6 @@ impl<'a> State<'a> {
         });
         {
             let node = var.node.borrow();
-
             let n = node.as_ref().expect("we just created var's node as Some");
             let mut kind = n.kind.borrow_mut();
             *kind = Kind::Var(var.clone());

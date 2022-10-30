@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 use std::rc::Rc;
 
+pub use super::cutoff::Cutoff;
 pub use super::internal_observer::ObserverError;
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
@@ -59,6 +60,14 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
 pub struct Var<'a, T: Value<'a>> {
     internal: Rc<InternalVar<'a, T>>,
     sentinel: Rc<()>,
+}
+
+impl<'a, T: Value<'a>> PartialEq for Var<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        // we don't want these to compare the same.
+        // that's because a Var should always be regarded as having changed.
+        self.id() == other.id()
+    }
 }
 
 impl<'a, T: Value<'a>> Var<'a, T> {

@@ -3,7 +3,7 @@ use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use incremental::{Observer, ObserverError, State, Var};
+use incremental::{Cutoff, Observer, ObserverError, State, Var};
 
 #[test]
 fn testit() {
@@ -69,7 +69,7 @@ fn test_map_map2() {
 
 #[test]
 fn test_bind_existing() {
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq)]
     enum Choose {
         B,
         C,
@@ -695,4 +695,26 @@ fn two_worlds() {
     let _o2 = v2.watch().observe();
     two.stabilise();
     one.stabilise();
+}
+
+#[test]
+fn cutoff_rc_ptr_eq() {
+    let counter = CallCounter::new("map on rc");
+    let incr = State::new();
+    let rc: Rc<Vec<i32>> = Rc::new(vec![1i32, 2, 3]);
+    let v = incr.var(rc.clone());
+    let w = v.watch().cutoff(Cutoff::Custom(Rc::ptr_eq));
+    let c = &counter;
+    let m = w.map(|list| {
+        c.increment();
+        list.iter().sum::<i32>()
+    });
+    let o = m.observe();
+
+    incr.stabilise();
+    assert_eq!(counter, 1);
+
+    v.set(rc);
+    incr.stabilise();
+    assert_eq!(counter, 1);
 }

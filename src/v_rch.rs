@@ -2,6 +2,7 @@
 
 mod adjust_heights_heap;
 mod array_fold;
+mod cutoff;
 mod internal_observer;
 mod kind;
 mod node;
@@ -14,8 +15,10 @@ mod unordered_fold;
 mod var;
 
 use crate::v_rch::kind::BindMainId;
+use crate::v_rch::node::Incremental;
 use crate::State;
 
+use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
@@ -32,8 +35,8 @@ use kind::NodeGenerics;
 use node::Input;
 
 /// Trait alias for `Debug + Clone + 'a`
-pub trait Value<'a>: Debug + Clone + 'a {}
-impl<'a, T> Value<'a> for T where T: Debug + Clone + 'a {}
+pub trait Value<'a>: Debug + Clone + PartialEq + 'a {}
+impl<'a, T> Value<'a> for T where T: Debug + Clone + PartialEq + 'a {}
 pub(crate) type NodeRef<'a> = Rc<dyn ErasedNode<'a> + 'a>;
 pub(crate) type WeakNode<'a> = Weak<dyn ErasedNode<'a> + 'a>;
 
@@ -54,9 +57,9 @@ where
 
 impl<'a, F, T1, T2, R> NodeGenerics<'a> for Map2Node<'a, F, T1, T2, R>
 where
-    T1: Debug + Clone + 'a,
-    T2: Debug + Clone + 'a,
-    R: Debug + Clone + 'a,
+    T1: Value<'a>,
+    T2: Value<'a>,
+    R: Value<'a>,
     F: FnMut(T1, T2) -> R + 'a,
 {
     type R = R;
@@ -74,7 +77,7 @@ where
 impl<'a, F, T1, T2, R> Debug for Map2Node<'a, F, T1, T2, R>
 where
     F: FnMut(T1, T2) -> R + 'a,
-    R: Debug + 'a,
+    R: Value<'a>,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Map2Node").finish()
@@ -91,8 +94,8 @@ where
 
 impl<'a, F, T, R> NodeGenerics<'a> for MapNode<'a, F, T, R>
 where
-    T: Debug + Clone + 'a,
-    R: Debug + Clone + 'a,
+    T: Value<'a>,
+    R: Value<'a>,
     F: FnMut(T) -> R + 'a,
 {
     type R = R;
@@ -110,7 +113,7 @@ where
 impl<'a, F, T, R> Debug for MapNode<'a, F, T, R>
 where
     F: FnMut(T) -> R + 'a,
-    R: Debug + 'a,
+    R: Value<'a>,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapNode").finish()
@@ -142,8 +145,8 @@ pub(crate) trait BindScope<'a>: Debug + 'a {
 
 impl<'a, F, T, R> BindScope<'a> for BindNode<'a, F, T, R>
 where
-    R: Debug + Clone + 'a,
-    T: Debug + Clone + 'a,
+    R: Value<'a>,
+    T: Value<'a>,
     F: FnMut(T) -> Incr<'a, R> + 'a,
 {
     fn is_valid(&self) -> bool {
@@ -170,8 +173,8 @@ struct BindLhsChangeNodeGenerics<F, T, R> {
 impl<'a, F, T, R> NodeGenerics<'a> for BindLhsChangeNodeGenerics<F, T, R>
 where
     F: FnMut(T) -> Incr<'a, R> + 'a,
-    T: Debug + Clone + 'a,
-    R: Debug + Clone + 'a,
+    T: Value<'a>,
+    R: Value<'a>,
 {
     // lhs change's Node stores () nothing. just a sentinel.
     type R = ();
@@ -194,8 +197,8 @@ struct BindNodeMainGenerics<F, T, R> {
 impl<'a, F, T, R> NodeGenerics<'a> for BindNodeMainGenerics<F, T, R>
 where
     F: FnMut(T) -> Incr<'a, R> + 'a,
-    T: Debug + Clone + 'a,
-    R: Debug + Clone + 'a,
+    T: Value<'a>,
+    R: Value<'a>,
 {
     // We copy the output of the Rhs
     type R = R;
@@ -215,8 +218,8 @@ where
 impl<'a, F, T, R> Debug for BindNode<'a, F, T, R>
 where
     F: FnMut(T) -> Incr<'a, R> + 'a,
-    R: Debug + Clone + 'a,
-    T: Debug + Clone + 'a,
+    R: Value<'a>,
+    T: Value<'a>,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BindNode")
@@ -285,8 +288,8 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
 
     pub fn map2<F, T2, R>(&self, other: &Incr<'a, T2>, f: F) -> Incr<'a, R>
     where
-        T2: Clone + Debug + 'a,
-        R: Clone + Debug + 'a,
+        T2: Value<'a>,
+        R: Value<'a>,
         F: FnMut(T, T2) -> R + 'a,
     {
         let mapper = Map2Node {
@@ -304,26 +307,9 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         map
     }
 
-    // pub fn list_all(list: Vec<Incr<'a, T>>) -> Incr<'a, Vec<T>> {
-    //     let output = list.iter().map(|input| input.node.latest()).collect();
-    //     let cloned = list.clone();
-    //     let listall = ListAllNode {
-    //         inputs: list,
-    //         output: RefCell::new(output),
-    //         prev: RefCell::new(None),
-    //     };
-    //     let new = Incr {
-    //         node: Rc::new(listall),
-    //     };
-    //     for inp in cloned.iter() {
-    //         inp.node.add_descendant(new.node.clone().as_any());
-    //     }
-    //     new
-    // }
-
     pub fn binds<F, R>(&self, mut f: F) -> Incr<'a, R>
     where
-        R: Debug + Clone + 'a,
+        R: Value<'a>,
         F: FnMut(&Rc<State<'a>>, T) -> Incr<'a, R> + 'a,
     {
         let cloned = self.node.state();
@@ -332,7 +318,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
 
     pub fn bind<F, R>(&self, f: F) -> Incr<'a, R>
     where
-        R: Debug + Clone + 'a,
+        R: Value<'a>,
         F: FnMut(T) -> Incr<'a, R> + 'a,
     {
         let state = self.node.state();
@@ -381,6 +367,11 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             },
             Rc::downgrade(&bind),
         );
+        /* We set [lhs_change] to never cutoff so that whenever [lhs] changes, [main] is
+        recomputed.  This is necessary to handle cases where [f] returns an existing stable
+        node, in which case the [lhs_change] would be the only thing causing [main] to be
+        stale. */
+        bind.lhs_change.set_cutoff(Cutoff::Never);
         main_incr
     }
 
@@ -389,4 +380,20 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         let internal = incr.node.state().observe(incr);
         Observer::new(internal)
     }
+
+    pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
+        self.node.set_cutoff(cutoff);
+    }
+    pub fn cutoff(self, cutoff: Cutoff<T>) -> Self {
+        self.node.set_cutoff(cutoff);
+        self
+    }
+}
+
+#[test]
+fn cutoff() {
+    let incr = State::new();
+    let rc = Rc::new(10);
+    let v = incr.var(rc.clone());
+    let w = v.watch().set_cutoff(Cutoff::Custom(Rc::ptr_eq));
 }
