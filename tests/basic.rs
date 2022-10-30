@@ -699,22 +699,64 @@ fn two_worlds() {
 
 #[test]
 fn cutoff_rc_ptr_eq() {
-    let counter = CallCounter::new("map on rc");
+    let sum_counter = CallCounter::new("map on rc");
     let incr = State::new();
     let rc: Rc<Vec<i32>> = Rc::new(vec![1i32, 2, 3]);
     let v = incr.var(rc.clone());
+    // Rc::ptr_eq is a fn(&T, &T) -> bool for any T.
+    // Note that v.watch() always returns the same node. So you can mutate its cutoff.
+    v.watch().set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+    // alternatively, this way. No difference, just this one works inline/returns self
     let w = v.watch().cutoff(Cutoff::Custom(Rc::ptr_eq));
-    let c = &counter;
-    let m = w.map(|list| {
-        c.increment();
-        list.iter().sum::<i32>()
-    });
-    let o = m.observe();
+    let c = &sum_counter;
+    let o = w
+        .map(|list| {
+            c.increment();
+            list.iter().sum::<i32>()
+        })
+        .observe();
 
     incr.stabilise();
-    assert_eq!(counter, 1);
+    assert_eq!(sum_counter, 1);
 
-    v.set(rc);
+    // We didn't change the Rc that was returned. So map should not have to call its function again.
+    v.set(rc.clone());
     incr.stabilise();
-    assert_eq!(counter, 1);
+    assert_eq!(sum_counter, 1);
+    assert_eq!(o.value(), Ok(6));
+
+    v.set(Rc::new(vec![1, 2, 3, 4]));
+    incr.stabilise();
+    assert_eq!(sum_counter, 2);
+    assert_eq!(o.value(), Ok(10));
+}
+
+#[test]
+fn cutoff_sum() {
+    let add10_counter = CallCounter::new("sum + 10");
+    let incr = State::new();
+    let vec = vec![1i32, 2, 3];
+    let v = incr.var(vec);
+    let o = v
+        .watch()
+        .map(|xs| xs.into_iter().fold(0i32, |acc, x| acc + x))
+        .cutoff(Cutoff::PartialEq) // this is the default.
+        // because our first map node checks PartialEq before changing
+        // its output value, the second map node will not have to run.
+        .map(add10_counter.wrap1(|sum| sum + 10))
+        .observe();
+
+    incr.stabilise();
+    assert_eq!(add10_counter, 1);
+    assert_eq!(o.value(), Ok(16));
+
+    v.set(vec![6]);
+    incr.stabilise();
+    assert_eq!(add10_counter, 1); // the crux
+    assert_eq!(o.value(), Ok(16));
+
+    v.set(vec![9, 1]);
+    incr.stabilise();
+    assert_eq!(add10_counter, 2); // the crux again
+    assert_eq!(o.value(), Ok(20));
 }

@@ -883,11 +883,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 }
             }
         } else if old_value_opt.is_some() {
-            tracing::warn!(
-                "cutoff value change from {:?} -> {:?}",
-                old_value_opt.as_ref().unwrap(),
-                &value
-            );
+            tracing::info!("cutoff applied to value change");
             self.value_opt.replace(old_value_opt);
         }
     }

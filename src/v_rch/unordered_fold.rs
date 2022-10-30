@@ -159,7 +159,7 @@ where
         old_value_opt: Option<I>,
         new_value: I,
     ) {
-        tracing::warn!("child_changed {:?} -> {:?}", old_value_opt, new_value);
+        tracing::info!("child_changed {:?} -> {:?}", old_value_opt, new_value);
         let own_child = &self.children[child_index as usize];
         assert!(Rc::ptr_eq(&child.packed(), &own_child.node.packed()));
 
