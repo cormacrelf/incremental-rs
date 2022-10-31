@@ -279,6 +279,10 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         Rc::ptr_eq(&self.node, &other.node)
     }
 
+    /// A convenience function for taking a function of type `fn(Incr<T>) -> Incr<R>` and
+    /// applying it to self. This enables you to put your own functions
+    /// into the middle of a chain of method calls on Incr.
+    #[inline]
     pub fn pipe<R>(&self, mut f: impl FnMut(Incr<'a, T>) -> Incr<'a, R>) -> Incr<'a, R> {
         // clones are cheap.
         f(self.clone())
@@ -301,6 +305,8 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         f(self.clone(), arg1, arg2)
     }
 
+    /// A simple variation on `Incr::map` that tells you how many
+    /// times the incremental has recomputed before this time.
     pub fn enumerate<R, F>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
@@ -314,7 +320,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         })
     }
 
-    pub fn with_old<R, F>(&self, mut f: F) -> Incr<'a, R>
+    fn with_old_input_output<R, F>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
         F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'a,
@@ -343,6 +349,17 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         map
     }
 
+    /// A version of `Incr::map` that allows reuse of the old
+    /// value. You can use it to produce a new value. The main
+    /// use case is avoiding allocation.
+    ///
+    /// The return type of the closure is `(R, bool)`. The boolean
+    /// value is a replacement for the `Cutoff` system, because
+    /// the `Cutoff` functions require access to an old value and
+    /// a new value. With `map_with_old`, you must figure out yourself
+    /// (without relying on PartialEq, for example) whether the
+    /// incremental node should propagate its changes.
+    ///
     pub fn map_with_old<R, F>(&self, f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
@@ -382,6 +399,8 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         map
     }
 
+    /// A version of bind that includes a copy of the `incremental::State`
+    /// to help you construct new incrementals within the bind.
     pub fn binds<F, R>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
@@ -450,6 +469,26 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         main_incr
     }
 
+    /// Creates an observer for this incremental.
+    ///
+    /// Observers are the primary way to get data out of the computation.
+    /// Their creation and lifetime inform Incremental which parts of the
+    /// computation graph are necessary, such that if you create many
+    /// variables and computations based on them, but only hook up some of
+    /// that to an observer, only the parts transitively necessary to
+    /// supply the observer with values are queued to be recomputed.
+    ///
+    /// That means, without an observer, `var.set(new_value)` does essentially
+    /// nothing, even if you have created incrementals like
+    /// `var.map(...).bind(...).map(...)`. In this fashion, you can safely
+    /// set up computation graphs before you need them, or refuse to dismantle
+    /// them, knowing the expensive computations they contain will not
+    /// grace the CPU until they're explicitly put back under the purview
+    /// of an Observer.
+    ///
+    /// Calling this multiple times on the same node produces multiple
+    /// observers. Only one is necessary to keep a part of a computation
+    /// graph alive and ticking.
     pub fn observe(&self) -> Observer<'a, T> {
         let incr = self.clone();
         let internal = incr.node.state().observe(incr);
@@ -459,8 +498,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     /// Sets the cutoff function that determines (if it returns true)
     /// whether to stop (cut off) propagating changes through the graph.
     /// Note that this method can be called on `Var` as well as any
-    /// other `Incr`. For `Var`, this will set the cutoff for its linked
-    /// `.watch()` node.
+    /// other `Incr`.
     ///
     /// The default is `Cutoff::PartialEq`. So if your values do not change,
     /// they will cut off propagation. There is a bound on all T in
@@ -539,7 +577,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         F: FnMut(&K, &V) -> Option<V2> + 'a,
         T::OutputMap<V2>: Value<'a>,
     {
-        self.with_old(move |old, input| match (old, input.len()) {
+        self.with_old_input_output(move |old, input| match (old, input.len()) {
             (o @ _, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
@@ -591,7 +629,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         FAdd: FnMut(R, &K, &V) -> R + 'a,
         FRemove: FnMut(R, &K, &V) -> R + 'a,
     {
-        self.with_old(move |old, new_in| match old {
+        self.with_old_input_output(move |old, new_in| match old {
             None => {
                 let newmap = new_in.nonincremental_fold(init.clone(), |acc, (k, v)| add(acc, k, v));
                 (newmap, true)

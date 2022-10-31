@@ -737,8 +737,6 @@ fn cutoff_rc_ptr_eq() {
     let var = incr.var(rc.clone());
     let v = var.clone();
     // Rc::ptr_eq is a fn(&T, &T) -> bool for any T.
-    // Note that v.watch() always returns the same node.
-    // So you can mutate its cutoff.
     // And Var derefs to Incr, so you can use the method directly.
     v.watch().set_cutoff(Cutoff::Never);
     v.set_cutoff(Cutoff::PartialEq);
