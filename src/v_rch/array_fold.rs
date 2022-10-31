@@ -11,7 +11,7 @@ pub(crate) struct ArrayFold<'a, F, I, R> {
 
 impl<'a, F, I, R> ArrayFold<'a, F, I, R>
 where
-    F: FnMut(R, I) -> R + 'a,
+    F: FnMut(R, &I) -> R + 'a,
     I: Value<'a>,
     R: Value<'a>,
 {
@@ -19,27 +19,27 @@ where
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
         self.children.iter().fold(acc, |acc, x| {
-            let v = x.node.latest();
-            f(acc, v)
+            let v = x.node.value_as_ref().unwrap();
+            f(acc, &v)
         })
     }
 }
 
 impl<'a, F, I: Value<'a>, R: Value<'a>> NodeGenerics<'a> for ArrayFold<'a, F, I, R>
 where
-    F: FnMut(R, I) -> R + 'a,
+    F: FnMut(R, &I) -> R + 'a,
 {
     type R = R;
     type BindLhs = ();
     type BindRhs = ();
     type I1 = I;
     type I2 = ();
-    type F1 = fn(Self::I1) -> R;
-    type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type F1 = fn(&Self::I1) -> R;
+    type F2 = fn(&Self::I1, &Self::I2) -> R;
+    type B1 = fn(&Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = F;
-    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
+    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
 }
 
 impl<'a, F, I, R> Debug for ArrayFold<'a, F, I, R>

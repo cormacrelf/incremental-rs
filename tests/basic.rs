@@ -3,7 +3,7 @@ use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use incremental::{Cutoff, Observer, ObserverError, State, Var};
+use incremental::{Cutoff, Incr, Observer, ObserverError, State, Var};
 
 #[test]
 fn testit() {
@@ -181,11 +181,11 @@ fn bind_changing_heights_outside() {
     // this is a very short graph, height 1.
     let short_graph = incr.var(5).watch();
     // this is a very short graph, height 4.
-    let long_graph = incr.var(10).watch().map(|x| x).map(|x| x).map(|x| x);
+    let long_graph = incr.var(10).watch().map(|&x| x).map(|&x| x).map(|&x| x);
     let obs = is_short
         .watch()
         // BindMain's height is initially bumped to 3 (short=1, lhs=2, main=3)
-        .bind(move |s| {
+        .bind(move |&s| {
             if s {
                 short_graph.clone()
             } else {
@@ -222,11 +222,11 @@ fn bind_changing_heights_inside() {
     let i2 = incr.clone();
     let obs = is_short
         .watch()
-        .bind(move |s| {
+        .bind(move |&s| {
             if s {
                 i2.var(5).watch()
             } else {
-                i2.var(10).watch().map(|x| x).map(|x| x).map(|x| x)
+                i2.var(10).watch().map(|&x| x).map(|&x| x).map(|&x| x)
             }
         })
         .observe();
@@ -257,7 +257,7 @@ fn observer_ugly() {
     let v9 = state.var(9);
     let bound = lhs
         .watch()
-        .bind(move |l| if l { v9.watch() } else { unused_w.clone() });
+        .bind(move |&l| if l { v9.watch() } else { unused_w.clone() });
     let o = bound.observe();
 
     incr.stabilise();
@@ -291,7 +291,7 @@ fn enumerate() {
     let g = std::cell::Cell::new(0);
     let incr = State::new();
     let v = incr.var("first");
-    let m = v.watch().enumerate().map(|(i, x)| {
+    let m = v.watch().enumerate(|i, &x| {
         g.set(i + 1);
         x
     });
@@ -420,7 +420,7 @@ fn unordered_fold() {
     let v3 = incr.var(30);
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
     let sum = vars.watch().binds(|incr, vars| {
-        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+        let watches: Vec<Incr<i32>> = vars.iter().map(Var::watch).collect();
         incr.unordered_fold(
             watches,
             0,
@@ -456,17 +456,17 @@ impl CallCounter {
     }
     fn wrap1<'a, A, R>(
         &'a self,
-        mut f: impl (FnMut(A) -> R) + 'a + Clone,
-    ) -> impl FnMut(A) -> R + 'a + Clone {
+        mut f: impl (FnMut(&A) -> R) + 'a + Clone,
+    ) -> impl FnMut(&A) -> R + 'a + Clone {
         move |a| {
             self.increment();
             f(a)
         }
     }
-    fn wrap2<'a, A, B, R>(
+    fn wrap_folder<'a, B, R>(
         &'a self,
-        mut f: impl (FnMut(A, B) -> R) + 'a + Clone,
-    ) -> impl FnMut(A, B) -> R + 'a + Clone {
+        mut f: impl (FnMut(R, &B) -> R) + 'a + Clone,
+    ) -> impl FnMut(R, &B) -> R + 'a + Clone {
         move |a, b| {
             self.increment();
             f(a, b)
@@ -494,8 +494,8 @@ fn unordered_fold_inverse() {
         incr.unordered_fold_inverse(
             watches,
             0,
-            f.wrap2(|acc, x| acc + x),
-            finv.wrap2(|acc, x| acc - x), // this time our update function is
+            f.wrap_folder(|acc, x| acc + x),
+            finv.wrap_folder(|acc, x| acc - x), // this time our update function is
             // constructed for us.
             None,
         )
@@ -644,7 +644,7 @@ fn var_set_during_stabilisation() {
     let v = incr.var(10_i32);
     let o = v
         .watch()
-        .map(move |x| {
+        .map(move |&x| {
             v.set(x + 10);
             x
         })
@@ -669,7 +669,7 @@ fn test_constant() {
     let flip = incr.var(true);
     let o2 = flip
         .watch()
-        .binds(|incr, t| {
+        .binds(|incr, &t| {
             if t {
                 incr.constant(5)
             } else {
@@ -739,11 +739,11 @@ fn cutoff_sum() {
     let v = incr.var(vec);
     let o = v
         .watch()
-        .map(|xs| xs.into_iter().fold(0i32, |acc, x| acc + x))
+        .map(|xs| xs.into_iter().fold(0i32, |acc, &x| acc + x))
         .cutoff(Cutoff::PartialEq) // this is the default.
         // because our first map node checks PartialEq before changing
         // its output value, the second map node will not have to run.
-        .map(add10_counter.wrap1(|sum| sum + 10))
+        .map(add10_counter.wrap1(|&sum| sum + 10))
         .observe();
 
     incr.stabilise();
@@ -767,7 +767,7 @@ fn map_with_old_reuse() {
     let v = incr.var(100);
     let o = v
         .watch()
-        .map_with_old(|old: Option<Rc<String>>, input: i32| {
+        .map_with_old(|old: Option<Rc<String>>, input: &i32| {
             let mut rc = old.unwrap_or_default();
             if Rc::strong_count(&rc) != 1 {
                 panic!("Rc::make_mut was going to clone");
@@ -780,7 +780,7 @@ fn map_with_old_reuse() {
             (rc, true)
         })
         // we can ruin everything by doing this
-        // .map(|x| x)
+        // .map(|x| x.clone())
         .observe();
 
     incr.stabilise();

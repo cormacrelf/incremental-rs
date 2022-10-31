@@ -66,10 +66,10 @@ fn test_cycle() {
 pub(crate) fn make_update_fn_from_inverse<B, A, F, FInv>(
     mut f: F,
     mut f_inv: FInv,
-) -> impl FnMut(B, A, A) -> B
+) -> impl FnMut(B, &A, &A) -> B
 where
-    F: FnMut(B, A) -> B,
-    FInv: FnMut(B, A) -> B,
+    F: FnMut(B, &A) -> B,
+    FInv: FnMut(B, &A) -> B,
 {
     move |fold_value, old_value, new_value| {
         // imagine f     is |a, x| a + x
@@ -106,8 +106,8 @@ where
 
 impl<'a, F, U, I, R> UnorderedArrayFold<'a, F, U, I, R>
 where
-    F: FnMut(R, I) -> R + 'a,
-    U: FnMut(R, I, I) -> R + 'a,
+    F: FnMut(R, &I) -> R + 'a,
+    U: FnMut(R, &I, &I) -> R + 'a,
     I: Value<'a>,
     R: Value<'a>,
 {
@@ -138,8 +138,8 @@ where
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
         self.children.iter().fold(acc, |acc, x| {
-            let v = x.node.latest();
-            f(acc, v)
+            let v = x.node.value_as_ref().unwrap();
+            f(acc, &v)
         })
     }
 
@@ -157,7 +157,7 @@ where
         child: &Input<'a, I>,
         child_index: i32,
         old_value_opt: Option<I>,
-        new_value: I,
+        new_value: &I,
     ) {
         tracing::info!("child_changed {:?} -> {:?}", old_value_opt, new_value);
         let own_child = &self.children[child_index as usize];
@@ -173,8 +173,8 @@ where
                 [Uopt.is_some t.fold_value] and [Uopt.is_some old_value_opt]. */
                 let x = update(
                     old.as_ref().unwrap().clone(),
-                    old_value_opt.unwrap(),
-                    new_value,
+                    old_value_opt.as_ref().unwrap(),
+                    &new_value,
                 );
                 Some(x)
             }
@@ -184,18 +184,18 @@ where
 
 impl<'a, F, U, I: Value<'a>, R: Value<'a>> NodeGenerics<'a> for UnorderedArrayFold<'a, F, U, I, R>
 where
-    F: FnMut(R, I) -> R + 'a,
-    U: FnMut(R, I, I) -> R + 'a,
+    F: FnMut(R, &I) -> R + 'a,
+    U: FnMut(R, &I, &I) -> R + 'a,
 {
     type R = R;
     type BindRhs = ();
     type BindLhs = ();
     type I1 = I;
     type I2 = ();
-    type F1 = fn(Self::I1) -> R;
-    type F2 = fn(Self::I1, Self::I2) -> R;
-    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type F1 = fn(&Self::I1) -> R;
+    type F2 = fn(&Self::I1, &Self::I2) -> R;
+    type B1 = fn(&Self::BindLhs) -> Incr<'a, Self::BindRhs>;
     type Fold = F;
     type Update = U;
-    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
+    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
 }

@@ -132,7 +132,7 @@ impl<'a> State<'a> {
         f: F,
     ) -> Incr<'a, R>
     where
-        F: FnMut(R, T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'a,
     {
         let node = Node::<ArrayFold<'a, F, T, R>>::create(
             self.weak(),
@@ -155,8 +155,8 @@ impl<'a> State<'a> {
         full_compute_every_n_changes: Option<u32>,
     ) -> Incr<'a, R>
     where
-        F: FnMut(R, T) -> R + Clone + 'a,
-        FInv: FnMut(R, T) -> R + 'a,
+        F: FnMut(R, &T) -> R + Clone + 'a,
+        FInv: FnMut(R, &T) -> R + 'a,
     {
         let update = super::unordered_fold::make_update_fn_from_inverse(f.clone(), f_inverse);
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
@@ -171,8 +171,8 @@ impl<'a> State<'a> {
         full_compute_every_n_changes: Option<u32>,
     ) -> Incr<'a, R>
     where
-        F: FnMut(R, T) -> R + 'a,
-        U: FnMut(R, T, T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'a,
+        U: FnMut(R, &T, &T) -> R + 'a,
     {
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
@@ -240,7 +240,7 @@ impl<'a> State<'a> {
         K: Value<'a> + Ord,
         V: Value<'a> + Eq,
         V2: Value<'a>,
-        F: FnMut(K, V) -> V2 + 'a,
+        F: FnMut(&K, &V) -> V2 + 'a,
     {
         map.with_old(move |old, input| match (old, input.len()) {
             (o @ _, 0) | (o @ None, _) => {
@@ -254,7 +254,7 @@ impl<'a> State<'a> {
                 let mut did_change = false;
                 let _: &mut BTreeMap<K, V2> =
                     old_in
-                        .symmetric_diff_owned(input)
+                        .symmetric_diff(input)
                         .fold(&mut old_out, |out, change| {
                             match change {
                                 DiffElement::Left((key, _)) => {
@@ -267,7 +267,7 @@ impl<'a> State<'a> {
                                 }
                                 DiffElement::Unequal((k1, _), (k2, newval)) => {
                                     did_change = true;
-                                    out.insert(k1, f(k2, newval));
+                                    out.insert(k1.clone(), f(k2, newval));
                                 }
                             }
                             out
@@ -289,8 +289,8 @@ impl<'a> State<'a> {
         K: Value<'a> + Ord,
         V: Value<'a> + Eq,
         R: Value<'a>,
-        FAdd: FnMut(R, K, V) -> R + 'a,
-        FRemove: FnMut(R, K, V) -> R + 'a,
+        FAdd: FnMut(R, &K, &V) -> R + 'a,
+        FRemove: FnMut(R, &K, &V) -> R + 'a,
     {
         map.with_old(move |old, new_in| match old {
             None => {
@@ -304,24 +304,23 @@ impl<'a> State<'a> {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded =
-                    old_in
-                        .symmetric_diff_owned(new_in)
-                        .fold(old_out, |mut acc, difference| match difference {
-                            DiffElement::Left((key, value)) => {
-                                did_change = true;
-                                remove(acc, key, value)
-                            }
-                            DiffElement::Right((key, value)) => {
-                                did_change = true;
-                                add(acc, key, value)
-                            }
-                            DiffElement::Unequal((lk, lv), (rk, rv)) => {
-                                did_change = true;
-                                acc = remove(acc, lk, lv);
-                                add(acc, rk, rv)
-                            }
-                        });
+                let folded = old_in
+                    .symmetric_diff(new_in)
+                    .fold(old_out, |mut acc, difference| match difference {
+                        DiffElement::Left((key, value)) => {
+                            did_change = true;
+                            remove(acc, key, value)
+                        }
+                        DiffElement::Right((key, value)) => {
+                            did_change = true;
+                            add(acc, key, value)
+                        }
+                        DiffElement::Unequal((lk, lv), (rk, rv)) => {
+                            did_change = true;
+                            acc = remove(acc, lk, lv);
+                            add(acc, rk, rv)
+                        }
+                    });
                 (folded, did_change)
             }
         })

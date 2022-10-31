@@ -249,8 +249,8 @@ impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
         match &*k {
             // Kind::Expert => ...,
             Kind::UnorderedArrayFold(uaf) => {
-                let new_value = child.latest();
-                uaf.child_changed(child, child_index, old_value_opt, new_value)
+                let new_value = child.value_as_ref().unwrap();
+                uaf.child_changed(child, child_index, old_value_opt, &*new_value)
             }
             _ => {}
         }
@@ -617,28 +617,28 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
             Kind::Map(map) => {
                 let map: &MapNode<G::F1, G::I1, G::R> = map;
-                let input = map.input.latest();
+                let input = map.input.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let new_value = f(input);
+                let new_value = f(&input);
                 tracing::debug!("<- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
             Kind::MapWithOld(map) => {
                 let map: &MapWithOld<G::WithOld, G::I1, G::R> = map;
-                let input = map.input.latest();
+                let input = map.input.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let old_value = self.value_opt.take();
                 let old_value_is_none = old_value.is_none();
-                let (new_value, did_change) = f(old_value, input);
+                let (new_value, did_change) = f(old_value, &input);
                 tracing::debug!("<- {new_value:?}");
                 self.maybe_change_value_manual(None, new_value, old_value_is_none || did_change);
             }
             Kind::Map2(map2) => {
                 let map2: &Map2Node<'a, G::F2, G::I1, G::I2, G::R> = map2;
-                let i1 = map2.one.latest();
-                let i2 = map2.two.latest();
+                let i1 = map2.one.value_as_ref().unwrap();
+                let i2 = map2.two.value_as_ref().unwrap();
                 let mut f = map2.mapper.borrow_mut();
-                let new_value = f(i1, i2);
+                let new_value = f(&i1, &i2);
                 tracing::debug!("recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
@@ -647,13 +647,13 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let t = self.state();
-                let lhs = bind.lhs.latest();
+                let lhs = bind.lhs.value_as_ref().unwrap();
                 let rhs = {
                     let old_scope = t.current_scope();
                     *t.current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
                     tracing::debug!("-- recomputing BindLhsChange(id={id:?}, {lhs:?})");
                     let mut f = bind.mapper.borrow_mut();
-                    let rhs = f(lhs);
+                    let rhs = f(&lhs);
                     *t.current_scope.borrow_mut() = old_scope;
                     tracing::debug!("-- recomputing BindLhsChange(id={id:?}) <- {rhs:?}");
                     // Check that the returned RHS node is from the same world.

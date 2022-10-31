@@ -18,12 +18,12 @@ pub(crate) trait NodeGenerics<'a>: 'a {
     type BindRhs: Value<'a>;
     type I1: Value<'a>;
     type I2: Value<'a>;
-    type F1: FnMut(Self::I1) -> Self::R + 'a;
-    type F2: FnMut(Self::I1, Self::I2) -> Self::R + 'a;
-    type B1: FnMut(Self::BindLhs) -> Incr<'a, Self::BindRhs> + 'a;
-    type Fold: FnMut(Self::R, Self::I1) -> Self::R + 'a;
-    type Update: FnMut(Self::R, Self::I1, Self::I1) -> Self::R + 'a;
-    type WithOld: FnMut(Option<Self::R>, Self::I1) -> (Self::R, bool) + 'a;
+    type F1: FnMut(&Self::I1) -> Self::R + 'a;
+    type F2: FnMut(&Self::I1, &Self::I2) -> Self::R + 'a;
+    type B1: FnMut(&Self::BindLhs) -> Incr<'a, Self::BindRhs> + 'a;
+    type Fold: FnMut(Self::R, &Self::I1) -> Self::R + 'a;
+    type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R + 'a;
+    type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + 'a;
 }
 
 pub(crate) enum Kind<'a, G: NodeGenerics<'a>> {
@@ -122,10 +122,10 @@ impl<'a, T: Value<'a>> NodeGenerics<'a> for Constant<'a, T> {
     type BindRhs = ();
     type I1 = ();
     type I2 = ();
-    type F1 = fn(Self::I1) -> Self::R;
-    type F2 = fn(Self::I1, Self::I2) -> Self::R;
-    type B1 = fn(Self::BindLhs) -> Incr<'a, Self::BindRhs>;
-    type Fold = fn(Self::R, Self::I1) -> Self::R;
-    type Update = fn(Self::R, Self::I1, Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, Self::I1) -> (Self::R, bool);
+    type F1 = fn(&Self::I1) -> Self::R;
+    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
+    type B1 = fn(&Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type Fold = fn(Self::R, &Self::I1) -> Self::R;
+    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
 }
