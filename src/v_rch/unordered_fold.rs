@@ -134,6 +134,11 @@ where
         Incr { node }
     }
 
+    pub(crate) fn force_full_compute(&self) {
+        self.fold_value.take();
+        Cycle::reset(&self.cycle);
+    }
+
     pub(crate) fn full_compute(&self) -> R {
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();

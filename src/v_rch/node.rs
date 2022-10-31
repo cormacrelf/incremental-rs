@@ -543,10 +543,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         self.maybe_handle_after_stabilisation();
         self.set_height(-1);
         self.remove_children();
-        /* (match node.kind with
-        | Unordered_array_fold u -> Unordered_array_fold.force_full_compute u
-        | Expert p -> Expert.observability_change p ~is_now_observable:false
-        | _ -> ()); */
+        let kind = self.kind.borrow();
+        match &*kind {
+            Kind::UnorderedArrayFold(uaf) => uaf.force_full_compute(),
+            _ => {}
+        }
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             let t = self.state();
