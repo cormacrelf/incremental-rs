@@ -447,21 +447,38 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         Observer::new(internal)
     }
 
+    /// Sets the cutoff function that determines (if it returns true)
+    /// whether to stop (cut off) propagating changes through the graph.
+    /// Note that this method can be called on `Var` as well as any
+    /// other `Incr`. For `Var`, this will set the cutoff for its linked
+    /// `.watch()` node.
+    ///
+    /// The default is `Cutoff::PartialEq`. So if your values do not change,
+    /// they will cut off propagation. There is a bound on all T in
+    /// `Incr<T>` used in incremental-rs, all values you pass around
+    /// must be PartialEq.
+    ///
+    /// You can also supply your own comparison function. This will chiefly
+    /// be useful for types like Rc<T>, not to avoid T: PartialEq (you
+    /// can't avoid that) but rather to avoid comparing a large structure
+    /// and simply compare the allocation's pointer value instead.
+    /// In that case, you can:
+    ///
+    /// ```
+    /// use std::rc::Rc;
+    /// use incremental::{State, Cutoff};
+    /// let incr = State::new();
+    /// let var = incr.var(Rc::new(5));
+    /// var.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+    /// // but note that doing this will now cause the change below
+    /// // to propagate, whereas before it would not as the two
+    /// // numbers are == equal:
+    /// var.set(Rc::new(5));
+    /// ```
+    ///
     pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
         self.node.set_cutoff(cutoff);
     }
-    pub fn cutoff(self, cutoff: Cutoff<T>) -> Self {
-        self.node.set_cutoff(cutoff);
-        self
-    }
-}
-
-#[test]
-fn cutoff() {
-    let incr = State::new();
-    let rc = Rc::new(10);
-    let v = incr.var(rc.clone());
-    let w = v.watch().set_cutoff(Cutoff::Custom(Rc::ptr_eq));
 }
 
 impl<'a, T: Value<'a>> Incr<'a, T> {

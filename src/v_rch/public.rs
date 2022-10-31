@@ -131,14 +131,6 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     pub fn id(&self) -> NodeId {
         self.internal.node_id
     }
-    // A duplicate to "override" the cutoff function
-    // that our Deref target Incr has, and get the same
-    // kind of function call to return Self.
-    #[inline]
-    pub fn cutoff(self, cutoff: Cutoff<T>) -> Self {
-        self.watch.set_cutoff(cutoff);
-        self
-    }
 }
 
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {

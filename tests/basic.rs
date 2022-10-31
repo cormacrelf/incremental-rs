@@ -742,12 +742,14 @@ fn cutoff_rc_ptr_eq() {
     // And Var derefs to Incr, so you can use the method directly.
     v.watch().set_cutoff(Cutoff::Never);
     v.set_cutoff(Cutoff::PartialEq);
-    // alternatively, this way.
-    // No difference, just this one works inline/returns self.
+
     // And we're using Rc::ptr_eq! Without any fancy specialization tricks!
     // Because v already knows what its T is!
+    v.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+
+    // The default is of course PartialEq.
+
     let o = v
-        .cutoff(Cutoff::Custom(Rc::ptr_eq))
         .map(|list| {
             sum_counter.increment();
             list.iter().sum::<i32>()
@@ -777,7 +779,6 @@ fn cutoff_sum() {
     let v = incr.var(vec);
     let o = v
         .map(|xs| xs.into_iter().fold(0i32, |acc, &x| acc + x))
-        .cutoff(Cutoff::PartialEq) // this is the default.
         // because our first map node checks PartialEq before changing
         // its output value, the second map node will not have to run.
         .map(add10_counter.wrap1(|&sum| sum + 10))
