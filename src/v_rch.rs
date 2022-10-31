@@ -284,11 +284,20 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         f(self.clone())
     }
 
-    pub fn pipe1<R, A1>(&self, mut f: impl FnMut(Incr<'a, T>, A1) -> Incr<'a, R>, arg1: A1) -> Incr<'a, R> {
+    pub fn pipe1<R, A1>(
+        &self,
+        mut f: impl FnMut(Incr<'a, T>, A1) -> Incr<'a, R>,
+        arg1: A1,
+    ) -> Incr<'a, R> {
         f(self.clone(), arg1)
     }
 
-    pub fn pipe2<R, A1, A2>(&self, mut f: impl FnMut(Incr<'a, T>, A1, A2) -> Incr<'a, R>, arg1: A1, arg2: A2) -> Incr<'a, R> {
+    pub fn pipe2<R, A1, A2>(
+        &self,
+        mut f: impl FnMut(Incr<'a, T>, A1, A2) -> Incr<'a, R>,
+        arg1: A1,
+        arg2: A2,
+    ) -> Incr<'a, R> {
         f(self.clone(), arg1, arg2)
     }
 

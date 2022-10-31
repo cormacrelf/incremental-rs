@@ -1010,8 +1010,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
                 old_child_node.remove_parent(child_index, self.as_parent());
                 /* We force [old_child] to temporarily be necessary so that [add_parent] can't
-                   mistakenly think it is unnecessary and transition it to necessary (which would
-                   add duplicate edges and break things horribly). */
+                mistakenly think it is unnecessary and transition it to necessary (which would
+                add duplicate edges and break things horribly). */
                 let oc_inner = old_child_node.inner();
                 let mut oci = oc_inner.borrow_mut();
                 oci.force_necessary = true;

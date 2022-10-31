@@ -7,8 +7,8 @@ fn stabilise_diff(incr: &std::rc::Rc<incremental::State>, msg: &str) -> incremen
 }
 
 mod projections_and_cutoffs {
-    use std::rc::Rc;
     use super::*;
+    use std::rc::Rc;
 
     use incremental::{Incr, State, StatsDiff};
     use test_log::test;
@@ -63,13 +63,19 @@ mod projections_and_cutoffs {
         // This creates six nodes total.
         assert_eq!(incr.stats().created, 6);
 
-        let diff = stabilise_diff(&incr, "initial stabilise, after observing sumproduct_can_cutoff");
-        assert!(matches!(diff, StatsDiff {
-            changed: 6,
-            recomputed: 6,
-            necessary: 6, // and all 6 are participating.
-            ..
-        }));
+        let diff = stabilise_diff(
+            &incr,
+            "initial stabilise, after observing sumproduct_can_cutoff",
+        );
+        assert!(matches!(
+            diff,
+            StatsDiff {
+                changed: 6,
+                recomputed: 6,
+                necessary: 6, // and all 6 are participating.
+                ..
+            }
+        ));
         assert_eq!(result.expect_value(), 10);
 
         // We don't have the problem with "newly allocated tuples" having
@@ -78,22 +84,28 @@ mod projections_and_cutoffs {
         z.update(|z| z.b = (1, 4));
 
         let diff = stabilise_diff(&incr, "after updating z.b but with no actual change");
-        assert!(matches!(diff, StatsDiff {
-            changed: 0,
-            // One for the z watch node. That's it. z.b gets cut off.
-            recomputed: 1,
-            ..
-        }));
+        assert!(matches!(
+            diff,
+            StatsDiff {
+                changed: 0,
+                // One for the z watch node. That's it. z.b gets cut off.
+                recomputed: 1,
+                ..
+            }
+        ));
 
         assert_eq!(result.expect_value(), 10);
         z.update(|z| z.b = (5, 6));
 
         let diff = stabilise_diff(&incr, "after updating z.b");
-        assert!(matches!(diff, StatsDiff {
-            changed: 4, // all except a_prod
-            recomputed: 5, // but a_prod didn't need to update at all.
-            ..
-        }));
+        assert!(matches!(
+            diff,
+            StatsDiff {
+                changed: 4,    // all except a_prod
+                recomputed: 5, // but a_prod didn't need to update at all.
+                ..
+            }
+        ));
         assert_eq!(result.expect_value(), 36);
     }
 
@@ -132,20 +144,26 @@ mod projections_and_cutoffs {
 
         let diff = stabilise_diff(&incr, "after observing sumproduct_smaller_graph");
         assert_eq!(incr.stats().created, 4);
-        assert!(matches!(diff, StatsDiff {
-            changed: 4,
-            recomputed: 4,
-            ..
-        }));
+        assert!(matches!(
+            diff,
+            StatsDiff {
+                changed: 4,
+                recomputed: 4,
+                ..
+            }
+        ));
 
         z.update(|z| z.b = (5, 6));
 
         let diff = stabilise_diff(&incr, "after updating z.b");
-        assert!(matches!(diff, StatsDiff {
-            changed: 3, // all except a_prod changed.
-            recomputed: 4, // but all of them recomputed.
-            ..
-        }));
+        assert!(matches!(
+            diff,
+            StatsDiff {
+                changed: 3,    // all except a_prod changed.
+                recomputed: 4, // but all of them recomputed.
+                ..
+            }
+        ));
 
         assert_eq!(result.expect_value(), 36);
     }

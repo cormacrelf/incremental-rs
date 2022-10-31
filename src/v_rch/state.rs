@@ -402,7 +402,8 @@ impl<'a> State<'a> {
             invalidated: self.num_nodes_invalidated.get(),
             became_necessary: self.num_nodes_became_necessary.get(),
             became_unnecessary: self.num_nodes_became_unnecessary.get(),
-            necessary: self.num_nodes_became_necessary.get() - self.num_nodes_became_unnecessary.get(),
+            necessary: self.num_nodes_became_necessary.get()
+                - self.num_nodes_became_unnecessary.get(),
         }
     }
 }
@@ -432,7 +433,11 @@ pub struct StatsDiff {
 impl Debug for StatsDiff {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut f = f.debug_struct("StatsDiff");
-        let mut field = |name: &str, x: isize| if x != 0 { f.field(name, &x); };
+        let mut field = |name: &str, x: isize| {
+            if x != 0 {
+                f.field(name, &x);
+            }
+        };
         field("created", self.created);
         field("changed", self.changed);
         field("recomputed", self.recomputed);
@@ -453,7 +458,8 @@ impl Stats {
             recomputed: self.recomputed as isize - other.recomputed as isize,
             invalidated: self.invalidated as isize - other.invalidated as isize,
             became_necessary: self.became_necessary as isize - other.became_necessary as isize,
-            became_unnecessary: self.became_unnecessary as isize - other.became_unnecessary as isize,
+            became_unnecessary: self.became_unnecessary as isize
+                - other.became_unnecessary as isize,
             necessary: self.necessary as isize - other.necessary as isize,
         }
     }
