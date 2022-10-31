@@ -2,15 +2,16 @@ use core::fmt::Debug;
 use std::rc::Rc;
 
 pub use super::cutoff::Cutoff;
-use super::internal_observer::{ErasedObserver, InternalObserver};
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
-use super::node::NodeId;
 pub use super::node_update::NodeUpdate;
-use super::node_update::OnUpdateHandler;
 pub use super::state::{State, Stats, StatsDiff};
-use super::var::{ErasedVariable, Var as InternalVar};
 pub use super::Incr;
 pub use super::Value;
+
+use super::internal_observer::{ErasedObserver, InternalObserver};
+use super::node::NodeId;
+use super::node_update::OnUpdateHandler;
+use super::var::{ErasedVariable, Var as InternalVar};
 
 #[derive(Clone)]
 pub struct Observer<'a, T: Value<'a>> {
@@ -104,6 +105,10 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     #[inline]
     pub fn set(&self, value: T) {
         self.internal.set(value)
+    }
+    #[inline]
+    pub fn update(&self, f: impl Fn(&mut T)) {
+        self.internal.update(f)
     }
     #[inline]
     pub fn get(&self) -> T {

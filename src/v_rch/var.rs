@@ -9,7 +9,7 @@ use super::state::IncrStatus;
 use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::rc::{Rc, Weak};
 
 pub(crate) struct VarGenerics<'a, T: Value<'a>>(std::marker::PhantomData<&'a T>);
@@ -82,6 +82,28 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         self.value.borrow().clone()
     }
 
+    pub(crate) fn update(self: &Rc<Self>, mut f: impl FnMut(&mut T)) {
+        let t = self.state.upgrade().unwrap();
+        match t.status.get() {
+            IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {
+                let mut v = self.value.borrow_mut();
+                f(&mut v);
+                self.did_set_var_while_not_stabilising();
+            }
+            IncrStatus::Stabilising => {
+                let mut v = self.value_set_during_stabilisation.borrow_mut();
+                if let Some(v) = &mut *v {
+                    f(v);
+                } else {
+                    let mut stack = t.set_during_stabilisation.borrow_mut();
+                    stack.push(self.erased());
+                    let mut cloned = (*self.value.borrow()).clone();
+                    f(&mut cloned);
+                    v.replace(cloned);
+                }
+            }
+        };
+    }
     pub(crate) fn set(self: &Rc<Self>, value: T) {
         let t = self.state.upgrade().unwrap();
         match t.status.get() {
@@ -100,13 +122,18 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
 
     fn set_var_while_not_stabilising(&self, value: T) {
+        {
+            let mut value_slot = self.value.borrow_mut();
+            *value_slot = value;
+        }
+        self.did_set_var_while_not_stabilising();
+    }
+    fn did_set_var_while_not_stabilising(&self) {
         let Some(watch) = self.node.borrow().clone() else {
             panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
         };
         let t = self.state.upgrade().unwrap();
         t.num_var_sets.set(t.num_var_sets.get() + 1);
-        let mut value_slot = self.value.borrow_mut();
-        *value_slot = value;
         if self.set_at.get() < t.stabilisation_num.get() {
             tracing::info!(
                 "variable set at t={:?}, current revision is t={:?}",

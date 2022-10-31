@@ -660,6 +660,54 @@ fn var_set_during_stabilisation() {
 }
 
 #[test]
+fn var_update_simple() {
+    let incr = State::new();
+    let var = incr.var(10);
+    let o = var.watch().observe();
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(10));
+    var.update(|x| *x += 10);
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(20));
+}
+
+#[test]
+fn var_update_during_stabilisation() {
+    let incr = State::new();
+    let var = incr.var(10);
+    let var_ = var.clone();
+    let o = var.watch().map(move |&x| {
+        var_.update(|y| *y += 1);
+        x
+    }).observe();
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(10));
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(11));
+    var.set(5);
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(5));
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(6));
+}
+
+#[test]
+fn var_update_before_set_during_stabilisation() {
+    let incr = State::new();
+    let var = incr.var(10);
+    let var_ = var.clone();
+    let o = var.watch().map(move |&x| {
+        var_.set(99);
+        x
+    }).observe();
+    var.update(|x| *x += 1);
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(11));
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(99));
+}
+
+#[test]
 fn test_constant() {
     let incr = State::new();
     let c = incr.constant(5);
