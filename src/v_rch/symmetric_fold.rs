@@ -7,6 +7,8 @@ use std::collections::{
     BTreeMap,
 };
 use std::iter::Peekable;
+use std::ops::Deref;
+use std::rc::Rc;
 
 // Adapted from itertools.
 // For [1, 2, 3].merge([2, 4])
@@ -129,7 +131,6 @@ pub(crate) struct SymmetricDiff<'a, K: 'a, V: 'a> {
     other: &'a BTreeMap<K, V>,
     keys: MergeOnce<Keys<'a, K, V>, Keys<'a, K, V>>,
 }
-
 impl<'a, K: 'a, V: 'a> Iterator for SymmetricDiff<'a, K, V>
 where
     K: Ord,
@@ -154,7 +155,7 @@ where
     }
 }
 
-pub(crate) enum DiffElement<V> {
+pub enum DiffElement<V> {
     Unequal(V, V),
     Left(V),
     Right(V),
@@ -173,7 +174,7 @@ pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
 
     fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter;
 
-    fn symmetric_fold<R, FAdd, FRemove>(
+    fn symmetric_fold_with_inverse<R, FAdd, FRemove>(
         &'a self,
         other: &'a Self,
         init: R,
@@ -248,5 +249,116 @@ impl<K: Ord, V: Eq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
             other: other.into_iter().peekable(),
             fused: None,
         }
+    }
+}
+
+pub trait GenericMap<K, V> {
+    fn remove(&mut self, key: &K) -> Option<V>;
+    fn insert(&mut self, key: K, value: V) -> Option<V>;
+}
+
+impl<K: Ord, V> GenericMap<K, V> for BTreeMap<K, V> {
+    #[inline]
+    fn remove(&mut self, key: &K) -> Option<V> {
+        self.remove(key)
+    }
+
+    #[inline]
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.insert(key, value)
+    }
+}
+
+pub trait SymmetricMapMap<K, V> {
+    type UnderlyingMap: GenericMap<K, V>;
+    type OutputMap<V2: Eq + Clone>: SymmetricMapMap<K, V2>;
+    fn make_mut(&mut self) -> &mut Self::UnderlyingMap;
+    fn filter_map_collect<V2: Eq + Clone>(
+        &self,
+        f: &mut impl FnMut(&K, &V) -> Option<V2>,
+    ) -> Self::OutputMap<V2>;
+}
+
+pub trait SymmetricFoldMap<K, V> {
+    fn symmetric_fold<R>(
+        &self,
+        other: &Self,
+        init: R,
+        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+    ) -> R;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R;
+}
+
+impl<K: Ord + Clone, V: Eq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+    type UnderlyingMap = BTreeMap<K, V>;
+    type OutputMap<V2: Eq + Clone> = Rc<BTreeMap<K, V2>>;
+    #[inline]
+    fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
+        Rc::make_mut(self)
+    }
+    #[inline]
+    fn filter_map_collect<V2: Eq + Clone>(
+        &self,
+        f: &mut impl FnMut(&K, &V) -> Option<V2>,
+    ) -> Self::OutputMap<V2> {
+        Rc::new(self.deref().filter_map_collect(f))
+    }
+}
+
+impl<K: Ord, V: Eq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
+    fn symmetric_fold<R>(
+        &self,
+        other: &Self,
+        init: R,
+        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+    ) -> R {
+        let self_target = self.deref();
+        let other_target = other.deref();
+        self_target.symmetric_diff(other_target).fold(init, f)
+    }
+    #[inline]
+    fn len(&self) -> usize {
+        self.deref().len()
+    }
+    fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R {
+        self.deref().nonincremental_fold(init, f)
+    }
+}
+
+impl<K: Ord + Clone, V: Eq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+    type UnderlyingMap = Self;
+    type OutputMap<V2: Eq + Clone> = BTreeMap<K, V2>;
+    fn make_mut(&mut self) -> &mut Self {
+        self
+    }
+    fn filter_map_collect<V2: Eq + Clone>(
+        &self,
+        f: &mut impl FnMut(&K, &V) -> Option<V2>,
+    ) -> Self::OutputMap<V2> {
+        self.iter()
+            .filter_map(|(k, v)| f(k, v).map(|v2| (k.clone(), v2)))
+            .collect()
+    }
+}
+impl<K: Ord, V: Eq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
+    fn symmetric_fold<R>(
+        &self,
+        other: &Self,
+        init: R,
+        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+    ) -> R {
+        self.symmetric_diff(other).fold(init, f)
+    }
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+    #[inline]
+    fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R {
+        self.into_iter().fold(init, f)
     }
 }

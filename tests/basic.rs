@@ -1,5 +1,5 @@
-#[cfg(test)]
-use test_log::test;
+// #[cfg(test)]
+// use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
@@ -534,8 +534,7 @@ fn incr_map_uf() {
     // let list = vec![ 1, 2, 3 ];
     // let sum = list.into_iter().fold(0, |acc, x| acc + x);
 
-    let sum = incr.btreemap_unordered_fold(
-        setter.watch(),
+    let sum = setter.watch().incr_unordered_fold(
         0i32,
         |acc, _, new| acc + new,
         |acc, _, old| acc - old,
@@ -570,8 +569,9 @@ fn incr_map_filter_mapi() {
     b.insert("five", 5);
     b.insert("ten", 10);
     let v = incr.var(b);
-    let filtered = incr
-        .btreemap_filter_mapi(v.watch(), |&k, &v| Some(v).filter(|_| k.len() > 3))
+    let filtered = v
+        .watch()
+        .incr_filter_mapi(|&k, &v| Some(v).filter(|_| k.len() > 3))
         .observe();
     incr.stabilise();
     let x = IntoIterator::into_iter([("five", 5i32)]);
@@ -587,10 +587,9 @@ fn incr_map_primes() {
     b.insert("seven", 7);
     b.insert("ten", 10);
     let v = incr.var(b.clone());
-    let filtered = incr
-        .btreemap_filter_mapi(v.watch(), |_k, &v| {
-            Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes)))
-        })
+    let filtered = v
+        .watch()
+        .incr_filter_map(|&v| Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes))))
         .observe();
 
     incr.stabilise();
@@ -866,4 +865,63 @@ fn state_unsubscribe_after_observer_dropped() {
 
     tracing::debug!("unsubscribing {token:?}");
     incr.unsubscribe(second);
+}
+
+#[test]
+fn incr_map_rc() {
+    let counter = CallCounter::new("mapper");
+    let incr = State::new();
+    let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
+    let var = incr.var(rc);
+    let observer = var
+        .watch()
+        .incr_mapi(|&_k, &v| {
+            counter.increment();
+            v.to_string() + ", world"
+        })
+        .observe();
+    incr.stabilise();
+    assert_eq!(counter, 2);
+    let greetings = observer.expect_value();
+    assert_eq!(greetings.get(&5), Some(&String::from("hello, world")));
+    incr.stabilise();
+    assert_eq!(counter, 2);
+    let rc = Rc::new(BTreeMap::from([(10, "changed")]));
+    // we've saved ourselves some clones already
+    // (from the Var to its watch node, for example)
+    var.set(rc);
+    incr.stabilise();
+    assert_eq!(counter, 3);
+}
+
+#[test]
+fn incr_filter_mapi() {
+    let counter = CallCounter::new("mapper");
+    let incr = State::new();
+    let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
+    let var = incr.var(rc);
+    let observer = var
+        .watch()
+        .incr_filter_mapi(|&k, &v| {
+            counter.increment();
+            if k < 10 {
+                return None;
+            }
+            Some(v.to_string() + ", world")
+        })
+        .observe();
+    incr.stabilise();
+    assert_eq!(counter, 2);
+    let greetings = observer.expect_value();
+    tracing::debug!("greetings were: {greetings:?}");
+    assert_eq!(greetings.get(&5), None);
+    assert_eq!(greetings.get(&10), Some(&"goodbye, world".to_string()));
+    incr.stabilise();
+    assert_eq!(counter, 2);
+    let rc = Rc::new(BTreeMap::from([(10, "changed")]));
+    // we've saved ourselves some clones already
+    // (from the Var to its watch node, for example)
+    var.set(rc);
+    incr.stabilise();
+    assert_eq!(counter, 3);
 }

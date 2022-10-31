@@ -23,6 +23,7 @@ use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
+use self::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use fmt::Debug;
 use refl::refl;
 use std::cell::RefCell;
@@ -290,21 +291,6 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
         })
     }
 
-    // TODO: offer this with fewer clones, using a customised map1 node.
-    pub fn with_old_borrowed<R, F>(&self, mut f: F) -> Incr<'a, R>
-    where
-        R: Value<'a>,
-        F: FnMut(Option<(T, R)>, &T) -> R + 'a,
-    {
-        let old: RefCell<Option<(T, R)>> = RefCell::new(None);
-        self.map(move |a| {
-            let mut o = old.borrow_mut();
-            let r: R = f(o.take(), a);
-            *o = Some((a.clone(), r.clone()));
-            r
-        })
-    }
-
     pub fn with_old<R, F>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
@@ -462,4 +448,132 @@ fn cutoff() {
     let rc = Rc::new(10);
     let v = incr.var(rc.clone());
     let w = v.watch().set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+}
+
+impl<'a, T: Value<'a>> Incr<'a, T> {
+    #[inline]
+    pub fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<'a, T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a> + Eq,
+        F: FnMut(&V) -> V2 + 'a,
+        T::OutputMap<V2>: Value<'a>,
+    {
+        self.incr_filter_mapi(move |_k, v| Some(f(v)))
+    }
+
+    #[inline]
+    pub fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<'a, T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a> + Eq,
+        F: FnMut(&V) -> Option<V2> + 'a,
+        T::OutputMap<V2>: Value<'a>,
+    {
+        self.incr_filter_mapi(move |_k, v| f(v))
+    }
+
+    #[inline]
+    pub fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<'a, T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a> + Eq,
+        F: FnMut(&K, &V) -> V2 + 'a,
+        T::OutputMap<V2>: Value<'a>,
+    {
+        self.incr_filter_mapi(move |k, v| Some(f(k, v)))
+    }
+
+    pub fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<'a, T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        V2: Value<'a> + Eq,
+        F: FnMut(&K, &V) -> Option<V2> + 'a,
+        T::OutputMap<V2>: Value<'a>,
+    {
+        self.with_old(move |old, input| match (old, input.len()) {
+            (o @ _, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
+            (Some((old_in, mut old_out)), _) => {
+                let mut did_change = false;
+                let old_out_mut = old_out.make_mut();
+                let _: &mut <T::OutputMap<V2> as SymmetricMapMap<K, V2>>::UnderlyingMap = old_in
+                    .symmetric_fold(input, old_out_mut, |out, change| {
+                        did_change = true;
+                        match change {
+                            DiffElement::Left((key, _)) => {
+                                out.remove(&key);
+                            }
+                            DiffElement::Right((key, newval)) => {
+                                if let Some(v2) = f(key, newval) {
+                                    out.insert(key.clone(), v2);
+                                } else {
+                                    out.remove(key);
+                                }
+                            }
+                            DiffElement::Unequal((key, _), (_, newval)) => {
+                                if let Some(v2) = f(key, newval) {
+                                    out.insert(key.clone(), v2);
+                                } else {
+                                    out.remove(key);
+                                }
+                            }
+                        }
+                        out
+                    });
+                (old_out, did_change)
+            }
+        })
+        // TODO: clone the R value for the purpose of cutoffs that aren't always/never?
+        // we just went to a whole lot of trouble to avoid cloning R.
+        // .cutoff(Cutoff::Custom())
+    }
+
+    pub fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
+        &self,
+        init: R,
+        mut add: FAdd,
+        mut remove: FRemove,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<'a, R>
+    where
+        T: SymmetricFoldMap<K, V>,
+        K: Value<'a> + Ord,
+        V: Value<'a> + Eq,
+        R: Value<'a>,
+        FAdd: FnMut(R, &K, &V) -> R + 'a,
+        FRemove: FnMut(R, &K, &V) -> R + 'a,
+    {
+        self.with_old(move |old, new_in| match old {
+            None => {
+                let newmap = new_in.nonincremental_fold(init.clone(), |acc, (k, v)| add(acc, k, v));
+                (newmap, true)
+            }
+            Some((old_in, old_out)) => {
+                if revert_to_init_when_empty && new_in.is_empty() {
+                    return (init.clone(), !old_in.is_empty());
+                }
+                let mut did_change = false;
+                let folded: R = old_in.symmetric_fold(new_in, old_out, |mut acc, difference| {
+                    did_change = true;
+                    match difference {
+                        DiffElement::Left((key, value)) => remove(acc, key, value),
+                        DiffElement::Right((key, value)) => add(acc, key, value),
+                        DiffElement::Unequal((lk, lv), (rk, rv)) => {
+                            acc = remove(acc, lk, lv);
+                            add(acc, rk, rv)
+                        }
+                    }
+                });
+                (folded, did_change)
+            }
+        })
+    }
 }

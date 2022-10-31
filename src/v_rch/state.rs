@@ -1,4 +1,4 @@
-use crate::SubscriptionToken;
+use crate::{Cutoff, SubscriptionToken};
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
@@ -177,162 +177,21 @@ impl<'a> State<'a> {
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub fn btreemap_filter_mapi<F, K, V, V2>(
-        self: &Rc<Self>,
-        map: Incr<'a, BTreeMap<K, V>>,
-        mut f: F,
-    ) -> Incr<'a, BTreeMap<K, V2>>
-    where
-        K: Value<'a> + Ord,
-        V: Value<'a> + Eq,
-        V2: Value<'a>,
-        F: FnMut(&K, &V) -> Option<V2> + 'a,
-    {
-        map.with_old_borrowed(move |old, input| {
-            match (old, input.len()) {
-                (_, 0) | (None, _) => input
-                    .iter()
-                    .filter_map(|(k, v)| f(k, v).map(|v2| (k.clone(), v2)))
-                    .collect(),
-                (Some((old_in, mut old_out)), _) => {
-                    let _: &mut BTreeMap<K, V2> =
-                        old_in
-                            .symmetric_diff(input)
-                            .fold(&mut old_out, |out, change| {
-                                match change {
-                                    DiffElement::Left((key, _)) => {
-                                        out.remove(&key);
-                                    }
-                                    DiffElement::Right((key, newval)) => match f(key, newval) {
-                                        None => {
-                                            out.remove(&key);
-                                        }
-                                        Some(v) => {
-                                            out.insert(key.clone(), v);
-                                        }
-                                    },
-                                    DiffElement::Unequal((k1, _), (k2, newval)) => {
-                                        // we get two keys this time. Avoid the clone.
-                                        match f(k1, newval) {
-                                            None => {
-                                                out.remove(k2);
-                                            }
-                                            Some(v) => {
-                                                out.insert(k2.clone(), v);
-                                            }
-                                        }
-                                    }
-                                }
-                                out
-                            });
-                    old_out
-                }
-            }
-        })
-    }
-
-    pub fn btreemap_mapi<F, K, V, V2>(
-        self: &Rc<Self>,
-        map: Incr<'a, BTreeMap<K, V>>,
-        mut f: F,
-    ) -> Incr<'a, BTreeMap<K, V2>>
-    where
-        K: Value<'a> + Ord,
-        V: Value<'a> + Eq,
-        V2: Value<'a>,
-        F: FnMut(&K, &V) -> V2 + 'a,
-    {
-        map.with_old(move |old, input| match (old, input.len()) {
-            (o @ _, 0) | (o @ None, _) => {
-                let newmap = input
-                    .into_iter()
-                    .map(|(k, v)| (k.clone(), f(k, v)))
-                    .collect();
-                (newmap, true)
-            }
-            (Some((old_in, mut old_out)), _) => {
-                let mut did_change = false;
-                let _: &mut BTreeMap<K, V2> =
-                    old_in
-                        .symmetric_diff(input)
-                        .fold(&mut old_out, |out, change| {
-                            match change {
-                                DiffElement::Left((key, _)) => {
-                                    did_change = true;
-                                    out.remove(&key);
-                                }
-                                DiffElement::Right((key, newval)) => {
-                                    did_change = true;
-                                    out.insert(key.clone(), f(key, newval));
-                                }
-                                DiffElement::Unequal((k1, _), (k2, newval)) => {
-                                    did_change = true;
-                                    out.insert(k1.clone(), f(k2, newval));
-                                }
-                            }
-                            out
-                        });
-                (old_out, did_change)
-            }
-        })
-    }
-
-    pub fn btreemap_unordered_fold<FAdd, FRemove, K, V, R>(
-        self: &Rc<Self>,
-        map: Incr<'a, BTreeMap<K, V>>,
-        init: R,
-        mut add: FAdd,
-        mut remove: FRemove,
-        revert_to_init_when_empty: bool,
-    ) -> Incr<'a, R>
-    where
-        K: Value<'a> + Ord,
-        V: Value<'a> + Eq,
-        R: Value<'a>,
-        FAdd: FnMut(R, &K, &V) -> R + 'a,
-        FRemove: FnMut(R, &K, &V) -> R + 'a,
-    {
-        map.with_old(move |old, new_in| match old {
-            None => {
-                let newmap = new_in
-                    .into_iter()
-                    .fold(init.clone(), |acc, (k, v)| add(acc, k, v));
-                (newmap, true)
-            }
-            Some((old_in, old_out)) => {
-                if revert_to_init_when_empty && new_in.is_empty() {
-                    return (init.clone(), !old_in.is_empty());
-                }
-                let mut did_change = false;
-                let folded = old_in
-                    .symmetric_diff(new_in)
-                    .fold(old_out, |mut acc, difference| match difference {
-                        DiffElement::Left((key, value)) => {
-                            did_change = true;
-                            remove(acc, key, value)
-                        }
-                        DiffElement::Right((key, value)) => {
-                            did_change = true;
-                            add(acc, key, value)
-                        }
-                        DiffElement::Unequal((lk, lv), (rk, rv)) => {
-                            did_change = true;
-                            acc = remove(acc, lk, lv);
-                            add(acc, rk, rv)
-                        }
-                    });
-                (folded, did_change)
-            }
-        })
-    }
-
     pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
-        let node = Node::<super::var::VarGenerics<T>>::create(
-            self.weak(),
-            // TODO: use_current_scope option for self.current_scope(),
-            Scope::Top,
-            Kind::Uninitialised,
-        );
+        self.var_in_scope(value, Scope::Top)
+    }
+
+    pub fn var_current_scope<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
+        self.var_in_scope(value, self.current_scope())
+    }
+
+    fn var_in_scope<T: Value<'a>>(
+        self: &Rc<Self>,
+        value: T,
+        scope: Scope<'a>,
+    ) -> public::Var<'a, T> {
+        let node =
+            Node::<super::var::VarGenerics<T>>::create(self.weak(), scope, Kind::Uninitialised);
         let var = Rc::new(Var {
             state: self.weak(),
             set_at: Cell::new(self.stabilisation_num.get()),
