@@ -12,6 +12,7 @@ mod scope;
 mod stabilisation_num;
 mod state;
 mod symmetric_fold;
+mod syntax;
 mod unordered_fold;
 mod var;
 
