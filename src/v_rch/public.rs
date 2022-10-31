@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use std::ops::Deref;
 use std::rc::Rc;
 
 pub use super::cutoff::Cutoff;
@@ -85,19 +86,27 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
 pub struct Var<'a, T: Value<'a>> {
     internal: Rc<InternalVar<'a, T>>,
     sentinel: Rc<()>,
+    // for the Deref impl
+    watch: Incr<'a, T>,
 }
 
 impl<'a, T: Value<'a>> PartialEq for Var<'a, T> {
     fn eq(&self, other: &Self) -> bool {
-        // we don't want these to compare the same.
-        // that's because a Var should always be regarded as having changed.
         self.id() == other.id()
+    }
+}
+
+impl<'a, T: Value<'a>> Deref for crate::Var<'a, T> {
+    type Target = Incr<'a, T>;
+    fn deref(&self) -> &Self::Target {
+        &self.watch
     }
 }
 
 impl<'a, T: Value<'a>> Var<'a, T> {
     pub(crate) fn new(internal: Rc<InternalVar<'a, T>>) -> Self {
         Self {
+            watch: internal.watch(),
             internal,
             sentinel: Rc::new(()),
         }
@@ -116,11 +125,19 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
     #[inline]
     pub fn watch(&self) -> Incr<'a, T> {
-        self.internal.watch()
+        self.watch.clone()
     }
     #[inline]
     pub fn id(&self) -> NodeId {
         self.internal.node_id
+    }
+    // A duplicate to "override" the cutoff function
+    // that our Deref target Incr has, and get the same
+    // kind of function call to return Self.
+    #[inline]
+    pub fn cutoff(self, cutoff: Cutoff<T>) -> Self {
+        self.watch.set_cutoff(cutoff);
+        self
     }
 }
 

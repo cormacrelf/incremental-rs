@@ -10,7 +10,7 @@ fn testit() {
     let incr = State::new();
     let var = incr.var(5);
     var.set(10);
-    let observer = var.watch().observe();
+    let observer = var.observe();
     incr.stabilise();
     assert_eq!(observer.value(), Ok(10));
 }
@@ -19,8 +19,7 @@ fn testit() {
 fn test_map() {
     let incr = State::new();
     let var = incr.var(5);
-    let watch = var.watch();
-    let mapped = watch.map(|x| dbg!(dbg!(x) * 10));
+    let mapped = var.map(|x| dbg!(dbg!(x) * 10));
     let observer = mapped.observe();
     incr.stabilise();
     assert_eq!(observer.value(), Ok(50));
@@ -34,9 +33,7 @@ fn test_map2() {
     let incr = State::new();
     let a = incr.var(5);
     let b = incr.var(8);
-    let a_ = a.watch();
-    let b_ = b.watch();
-    let mapped = a_.map2(&b_, |a, b| dbg!(dbg!(a) + dbg!(b)));
+    let mapped = a.map2(&b, |a, b| dbg!(dbg!(a) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
     assert_eq!(observer.value(), Ok(13));
@@ -52,10 +49,8 @@ fn test_map_map2() {
     let incr = State::new();
     let a = incr.var(5);
     let b = incr.var(8);
-    let a_ = a.watch();
-    let b_ = b.watch();
-    let map_left = a_.map(|a| dbg!(a * 10));
-    let mapped = map_left.map2(&b_, |left, b| dbg!(dbg!(left) + dbg!(b)));
+    let map_left = a.map(|a| dbg!(a * 10));
+    let mapped = map_left.map2(&b, |left, b| dbg!(dbg!(left) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
     assert_eq!(observer.value(), Ok(58));
@@ -82,16 +77,14 @@ fn test_bind_existing() {
     let choose = incr.var(Choose::B);
     let b = incr.var(5);
     let c = incr.var(10);
+    // we move b_ & c_ into the closure.
+    // and we clone one of them each time a changes
     let b_ = b.watch();
     let c_ = c.watch();
-    let bound = choose
-        .watch()
-        // closures gotta be 'static
-        // we move b_ & c_ into the closure. and we clone one of them each time a changes
-        .bind(move |choose| match dbg!(choose) {
-            Choose::B => b_.clone(),
-            Choose::C => c_.clone(),
-        });
+    let bound = choose.bind(move |choose| match dbg!(choose) {
+        Choose::B => b_.clone(),
+        Choose::C => c_.clone(),
+    });
     let obs = bound.observe();
     incr.stabilise();
     assert_eq!(dbg!(obs.value()), Ok(5));
@@ -131,7 +124,6 @@ fn create_var_in_bind() {
     let lhs = incr.var(true);
     let state = incr.clone();
     let o = lhs
-        .watch()
         .bind(move |_| {
             // the difference between creating the variable beforehand
             // and doing it inside the bind is that during the bind, new nodes
@@ -183,9 +175,8 @@ fn bind_changing_heights_outside() {
     // this is a very short graph, height 1.
     let short_graph = incr.var(5).watch();
     // this is a very short graph, height 4.
-    let long_graph = incr.var(10).watch().map(|&x| x).map(|&x| x).map(|&x| x);
+    let long_graph = incr.var(10).map(|&x| x).map(|&x| x).map(|&x| x);
     let obs = is_short
-        .watch()
         // BindMain's height is initially bumped to 3 (short=1, lhs=2, main=3)
         .bind(move |&s| {
             if s {
@@ -223,12 +214,11 @@ fn bind_changing_heights_inside() {
     let is_short = incr.var(true);
     let i2 = incr.clone();
     let obs = is_short
-        .watch()
         .bind(move |&s| {
             if s {
                 i2.var(5).watch()
             } else {
-                i2.var(10).watch().map(|&x| x).map(|&x| x).map(|&x| x)
+                i2.var(10).map(|&x| x).map(|&x| x).map(|&x| x)
             }
         })
         .observe();
@@ -257,9 +247,7 @@ fn observer_ugly() {
     let unused_w = unused.watch();
     let state = incr.clone();
     let v9 = state.var(9);
-    let bound = lhs
-        .watch()
-        .bind(move |&l| if l { v9.watch() } else { unused_w.clone() });
+    let bound = lhs.bind(move |&l| if l { v9.watch() } else { unused_w.clone() });
     let o = bound.observe();
 
     incr.stabilise();
@@ -267,13 +255,13 @@ fn observer_ugly() {
 
     let unrelated = incr.var(100);
     // make sure to add unrelated to recompute heap first
-    let _o = unrelated.watch().observe();
+    let _o = unrelated.observe();
 
     let var = incr.var(10);
-    let o1 = var.watch().map(|a| a + 10).observe();
+    let o1 = var.map(|a| a + 10).observe();
     assert_eq!(o1.value(), Err(ObserverError::NeverStabilised));
 
-    let map = unrelated.watch().map(move |_x| o.value());
+    let map = unrelated.map(move |_x| o.value());
     let o2 = map.observe();
 
     incr.stabilise();
@@ -293,7 +281,7 @@ fn enumerate() {
     let g = std::cell::Cell::new(0);
     let incr = State::new();
     let v = incr.var("first");
-    let m = v.watch().enumerate(|i, &x| {
+    let m = v.enumerate(|i, &x| {
         g.set(i + 1);
         x
     });
@@ -335,7 +323,6 @@ fn map_mutable_inner(global: &mut String) {
     let incr = State::new();
     let setter = incr.var("a");
     let total_len = setter
-        .watch()
         .map(|s| {
             global.push_str(s);
             global.len()
@@ -360,7 +347,6 @@ fn mutable_string() {
     let v = incr.var("hello");
     let mut buf = String::new();
     let o = v
-        .watch()
         // We move buf so it's owned by the closure.
         // We clone buf so we don't have a reference
         // escaping the closure.
@@ -399,7 +385,7 @@ fn bind_fold() {
     let v2 = incr.var(20);
     let v3 = incr.var(30);
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
-    let sum = vars.watch().binds(|incr, vars| {
+    let sum = vars.binds(|incr, vars| {
         let watches: Vec<_> = vars.iter().map(Var::watch).collect();
         incr.fold(watches, 0, |acc, x| acc + x)
     });
@@ -421,7 +407,7 @@ fn unordered_fold() {
     let v2 = incr.var(20);
     let v3 = incr.var(30);
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
-    let sum = vars.watch().binds(|incr, vars| {
+    let sum = vars.binds(|incr, vars| {
         let watches: Vec<Incr<i32>> = vars.iter().map(Var::watch).collect();
         incr.unordered_fold(
             watches,
@@ -491,7 +477,7 @@ fn unordered_fold_inverse() {
     let v2 = incr.var(20);
     let v3 = incr.var(30);
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
-    let sum = vars.watch().binds(|incr, vars| {
+    let sum = vars.binds(|incr, vars| {
         let watches: Vec<_> = vars.iter().map(Var::watch).collect();
         incr.unordered_fold_inverse(
             watches,
@@ -536,12 +522,8 @@ fn incr_map_uf() {
     // let list = vec![ 1, 2, 3 ];
     // let sum = list.into_iter().fold(0, |acc, x| acc + x);
 
-    let sum = setter.watch().incr_unordered_fold(
-        0i32,
-        |acc, _, new| acc + new,
-        |acc, _, old| acc - old,
-        true,
-    );
+    let sum =
+        setter.incr_unordered_fold(0i32, |acc, _, new| acc + new, |acc, _, old| acc - old, true);
 
     let o = sum.observe();
 
@@ -572,7 +554,6 @@ fn incr_map_filter_mapi() {
     b.insert("ten", 10);
     let v = incr.var(b);
     let filtered = v
-        .watch()
         .incr_filter_mapi(|&k, &v| Some(v).filter(|_| k.len() > 3))
         .observe();
     incr.stabilise();
@@ -590,7 +571,6 @@ fn incr_map_primes() {
     b.insert("ten", 10);
     let v = incr.var(b.clone());
     let filtered = v
-        .watch()
         .incr_filter_map(|&v| Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes))))
         .observe();
 
@@ -643,10 +623,10 @@ fn primes_lt(bound: usize) -> Vec<usize> {
 fn var_set_during_stabilisation() {
     let incr = State::new();
     let v = incr.var(10_i32);
+    let v_ = v.clone();
     let o = v
-        .watch()
         .map(move |&x| {
-            v.set(x + 10);
+            v_.set(x + 10);
             x
         })
         .observe();
@@ -663,7 +643,7 @@ fn var_set_during_stabilisation() {
 fn var_update_simple() {
     let incr = State::new();
     let var = incr.var(10);
-    let o = var.watch().observe();
+    let o = var.observe();
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
     var.update(|x| *x += 10);
@@ -676,10 +656,12 @@ fn var_update_during_stabilisation() {
     let incr = State::new();
     let var = incr.var(10);
     let var_ = var.clone();
-    let o = var.watch().map(move |&x| {
-        var_.update(|y| *y += 1);
-        x
-    }).observe();
+    let o = var
+        .map(move |&x| {
+            var_.update(|y| *y += 1);
+            x
+        })
+        .observe();
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
     incr.stabilise();
@@ -696,10 +678,12 @@ fn var_update_before_set_during_stabilisation() {
     let incr = State::new();
     let var = incr.var(10);
     let var_ = var.clone();
-    let o = var.watch().map(move |&x| {
-        var_.set(99);
-        x
-    }).observe();
+    let o = var
+        .map(move |&x| {
+            var_.set(99);
+            x
+        })
+        .observe();
     var.update(|x| *x += 1);
     incr.stabilise();
     assert_eq!(o.value(), Ok(11));
@@ -717,7 +701,6 @@ fn test_constant() {
     assert_eq!(o.value(), Ok(15));
     let flip = incr.var(true);
     let o2 = flip
-        .watch()
         .binds(|incr, &t| {
             if t {
                 incr.constant(5)
@@ -739,44 +722,50 @@ fn two_worlds() {
     let one = State::new();
     let two = State::new();
     let v2 = two.var(9);
-    let v2_ = v2.clone();
-    let _o = one.constant(5).bind(move |_| v2_.watch()).observe();
-    let _o2 = v2.watch().observe();
+    let v2_ = v2.watch();
+    let _o = one.constant(5).bind(move |_| v2_.clone()).observe();
+    let _o2 = v2.observe();
     two.stabilise();
     one.stabilise();
 }
 
 #[test]
 fn cutoff_rc_ptr_eq() {
-    let sum_counter = CallCounter::new("map on rc");
+    let sum_counter = &CallCounter::new("map on rc");
     let incr = State::new();
     let rc: Rc<Vec<i32>> = Rc::new(vec![1i32, 2, 3]);
-    let v = incr.var(rc.clone());
+    let var = incr.var(rc.clone());
+    let v = var.clone();
     // Rc::ptr_eq is a fn(&T, &T) -> bool for any T.
-    // Note that v.watch() always returns the same node. So you can mutate its cutoff.
-    v.watch().set_cutoff(Cutoff::Custom(Rc::ptr_eq));
-    // alternatively, this way. No difference, just this one works inline/returns self
-    let w = v.watch().cutoff(Cutoff::Custom(Rc::ptr_eq));
-    let c = &sum_counter;
-    let o = w
+    // Note that v.watch() always returns the same node.
+    // So you can mutate its cutoff.
+    // And Var derefs to Incr, so you can use the method directly.
+    v.watch().set_cutoff(Cutoff::Never);
+    v.set_cutoff(Cutoff::PartialEq);
+    // alternatively, this way.
+    // No difference, just this one works inline/returns self.
+    // And we're using Rc::ptr_eq! Without any fancy specialization tricks!
+    // Because v already knows what its T is!
+    let o = v
+        .cutoff(Cutoff::Custom(Rc::ptr_eq))
         .map(|list| {
-            c.increment();
+            sum_counter.increment();
             list.iter().sum::<i32>()
         })
         .observe();
 
     incr.stabilise();
-    assert_eq!(sum_counter, 1);
+    assert_eq!(*sum_counter, 1);
 
     // We didn't change the Rc that was returned. So map should not have to call its function again.
-    v.set(rc.clone());
+    var.set(rc.clone());
     incr.stabilise();
-    assert_eq!(sum_counter, 1);
+    assert_eq!(*sum_counter, 1);
     assert_eq!(o.value(), Ok(6));
 
-    v.set(Rc::new(vec![1, 2, 3, 4]));
+    var.set(Rc::new(vec![1, 2, 3, 4]));
     incr.stabilise();
-    assert_eq!(sum_counter, 2);
+    assert_eq!(*sum_counter, 2);
     assert_eq!(o.value(), Ok(10));
 }
 
@@ -787,7 +776,6 @@ fn cutoff_sum() {
     let vec = vec![1i32, 2, 3];
     let v = incr.var(vec);
     let o = v
-        .watch()
         .map(|xs| xs.into_iter().fold(0i32, |acc, &x| acc + x))
         .cutoff(Cutoff::PartialEq) // this is the default.
         // because our first map node checks PartialEq before changing
@@ -815,7 +803,6 @@ fn map_with_old_reuse() {
     let incr = State::new();
     let v = incr.var(100);
     let o = v
-        .watch()
         .map_with_old(|old: Option<Rc<String>>, input: &i32| {
             let mut rc = old.unwrap_or_default();
             if Rc::strong_count(&rc) != 1 {
@@ -844,7 +831,7 @@ fn observer_subscribe_drop() {
     let call_count = CallCounter::new("subscriber");
     let incr = State::new();
     let var = incr.var(10);
-    let observer = var.watch().observe();
+    let observer = var.observe();
     observer
         .subscribe(|value| {
             tracing::info!("received update: {:?}", value);
@@ -870,7 +857,7 @@ fn observer_unsubscribe() {
     let call_count = CallCounter::new("subscriber");
     let incr = State::new();
     let var = incr.var(10);
-    let observer = var.watch().observe();
+    let observer = var.observe();
     let token = observer
         .subscribe(|value| {
             tracing::debug!("received update: {:?}", value);
@@ -893,7 +880,7 @@ fn observer_unsubscribe() {
 fn state_unsubscribe_after_observer_dropped() {
     let incr = State::new();
     let var = incr.var(10);
-    let observer = var.watch().observe();
+    let observer = var.observe();
     let token = observer
         .subscribe(|value| {
             tracing::debug!("received update: {:?}", value);
@@ -924,7 +911,6 @@ fn incr_map_rc() {
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
     let observer = var
-        .watch()
         .incr_mapi(|&_k, &v| {
             counter.increment();
             v.to_string() + ", world"
@@ -951,7 +937,6 @@ fn incr_filter_mapi() {
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
     let observer = var
-        .watch()
         .incr_filter_mapi(|&k, &v| {
             counter.increment();
             if k < 10 {
@@ -990,45 +975,54 @@ fn becomes_unnecessary() {
 
     let zero = incr.stats();
     let v = incr.var(10);
-    let maps = v.watch().map(|&x| x).map(|&x| x);
-    assert!(matches!(incr.stats() - zero, StatsDiff {
-        created: 3,
-        became_necessary: 0,
-        became_unnecessary: 0,
-        necessary: 0,
-        ..
-    }));
+    let maps = v.map(|&x| x).map(|&x| x);
+    assert!(matches!(
+        incr.stats() - zero,
+        StatsDiff {
+            created: 3,
+            became_necessary: 0,
+            became_unnecessary: 0,
+            necessary: 0,
+            ..
+        }
+    ));
 
     let o = maps.observe();
     let diff = stabilise_diff(&incr, "after observe maps & stabilise");
-    assert!(matches!(diff, StatsDiff {
-        created: 0,
-        became_necessary: 3,
-        became_unnecessary: 0,
-        necessary: 3,
-        ..
-    }));
+    assert!(matches!(
+        diff,
+        StatsDiff {
+            created: 0,
+            became_necessary: 3,
+            became_unnecessary: 0,
+            necessary: 3,
+            ..
+        }
+    ));
 
     drop(o);
     let diff = stabilise_diff(&incr, "dropping the maps observer");
-    assert!(matches!(diff, StatsDiff {
-        created: 0,
-        became_necessary: 0,
-        became_unnecessary: 3,
-        necessary: -3,
-        ..
-    }));
+    assert!(matches!(
+        diff,
+        StatsDiff {
+            created: 0,
+            became_necessary: 0,
+            became_unnecessary: 3,
+            necessary: -3,
+            ..
+        }
+    ));
     assert_eq!(incr.stats().became_unnecessary, 3);
     assert_eq!(incr.stats().necessary, 0);
 
     let useit = incr.var(false);
-    let bind = useit
-        .watch()
-        .binds(move |incr, &in_use| if in_use {
+    let bind = useit.binds(move |incr, &in_use| {
+        if in_use {
             maps.clone()
         } else {
             incr.constant(5)
-        });
+        }
+    });
 
     let diff = stabilise_diff(&incr, "after creating bind (no diff)");
     assert_eq!(diff, StatsDiff::default());
@@ -1036,37 +1030,46 @@ fn becomes_unnecessary() {
     // This creates an extra node incr.constant(5).
     let obs = bind.observe();
     let diff = stabilise_diff(&incr, "after observing bind");
-    assert!(matches!(diff, StatsDiff {
-        // i.e. nodes created during stabilise
-        created: 1,
-        became_necessary: 4,
-        became_unnecessary: 0,
-        necessary: 4,
-        ..
-    }));
+    assert!(matches!(
+        diff,
+        StatsDiff {
+            // i.e. nodes created during stabilise
+            created: 1,
+            became_necessary: 4,
+            became_unnecessary: 0,
+            necessary: 4,
+            ..
+        }
+    ));
     assert_eq!(incr.stats().necessary, 4);
     assert_eq!(obs.value(), Ok(5));
 
     // Now we swap the bind's output from a constant to the three-node map
     useit.set(true);
     let diff = stabilise_diff(&incr, "after setting bind input to true");
-    assert!(matches!(diff, StatsDiff {
-        created: 0,
-        became_necessary: 3,
-        became_unnecessary: 1,
-        ..
-    }));
+    assert!(matches!(
+        diff,
+        StatsDiff {
+            created: 0,
+            became_necessary: 3,
+            became_unnecessary: 1,
+            ..
+        }
+    ));
     assert_eq!(incr.stats().necessary, 6);
     assert_eq!(obs.value(), Ok(10));
 
     drop(obs);
     let diff = stabilise_diff(&incr, "after dropping bind observer");
-    assert!(matches!(diff, StatsDiff {
-        created: 0,
-        became_necessary: 0,
-        became_unnecessary: 6,
-        necessary: -6,
-        ..
-    }));
+    assert!(matches!(
+        diff,
+        StatsDiff {
+            created: 0,
+            became_necessary: 0,
+            became_unnecessary: 6,
+            necessary: -6,
+            ..
+        }
+    ));
     assert_eq!(incr.stats().necessary, 0);
 }
