@@ -175,12 +175,13 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
                 end_p_i.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
                 ci.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
             }
-            // unlink last_parent_index & child_index
-            parent_i.my_parent_index_in_child_at_index[child_index as usize] = -1;
-            ci.my_child_index_in_parent_at_index[last_parent_index] = -1;
-            // now do what we just did but super easily in the actual Vec
-            child_parents.swap_remove(parent_index as usize);
         }
+        // unlink last_parent_index & child_index
+        parent_i.my_parent_index_in_child_at_index[child_index as usize] = -1;
+        ci.my_child_index_in_parent_at_index[last_parent_index] = -1;
+
+        // now do what we just did but super easily in the actual Vec
+        child_parents.swap_remove(parent_index as usize);
     }
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.set(cutoff)
@@ -472,11 +473,10 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         self.changed_at.get() > parent.recomputed_at().get()
     }
     fn is_necessary(&self) -> bool {
-        let i = self.inner().borrow();
-        self.parents.borrow().len() > 0
+        !self.parents.borrow().is_empty()
             || !self.observers.borrow().is_empty()
             // || kind is freeze
-            || i.force_necessary
+            || self.inner().borrow().force_necessary
     }
     fn needs_to_be_computed(&self) -> bool {
         self.is_necessary() && self.is_stale()
