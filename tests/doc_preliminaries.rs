@@ -58,7 +58,7 @@ mod projections_and_cutoffs {
             a: Rc::new(vec![3, 2]),
             b: (1, 4),
         });
-        let result = z.watch().pipe(sumproduct_can_cutoff).observe();
+        let result = z.pipe(sumproduct_can_cutoff).observe();
 
         // This creates six nodes total.
         assert_eq!(incr.stats().created, 6);
@@ -128,7 +128,7 @@ mod projections_and_cutoffs {
             a: Rc::new(vec![3, 2]),
             b: (1, 4),
         });
-        let result = z.watch().pipe(sumproduct_smaller_graph).observe();
+        let result = z.pipe(sumproduct_smaller_graph).observe();
 
         let diff = stabilise_diff(&incr, "after observing sumproduct_smaller_graph");
         assert_eq!(incr.stats().created, 4);
