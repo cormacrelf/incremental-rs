@@ -146,7 +146,7 @@ thread_local! {
 #[cfg(test)]
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        tracing::info!("Dropping var with id {:?}", self.node_id);
+        tracing::trace!("Dropping var with id {:?}", self.node_id);
         DID_DROP.with(|cell| cell.set(cell.get() + 1));
     }
 }

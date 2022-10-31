@@ -1,5 +1,8 @@
+use crate::SubscriptionToken;
+
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
+use super::node_update::NodeUpdateDelayed;
 use super::symmetric_fold::{DiffElement, SymmetricDiffMap, SymmetricDiffMapOwned};
 use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value, WeakNode};
@@ -34,6 +37,8 @@ pub struct State<'a> {
     pub(crate) num_nodes_invalidated: Cell<usize>,
     pub(crate) num_active_observers: Cell<usize>,
     pub(crate) propagate_invalidity: RefCell<Vec<WeakNode<'a>>>,
+    pub(crate) run_on_update_handlers: RefCell<Vec<(WeakNode<'a>, NodeUpdateDelayed)>>,
+    pub(crate) handle_after_stabilisation: RefCell<Vec<WeakNode<'a>>>,
     pub(crate) new_observers: RefCell<Vec<WeakObserver<'a>>>,
     // use a strong reference, because the InternalObserver for a dropped public::Observer
     // should stay alive until we've cleaned up after it.
@@ -103,6 +108,8 @@ impl<'a> State<'a> {
             current_scope: RefCell::new(Scope::Top),
             set_during_stabilisation: RefCell::new(vec![]),
             dead_vars: RefCell::new(vec![]),
+            handle_after_stabilisation: RefCell::new(vec![]),
+            run_on_update_handlers: RefCell::new(vec![]),
             _phantom: Default::default(),
             #[cfg(debug_assertions)]
             only_in_debug: OnlyInDebug::default(),
@@ -288,8 +295,8 @@ impl<'a> State<'a> {
         map.with_old(move |old, new_in| match old {
             None => {
                 let newmap = new_in
-                .into_iter()
-                .fold(init.clone(), |acc, (k, v)| add(acc, k, v));
+                    .into_iter()
+                    .fold(init.clone(), |acc, (k, v)| add(acc, k, v));
                 (newmap, true)
             }
             Some((old_in, old_out)) => {
@@ -297,10 +304,10 @@ impl<'a> State<'a> {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded = old_in
-                    .symmetric_diff_owned(new_in)
-                    .fold(old_out, |mut acc, difference| {
-                        match difference {
+                let folded =
+                    old_in
+                        .symmetric_diff_owned(new_in)
+                        .fold(old_out, |mut acc, difference| match difference {
                             DiffElement::Left((key, value)) => {
                                 did_change = true;
                                 remove(acc, key, value)
@@ -314,8 +321,7 @@ impl<'a> State<'a> {
                                 acc = remove(acc, lk, lv);
                                 add(acc, rk, rv)
                             }
-                        }
-                    });
+                        });
                 (folded, did_change)
             }
         })
@@ -356,7 +362,6 @@ impl<'a> State<'a> {
 
     fn add_new_observers(&self) {
         let mut no = self.new_observers.borrow_mut();
-        let mut ao = self.all_observers.borrow_mut();
         for weak in no.drain(..) {
             let Some(obs) = weak.upgrade() else { continue };
             match obs.state().get() {
@@ -364,17 +369,20 @@ impl<'a> State<'a> {
                 ObserverState::Unlinked => {}
                 ObserverState::Created => {
                     obs.state().set(ObserverState::InUse);
-                    let src: NodeRef<'a> = obs.observing();
-                    let was_necessary = src.is_necessary();
+                    let node = obs.observing();
+                    let was_necessary = node.is_necessary();
                     {
-                        let inner = src.inner();
-                        let mut i = inner.borrow_mut();
-                        i.observers.insert(obs.id(), weak.clone());
+                        let mut ao = self.all_observers.borrow_mut();
+                        ao.insert(obs.id(), obs.clone());
                     }
-                    ao.insert(obs.id(), obs);
-                    debug_assert!(src.is_necessary());
+                    obs.add_to_observed_node();
+                    /* By adding [internal_observer] to [observing.observers], we may have added
+                    on-update handlers to [observing].  We need to handle [observing] after this
+                    stabilization to give those handlers a chance to run. */
+                    node.handle_after_stabilisation();
+                    debug_assert!(node.is_necessary());
                     if !was_necessary {
-                        src.became_necessary_propagate();
+                        node.became_necessary_propagate();
                     }
                 }
             }
@@ -393,11 +401,7 @@ impl<'a> State<'a> {
             // get a strong ref to the node, before we drop its owning InternalObserver
             let observing = obs.observing();
             {
-                // remove from the observed node's list of observers
-                let inner = observing.inner();
-                let mut i = inner.borrow_mut();
-                i.observers.remove(&obs.id());
-
+                obs.remove_from_observed_node();
                 // remove from all_observers (this finally drops the InternalObserver)
                 let mut ao = self.all_observers.borrow_mut();
                 ao.remove(&obs.id());
@@ -415,32 +419,52 @@ impl<'a> State<'a> {
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
-        let mut stack = self.set_during_stabilisation.borrow_mut();
-        while let Some(var) = stack.pop() {
-            let Some(var) = var.upgrade() else {
-                continue
-            };
-            tracing::debug!("set_during_stabilisation: found var with {:?}", var.id());
-            var.set_var_stabilise_end();
-        }
-        drop(stack);
+        tracing::info_span!("set_during_stabilisation").in_scope(|| {
+            let mut stack = self.set_during_stabilisation.borrow_mut();
+            while let Some(var) = stack.pop() {
+                let Some(var) = var.upgrade() else {
+                    continue
+                };
+                tracing::debug!("set_during_stabilisation: found var with {:?}", var.id());
+                var.set_var_stabilise_end();
+            }
+        });
         // we may have the same var appear in the set_during_stabilisation stack,
         // and also the dead_vars stack. That's ok! Being in dead_vars means it will
         // never be set again, as the public::Var is gone & nobody can set it from
         // outside any more. So killing the Var's internal reference to the watch Node
         // will not be a problem, because the last time that was needed was back a few
         // lines ago when we ran var.set_var_stabilise_end().
-        let mut stack = self.dead_vars.borrow_mut();
-        for var in stack.drain(..) {
-            let Some(var) = var.upgrade() else {
-                continue
-            };
-            tracing::debug!("dead_vars: found var with {:?}", var.id());
-            var.break_rc_cycle();
-        }
-        drop(stack);
-        // while not (Stack.is_empty t.handle_after_stabilization) do
-        self.status.set(IncrStatus::RunningOnUpdateHandlers);
+        tracing::info_span!("dead_vars").in_scope(|| {
+            let mut stack = self.dead_vars.borrow_mut();
+            for var in stack.drain(..) {
+                let Some(var) = var.upgrade() else {
+                    continue
+                };
+                tracing::debug!("dead_vars: found var with {:?}", var.id());
+                var.break_rc_cycle();
+            }
+        });
+        tracing::info_span!("handle_after_stabilisation").in_scope(|| {
+            let mut stack = self.handle_after_stabilisation.borrow_mut();
+            for node in stack.drain(..).filter_map(|node| node.upgrade()) {
+                node.is_in_handle_after_stabilisation().set(false);
+                let node_update = node.node_update();
+                let mut run_queue = self.run_on_update_handlers.borrow_mut();
+                run_queue.push((node.weak(), node_update))
+            }
+        });
+        tracing::info_span!("run_on_update_handlers").in_scope(|| {
+            self.status.set(IncrStatus::RunningOnUpdateHandlers);
+            let now = self.stabilisation_num.get();
+            let mut stack = self.run_on_update_handlers.borrow_mut();
+            for (node, node_update) in stack
+                .drain(..)
+                .filter_map(|(node, node_update)| node.upgrade().map(|n| (n, node_update)))
+            {
+                node.run_on_update_handlers(node_update, now)
+            }
+        });
         self.status.set(IncrStatus::NotStabilising);
     }
 
@@ -499,6 +523,13 @@ impl<'a> State<'a> {
                     }
                 }
             }
+        }
+    }
+
+    pub fn unsubscribe(&self, token: SubscriptionToken) {
+        let all_obs = self.all_observers.borrow();
+        if let Some(obs) = all_obs.get(&token.observer_id()) {
+            obs.unsubscribe(token).unwrap();
         }
     }
 }

@@ -1,16 +1,18 @@
 // use enum_dispatch::enum_dispatch;
 
-use crate::Value;
 use crate::v_rch::MapWithOld;
+use crate::{SubscriptionToken, Value};
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
-use super::internal_observer::{ErasedObserver, ObserverId};
+use super::internal_observer::{ErasedObserver, InternalObserver, ObserverId, WeakObserver};
 use super::kind::{Kind, NodeGenerics};
+use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
 use super::state::State;
 use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
+use std::cell::Ref;
 use std::collections::HashMap;
 use std::rc::Weak;
 
@@ -40,8 +42,7 @@ impl NodeId {
 /// Needs a better name but ok
 #[derive(Debug)]
 pub(crate) struct NodeInner<'a> {
-    pub state: Weak<State<'a>>,
-    num_on_update_handlers: i32,
+    pub(crate) state: Weak<State<'a>>,
     // TODO: optimise the one parent case
     // pub(crate) num_parents: i32,
     // parent0
@@ -49,7 +50,6 @@ pub(crate) struct NodeInner<'a> {
     pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
     pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
     pub(crate) force_necessary: bool,
-    pub(crate) observers: HashMap<ObserverId, Weak<dyn ErasedObserver<'a>>>,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
@@ -62,11 +62,14 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub old_height: Cell<i32>,
     pub height_in_recompute_heap: Cell<i32>,
     pub height_in_adjust_heights_heap: Cell<i32>,
+    pub is_in_handle_after_stabilisation: Cell<bool>,
+    pub num_on_update_handlers: Cell<i32>,
     pub(crate) created_in: Scope<'a>,
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
     weak_self: Weak<Self>,
     pub(crate) parents: RefCell<Vec<ParentRef<'a, G::R>>>,
+    pub(crate) observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
     pub(crate) cutoff: Cell<Cutoff<G::R>>,
 }
 
@@ -80,6 +83,9 @@ pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
     fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
     fn set_cutoff(&self, cutoff: Cutoff<R>);
+    fn value_as_ref(&self) -> Option<Ref<R>>;
+    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<'a, R>>);
+    fn remove_observer(&self, id: ObserverId);
 }
 
 impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
@@ -88,6 +94,10 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     }
     fn latest(&self) -> G::R {
         self.value_opt.borrow().clone().unwrap()
+    }
+    fn value_as_ref(&self) -> Option<Ref<G::R>> {
+        let v = self.value_opt.borrow();
+        Ref::filter_map(v, |v| v.as_ref()).ok()
     }
     fn value_opt(&self) -> Option<G::R> {
         self.value_opt.borrow().clone()
@@ -175,6 +185,14 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.set(cutoff)
     }
+    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<'a, G::R>>) {
+        let mut os = self.observers.borrow_mut();
+        os.insert(id, weak);
+    }
+    fn remove_observer(&self, id: ObserverId) {
+        let mut os = self.observers.borrow_mut();
+        os.remove(&id);
+    }
 }
 
 pub(crate) trait ParentNode<'a, I> {
@@ -248,6 +266,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32>;
+    fn is_in_handle_after_stabilisation(&self) -> &Cell<bool>;
     fn ensure_parent_height_requirements(
         &self,
         ahh: &mut AdjustHeightsHeap<'a>,
@@ -289,6 +308,11 @@ pub(crate) trait ErasedNode<'a>: Debug {
         op: &NodeRef<'a>,
     );
     fn created_in(&self) -> Scope<'a>;
+    fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum);
+    fn maybe_handle_after_stabilisation(&self);
+    fn handle_after_stabilisation(&self);
+    fn num_on_update_handlers(&self) -> &Cell<i32>;
+    fn node_update(&self) -> NodeUpdateDelayed;
 }
 
 impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
@@ -333,9 +357,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*k {
             Kind::Uninitialised => panic!(),
             Kind::Invalid | Kind::Constant(_) | Kind::Var(_) => false,
-            Kind::ArrayFold(..) | Kind::UnorderedArrayFold(..) | Kind::Map(..) | Kind::MapWithOld(..) | Kind::Map2(..) => {
-                self.has_invalid_child()
-            }
+            Kind::ArrayFold(..)
+            | Kind::UnorderedArrayFold(..)
+            | Kind::Map(..)
+            | Kind::MapWithOld(..)
+            | Kind::Map2(..) => self.has_invalid_child(),
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
             reason as above).  This is equivalent to [has_invalid_child t]. */
             Kind::BindLhsChange(_, bind) => {
@@ -377,6 +403,9 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32> {
         &self.height_in_adjust_heights_heap
     }
+    fn is_in_handle_after_stabilisation(&self) -> &Cell<bool> {
+        &self.is_in_handle_after_stabilisation
+    }
     fn ensure_parent_height_requirements(
         &self,
         ahh: &mut AdjustHeightsHeap<'a>,
@@ -395,7 +424,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
     fn set_height(&self, height: i32) {
-        tracing::debug!("node id={:?}, set height to {height}", self.id);
+        tracing::trace!("node id={:?}, set height to {height}", self.id);
         // TODO: checks
         self.height.set(height);
     }
@@ -445,7 +474,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn is_necessary(&self) -> bool {
         let i = self.inner().borrow();
         self.parents.borrow().len() > 0
-            || !i.observers.is_empty()
+            || !self.observers.borrow().is_empty()
             // || kind is freeze
             || i.force_necessary
     }
@@ -467,7 +496,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let t = self.state();
         t.num_nodes_became_necessary
             .set(t.num_nodes_became_necessary.get() + 1);
-        // if node.num_on_update_handlers > 0 then handle_after_stabilization node;
+        self.maybe_handle_after_stabilisation();
         /* Since [node] became necessary, to restore the invariant, we need to:
         - add parent pointers to [node] from its children.
         - set [node]'s height.
@@ -500,7 +529,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         if self.is_stale() {
             let mut rch = t.recompute_heap.borrow_mut();
             rch.insert(self.packed());
-            tracing::debug!("===> added self(id={:?}) to rch", self.id);
         }
     }
     fn check_if_unnecessary(&self) {
@@ -512,7 +540,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         let t = self.state();
         t.num_nodes_became_unnecessary
             .set(t.num_nodes_became_unnecessary.get() + 1);
-        // if node.num_on_update_handlers > 0 then handle_after_stabilization node;
+        self.maybe_handle_after_stabilisation();
         self.set_height(-1);
         self.remove_children();
         /* (match node.kind with
@@ -744,7 +772,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn invalidate_node(&self) {
         if self.is_valid() {
             let t = self.state();
-            // if self.num_on_update_handlers > 0 then handle_after_stabilization self;
+            self.maybe_handle_after_stabilisation();
             *self.value_opt.borrow_mut() = None;
             debug_assert!(self.old_value_opt.borrow().is_none());
             self.changed_at.set(t.stabilisation_num.get());
@@ -812,6 +840,47 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn created_in(&self) -> Scope<'a> {
         self.created_in.clone()
     }
+    fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum) {
+        let input = self.as_input();
+        let observers = self.observers.borrow();
+        for (_id, obs) in observers.iter() {
+            let Some(obs) = obs.upgrade() else { continue };
+            obs.run_all(&input, node_update, now)
+        }
+    }
+    fn maybe_handle_after_stabilisation(&self) {
+        if self.num_on_update_handlers.get() > 0 {
+            self.handle_after_stabilisation();
+        }
+    }
+
+    fn handle_after_stabilisation(&self) {
+        let is_in_stack = &self.is_in_handle_after_stabilisation;
+        if !is_in_stack.get() {
+            let t = self.state();
+            is_in_stack.set(true);
+            let mut stack = t.handle_after_stabilisation.borrow_mut();
+            stack.push(self.weak());
+        }
+    }
+
+    fn num_on_update_handlers(&self) -> &Cell<i32> {
+        &self.num_on_update_handlers
+    }
+
+    fn node_update(&self) -> NodeUpdateDelayed {
+        if !self.is_valid() {
+            NodeUpdateDelayed::Invalidated
+        } else if !self.is_necessary() {
+            NodeUpdateDelayed::Unnecessary
+        } else {
+            let val = self.value_as_ref();
+            match val {
+                Some(_) => NodeUpdateDelayed::Changed,
+                None => NodeUpdateDelayed::Necessary,
+            }
+        }
+    }
 }
 
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
@@ -838,11 +907,9 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             weak_self: Weak::<Self>::new(),
             inner: RefCell::new(NodeInner {
                 state,
-                observers: Default::default(),
                 my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
                 my_child_index_in_parent_at_index: vec![-1],
                 force_necessary: false,
-                num_on_update_handlers: 0,
             }),
             created_in,
             changed_at: Cell::new(StabilisationNum::init()),
@@ -850,11 +917,14 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             old_height: Cell::new(-1),
             height_in_recompute_heap: Cell::new(-1),
             height_in_adjust_heights_heap: Cell::new(-1),
+            is_in_handle_after_stabilisation: false.into(),
+            num_on_update_handlers: 0.into(),
             recomputed_at: Cell::new(StabilisationNum::init()),
             value_opt: RefCell::new(None),
             old_value_opt: RefCell::new(None),
             kind: RefCell::new(kind),
             parents: vec![].into(),
+            observers: HashMap::new().into(),
             cutoff: Cutoff::PartialEq.into(),
         }
         .into_rc()
@@ -868,7 +938,12 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         self.maybe_change_value_manual(old_value_opt, value, should_change)
     }
 
-    fn maybe_change_value_manual(&self, old_value_opt: Option<G::R>, value: G::R, should_change: bool) {
+    fn maybe_change_value_manual(
+        &self,
+        old_value_opt: Option<G::R>,
+        value: G::R,
+        should_change: bool,
+    ) {
         if should_change {
             let inner = self.inner.borrow();
             let istate = inner.state.upgrade().unwrap();
@@ -877,10 +952,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             istate
                 .num_nodes_changed
                 .set(istate.num_nodes_changed.get() + 1);
-            /* if node.num_on_update_handlers > 0
-            then (
-            node.old_value_opt <- old_value_opt;
-            handle_after_stabilization node); */
+            self.maybe_handle_after_stabilisation();
             let parents = self.parents.borrow();
             for (parent_index, parent) in parents.iter().enumerate() {
                 let Some(p) = parent.upgrade_erased() else { continue };
@@ -976,13 +1048,11 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         while ci.my_child_index_in_parent_at_index.len() <= parent_index as usize {
             ci.my_child_index_in_parent_at_index.push(-1);
         }
-        tracing::debug!("ci_in_pia[{parent_index}] = {child_index}");
         ci.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
 
         while parent_i.my_parent_index_in_child_at_index.len() <= child_index as usize {
             parent_i.my_parent_index_in_child_at_index.push(-1);
         }
-        tracing::debug!("pi_in_cia[{child_index}] = {parent_index}");
         parent_i.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
 
         child_parents.push(parent_weak);
@@ -1061,5 +1131,5 @@ fn test_node_size() {
     let state = State::new();
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
-    assert_eq!(core::mem::size_of_val(&*node), 344);
+    assert_eq!(core::mem::size_of_val(&*node), 376);
 }

@@ -2,9 +2,11 @@ use core::fmt::Debug;
 use std::rc::Rc;
 
 pub use super::cutoff::Cutoff;
-pub use super::internal_observer::ObserverError;
 use super::internal_observer::{ErasedObserver, InternalObserver};
+pub use super::internal_observer::{ObserverError, SubscriptionToken};
 use super::node::NodeId;
+pub use super::node_update::NodeUpdate;
+use super::node_update::OnUpdateHandler;
 pub use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
 pub use super::Incr;
@@ -31,12 +33,34 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
     pub fn expect_value(&self) -> T {
         self.internal.value().unwrap()
     }
+
+    /// Equivalent of `observer_on_update_exn`
+    pub fn subscribe(
+        &self,
+        on_update: impl FnMut(NodeUpdate<&T>) + 'a,
+    ) -> Result<SubscriptionToken, ObserverError> {
+        let handler_fn = Box::new(on_update);
+        let state = self
+            .internal
+            .incr_state()
+            .ok_or(ObserverError::ObservingInvalid)?;
+        let now = state.stabilisation_num.get();
+        let handler = OnUpdateHandler::new(now, handler_fn);
+        let token = self.internal.subscribe(handler)?;
+        let node = self.internal.observing();
+        node.handle_after_stabilisation();
+        Ok(token)
+    }
+
+    #[inline]
+    pub fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError> {
+        self.internal.unsubscribe(token)
+    }
 }
 
 impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
     fn drop(&mut self) {
-        // all_observers holds another strong reference to internal.
-        // but we can be _sure_ we're the last public::Observer by using a sentinel Rc.
+        // all_observers holds another strong reference to internal. but we can be _sure_ we're the last public::Observer by using a sentinel Rc.
         if Rc::strong_count(&self.sentinel) <= 1 {
             if let Some(state) = self.internal.incr_state() {
                 // causes it to eventually be dropped
@@ -97,7 +121,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
 
 impl<'a, T: Value<'a>> Drop for Var<'a, T> {
     fn drop(&mut self) {
-        tracing::debug!("dropping public::Var with id {:?}", self.id());
+        tracing::trace!("dropping public::Var with id {:?}", self.id());
         // one is for us; one is for the watch node.
         // if it's down to 2 (i.e. all public::Vars have been dropped),
         // then we need to break the Rc cycle between Var & Node (via Kind::Var(Rc<...>)).

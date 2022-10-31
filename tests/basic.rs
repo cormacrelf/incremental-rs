@@ -278,12 +278,12 @@ fn observer_ugly() {
     // ok none of this is guaranteed to work but i'm just trying to break it
     lhs.set(false);
     unused.set(700);
-    assert_eq!(o2.value(), Ok(Ok(9)));
+    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(Ok(9)));
+    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
     unrelated.set(99);
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(Ok(700)));
+    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
 }
 
 #[test]
@@ -714,7 +714,7 @@ fn cutoff_rc_ptr_eq() {
             c.increment();
             list.iter().sum::<i32>()
         })
-.observe();
+        .observe();
 
     incr.stabilise();
     assert_eq!(sum_counter, 1);
@@ -783,11 +783,87 @@ fn map_with_old_reuse() {
         // .map(|x| x)
         .observe();
 
-    o.subscribe();
-
     incr.stabilise();
     assert_eq!(o.expect_value().to_string(), "100".to_string());
     v.set(200);
     incr.stabilise();
     assert_eq!(o.expect_value().to_string(), "200".to_string());
+}
+
+#[test]
+fn observer_subscribe_drop() {
+    let call_count = CallCounter::new("subscriber");
+    let incr = State::new();
+    let var = incr.var(10);
+    let observer = var.watch().observe();
+    observer
+        .subscribe(|value| {
+            tracing::info!("received update: {:?}", value);
+            call_count.increment();
+        })
+        .unwrap();
+    incr.stabilise();
+    assert_eq!(call_count, 1);
+    incr.stabilise();
+    assert_eq!(call_count, 1);
+    var.set(11);
+    incr.stabilise();
+    assert_eq!(call_count, 2);
+
+    drop(observer);
+    var.set(12);
+    incr.stabilise();
+    assert_eq!(call_count, 2);
+}
+
+#[test]
+fn observer_unsubscribe() {
+    let call_count = CallCounter::new("subscriber");
+    let incr = State::new();
+    let var = incr.var(10);
+    let observer = var.watch().observe();
+    let token = observer
+        .subscribe(|value| {
+            tracing::debug!("received update: {:?}", value);
+            call_count.increment();
+        })
+        .unwrap();
+    incr.stabilise();
+    assert_eq!(call_count, 1);
+    var.set(11);
+    incr.stabilise();
+    assert_eq!(call_count, 2);
+
+    observer.unsubscribe(token).unwrap();
+    var.set(12);
+    incr.stabilise();
+    assert_eq!(call_count, 2); // crux: still 2.
+}
+
+#[test]
+fn state_unsubscribe_after_observer_dropped() {
+    let incr = State::new();
+    let var = incr.var(10);
+    let observer = var.watch().observe();
+    let token = observer
+        .subscribe(|value| {
+            tracing::debug!("received update: {:?}", value);
+        })
+        .unwrap();
+    let second = observer.subscribe(|_| ()).unwrap();
+    incr.stabilise();
+    var.set(11);
+    incr.stabilise();
+
+    // crux
+    drop(observer);
+    tracing::debug!("unsubscribing {token:?}");
+    // this should not panic
+    incr.unsubscribe(token);
+
+    var.set(12);
+    incr.stabilise();
+
+    tracing::debug!("unsubscribing {token:?}");
+    incr.unsubscribe(second);
 }

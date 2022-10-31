@@ -6,6 +6,7 @@ mod cutoff;
 mod internal_observer;
 mod kind;
 mod node;
+mod node_update;
 mod recompute_heap;
 mod scope;
 mod stabilisation_num;
@@ -342,7 +343,7 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
                 input: self.clone().node,
                 mapper: f.into(),
                 _p: Default::default(),
-            })
+            }),
         );
         Incr { node }
     }
