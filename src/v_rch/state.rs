@@ -21,6 +21,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::marker::PhantomData;
+use std::ops::Sub;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
@@ -31,6 +32,7 @@ pub struct State<'a> {
     pub(crate) status: Cell<IncrStatus>,
     pub(crate) num_var_sets: Cell<usize>,
     pub(crate) num_nodes_recomputed: Cell<usize>,
+    pub(crate) num_nodes_created: Cell<usize>,
     pub(crate) num_nodes_changed: Cell<usize>,
     pub(crate) num_nodes_became_necessary: Cell<usize>,
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
@@ -95,6 +97,7 @@ impl<'a> State<'a> {
             stabilisation_num: Cell::new(StabilisationNum(0)),
             num_var_sets: Cell::new(0),
             num_nodes_recomputed: Cell::new(0),
+            num_nodes_created: Cell::new(0),
             num_nodes_changed: Cell::new(0),
             num_nodes_became_necessary: Cell::new(0),
             num_nodes_became_unnecessary: Cell::new(0),
@@ -389,6 +392,77 @@ impl<'a> State<'a> {
         if let Some(obs) = all_obs.get(&token.observer_id()) {
             obs.unsubscribe(token).unwrap();
         }
+    }
+
+    pub fn stats(&self) -> Stats {
+        Stats {
+            created: self.num_nodes_created.get(),
+            changed: self.num_nodes_changed.get(),
+            recomputed: self.num_nodes_recomputed.get(),
+            invalidated: self.num_nodes_invalidated.get(),
+            became_necessary: self.num_nodes_became_necessary.get(),
+            became_unnecessary: self.num_nodes_became_unnecessary.get(),
+            necessary: self.num_nodes_became_necessary.get() - self.num_nodes_became_unnecessary.get(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Stats {
+    pub created: usize,
+    pub changed: usize,
+    pub recomputed: usize,
+    pub invalidated: usize,
+    pub became_necessary: usize,
+    pub became_unnecessary: usize,
+    pub necessary: usize,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub struct StatsDiff {
+    pub created: isize,
+    pub changed: isize,
+    pub recomputed: isize,
+    pub invalidated: isize,
+    pub became_necessary: isize,
+    pub became_unnecessary: isize,
+    pub necessary: isize,
+}
+
+impl Debug for StatsDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut f = f.debug_struct("StatsDiff");
+        let mut field = |name: &str, x: isize| if x != 0 { f.field(name, &x); };
+        field("created", self.created);
+        field("changed", self.changed);
+        field("recomputed", self.recomputed);
+        field("invalidated", self.invalidated);
+        field("became_necessary", self.became_necessary);
+        field("became_unnecessary", self.became_unnecessary);
+        field("necessary", self.necessary);
+        drop(field);
+        f.finish()
+    }
+}
+
+impl Stats {
+    pub fn diff(&self, other: Self) -> StatsDiff {
+        StatsDiff {
+            created: self.created as isize - other.created as isize,
+            changed: self.changed as isize - other.changed as isize,
+            recomputed: self.recomputed as isize - other.recomputed as isize,
+            invalidated: self.invalidated as isize - other.invalidated as isize,
+            became_necessary: self.became_necessary as isize - other.became_necessary as isize,
+            became_unnecessary: self.became_unnecessary as isize - other.became_unnecessary as isize,
+            necessary: self.necessary as isize - other.necessary as isize,
+        }
+    }
+}
+
+impl Sub for Stats {
+    type Output = StatsDiff;
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.diff(rhs)
     }
 }
 

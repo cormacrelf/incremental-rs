@@ -3,7 +3,7 @@
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use incremental::{Cutoff, Incr, Observer, ObserverError, State, Var};
+use incremental::{Cutoff, Incr, Observer, ObserverError, State, StatsDiff, Var};
 
 #[test]
 fn testit() {
@@ -120,6 +120,8 @@ fn test_bind_existing() {
     choose.set(Choose::C);
     incr.stabilise();
     assert_eq!(dbg!(obs.value()), Ok(99));
+    tracing::warn!("{:?}", incr.stats());
+    assert_eq!(incr.stats().became_unnecessary, 1);
 }
 
 /// Exercisees Adjust_heights_heap for a variable that was created from scratch inside a bind
@@ -924,4 +926,99 @@ fn incr_filter_mapi() {
     var.set(rc);
     incr.stabilise();
     assert_eq!(counter, 3);
+}
+
+fn stabilise_diff(incr: &Rc<State>, msg: &str) -> incremental::StatsDiff {
+    let before = incr.stats();
+    incr.stabilise();
+    let delta = incr.stats() - before;
+    println!("{msg} : {delta:#?}");
+    delta
+}
+
+#[test]
+fn becomes_unnecessary() {
+    let incr = State::new();
+
+    let zero = incr.stats();
+    let v = incr.var(10);
+    let maps = v.watch().map(|&x| x).map(|&x| x);
+    assert!(matches!(incr.stats() - zero, StatsDiff {
+        created: 3,
+        became_necessary: 0,
+        became_unnecessary: 0,
+        necessary: 0,
+        ..
+    }));
+
+    let o = maps.observe();
+    let diff = stabilise_diff(&incr, "after observe maps & stabilise");
+    assert!(matches!(diff, StatsDiff {
+        created: 0,
+        became_necessary: 3,
+        became_unnecessary: 0,
+        necessary: 3,
+        ..
+    }));
+
+    drop(o);
+    let diff = stabilise_diff(&incr, "dropping the maps observer");
+    assert!(matches!(diff, StatsDiff {
+        created: 0,
+        became_necessary: 0,
+        became_unnecessary: 3,
+        necessary: -3,
+        ..
+    }));
+    assert_eq!(incr.stats().became_unnecessary, 3);
+    assert_eq!(incr.stats().necessary, 0);
+
+    let useit = incr.var(false);
+    let bind = useit
+        .watch()
+        .binds(move |incr, &in_use| if in_use {
+            maps.clone()
+        } else {
+            incr.constant(5)
+        });
+
+    let diff = stabilise_diff(&incr, "after creating bind (no diff)");
+    assert_eq!(diff, StatsDiff::default());
+
+    // This creates an extra node incr.constant(5).
+    let obs = bind.observe();
+    let diff = stabilise_diff(&incr, "after observing bind");
+    assert!(matches!(diff, StatsDiff {
+        // i.e. nodes created during stabilise
+        created: 1,
+        became_necessary: 4,
+        became_unnecessary: 0,
+        necessary: 4,
+        ..
+    }));
+    assert_eq!(incr.stats().necessary, 4);
+    assert_eq!(obs.value(), Ok(5));
+
+    // Now we swap the bind's output from a constant to the three-node map
+    useit.set(true);
+    let diff = stabilise_diff(&incr, "after setting bind input to true");
+    assert!(matches!(diff, StatsDiff {
+        created: 0,
+        became_necessary: 3,
+        became_unnecessary: 1,
+        ..
+    }));
+    assert_eq!(incr.stats().necessary, 6);
+    assert_eq!(obs.value(), Ok(10));
+
+    drop(obs);
+    let diff = stabilise_diff(&incr, "after dropping bind observer");
+    assert!(matches!(diff, StatsDiff {
+        created: 0,
+        became_necessary: 0,
+        became_unnecessary: 6,
+        necessary: -6,
+        ..
+    }));
+    assert_eq!(incr.stats().necessary, 0);
 }

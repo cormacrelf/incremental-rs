@@ -7,7 +7,7 @@ pub use super::internal_observer::{ObserverError, SubscriptionToken};
 use super::node::NodeId;
 pub use super::node_update::NodeUpdate;
 use super::node_update::OnUpdateHandler;
-pub use super::state::State;
+pub use super::state::{State, Stats, StatsDiff};
 use super::var::{ErasedVariable, Var as InternalVar};
 pub use super::Incr;
 pub use super::Value;

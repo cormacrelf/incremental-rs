@@ -1,11 +1,11 @@
 // use enum_dispatch::enum_dispatch;
 
 use crate::v_rch::MapWithOld;
-use crate::{SubscriptionToken, Value};
+use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
-use super::internal_observer::{ErasedObserver, InternalObserver, ObserverId, WeakObserver};
+use super::internal_observer::{InternalObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
@@ -902,6 +902,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     }
 
     pub fn create(state: Weak<State<'a>>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Rc<Self> {
+        let t = state.upgrade().unwrap();
+        t.num_nodes_created.set(t.num_nodes_created.get() + 1);
         Node {
             id: NodeId::next(),
             weak_self: Weak::<Self>::new(),
@@ -999,26 +1001,25 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 new_child_node.state_add_parent(child_index, self.as_parent());
             }
             Some(old_child) => {
+                // ptr_eq is better than ID checking -- no vtable call,
                 if old_child.ptr_eq(&new_child) {
                     // nothing to do! nothing changed!
                     return;
                 }
+                let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
+                old_child_node.remove_parent(child_index, self.as_parent());
+                /* We force [old_child] to temporarily be necessary so that [add_parent] can't
+                   mistakenly think it is unnecessary and transition it to necessary (which would
+                   add duplicate edges and break things horribly). */
+                let oc_inner = old_child_node.inner();
+                let mut oci = oc_inner.borrow_mut();
+                oci.force_necessary = true;
                 {
-                    let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
-                    old_child_node.remove_parent(child_index, self.as_parent());
-                    /* We force [old_child] to temporarily be necessary so that [add_parent] can't
-                    mistakenly think it is unnecessary and transition it to necessary (which would
-                    add duplicate edges and break things horribly). */
-                    let oc_inner = old_child.node.inner();
-                    let mut oci = oc_inner.borrow_mut();
-                    oci.force_necessary = true;
-                    {
-                        new_child_node.state_add_parent(child_index, self.as_parent());
-                    }
-                    oci.force_necessary = false;
-                    drop(oci);
-                    old_child.node.check_if_unnecessary();
+                    new_child_node.state_add_parent(child_index, self.as_parent());
                 }
+                oci.force_necessary = false;
+                drop(oci);
+                old_child_node.check_if_unnecessary();
             }
         }
     }
