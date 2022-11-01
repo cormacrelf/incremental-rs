@@ -397,6 +397,11 @@ impl<'a> State<'a> {
         rc_heap.set_max_height_allowed(new_max_height);
         drop(rc_heap);
     }
+
+    pub(crate) fn set_height(&self, node: NodeRef<'a>, height: i32) {
+        let mut ah_heap = self.adjust_heights_heap.borrow_mut();
+        ah_heap.set_height(&node, height);
+    }
 }
 
 impl<'a> Drop for State<'a> {

@@ -74,7 +74,10 @@ impl<'a> AdjustHeightsHeap<'a> {
         if height > self.max_height_seen {
             self.max_height_seen = height;
             if height > self.max_height_allowed() {
-                panic!("node with too large height");
+                panic!(
+                    "node with too large height: {height} > max allowed {}",
+                    self.max_height_allowed()
+                );
             }
         }
         let old_height = node.height();

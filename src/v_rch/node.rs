@@ -264,7 +264,6 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
-    fn height(&self) -> i32;
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32>;
     fn is_in_handle_after_stabilisation(&self) -> &Cell<bool>;
@@ -274,6 +273,8 @@ pub(crate) trait ErasedNode<'a>: Debug {
         original_child: &NodeRef<'a>,
         original_parent: &NodeRef<'a>,
     );
+    fn height(&self) -> i32;
+    /// Only for use from AdjustHeightsHeap.
     fn set_height(&self, height: i32);
     fn old_height(&self) -> i32;
     fn set_old_height(&self, height: i32);
@@ -425,8 +426,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
     fn set_height(&self, height: i32) {
-        tracing::trace!("node id={:?}, set height to {height}", self.id);
-        // TODO: checks
+        tracing::trace!("{:?} set height to {height}", self.id);
         self.height.set(height);
     }
     fn old_height(&self) -> i32 {
@@ -503,10 +503,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         - add [node] to the recompute heap, if necessary. */
         let weak = self.clone().weak();
         let as_parent = self.as_parent();
-        let h = &Cell::new({
-            self.set_height(self.created_in.height() + 1);
-            self.height()
-        });
+        t.set_height(self.packed(), self.created_in.height() + 1);
+        let h = &Cell::new(self.height());
         let p1 = self.as_parent();
         let p2 = self.as_parent2();
         self.foreach_child_typed(ForeachChild {
@@ -523,7 +521,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 }
             },
         });
-        self.set_height(h.get());
+        t.set_height(self.packed(), h.get());
         debug_assert!(!self.is_in_recompute_heap());
         debug_assert!(self.is_necessary());
         if self.is_stale() {
@@ -541,7 +539,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         t.num_nodes_became_unnecessary
             .set(t.num_nodes_became_unnecessary.get() + 1);
         self.maybe_handle_after_stabilisation();
-        self.set_height(-1);
+        t.set_height(self.packed(), -1);
         self.remove_children();
         let kind = self.kind.borrow();
         match &*kind {
@@ -789,7 +787,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 possible to avoid making the heights of any future ancestors unnecessarily
                 large. */
                 let h = self.created_in.height() + 1;
-                self.set_height(h);
+                t.set_height(self.packed(), h);
                 /* We don't set [node.created_in] or [node.next_node_in_same_scope]; we leave [node]
                 in the scope it was created in.  If that scope is ever invalidated, then that
                 will clear [node.next_node_in_same_scope] */
@@ -987,7 +985,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         new_child: Incr<'a, G::BindRhs>,
         child_index: i32,
     ) {
-        let k = self.kind.borrow();
+        let bind_main = self;
+        let k = bind_main.kind.borrow();
         let id = match &*k {
             Kind::BindMain(id, _) => id,
             _ => return,
@@ -999,7 +998,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                     "change_child simply adding parent to {:?} at child_index {child_index}",
                     new_child_node
                 );
-                new_child_node.state_add_parent(child_index, self.as_parent());
+                new_child_node.state_add_parent(child_index, bind_main.as_parent());
             }
             Some(old_child) => {
                 // ptr_eq is better than ID checking -- no vtable call,
@@ -1008,7 +1007,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                     return;
                 }
                 let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
-                old_child_node.remove_parent(child_index, self.as_parent());
+                old_child_node.remove_parent(child_index, bind_main.as_parent());
                 /* We force [old_child] to temporarily be necessary so that [add_parent] can't
                 mistakenly think it is unnecessary and transition it to necessary (which would
                 add duplicate edges and break things horribly). */
@@ -1016,7 +1015,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 let mut oci = oc_inner.borrow_mut();
                 oci.force_necessary = true;
                 {
-                    new_child_node.state_add_parent(child_index, self.as_parent());
+                    new_child_node.state_add_parent(child_index, bind_main.as_parent());
                 }
                 oci.force_necessary = false;
                 drop(oci);
