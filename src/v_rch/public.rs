@@ -1,17 +1,18 @@
 use core::fmt::Debug;
-use std::ops::Deref;
+use std::ops::{Deref, Sub};
 use std::rc::Rc;
 
 pub use super::cutoff::Cutoff;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
 pub use super::node_update::NodeUpdate;
-pub use super::state::{State, Stats, StatsDiff};
 pub use super::Incr;
 pub use super::Value;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
+use super::scope::Scope;
+use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
 
 #[derive(Clone)]
@@ -155,5 +156,160 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
                 self.internal.break_rc_cycle();
             }
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IncrState<'a>(pub(crate) Rc<State<'a>>);
+
+impl<'a> IncrState<'a> {
+    pub fn new() -> Self {
+        Self(State::new())
+    }
+
+    pub fn stabilise(&self) {
+        self.0.stabilise();
+    }
+
+    #[inline]
+    pub fn constant<T: Value<'a>>(&self, value: T) -> Incr<'a, T> {
+        self.0.constant(value)
+    }
+
+    pub fn fold<F, T: Value<'a>, R: Value<'a>>(
+        &self,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, &T) -> R + 'a,
+    {
+        self.0.fold(vec, init, f)
+    }
+
+    pub fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
+        &self,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+        f_inverse: FInv,
+        full_compute_every_n_changes: Option<u32>,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, &T) -> R + Clone + 'a,
+        FInv: FnMut(R, &T) -> R + 'a,
+    {
+        self.0
+            .unordered_fold_inverse(vec, init, f, f_inverse, full_compute_every_n_changes)
+    }
+
+    pub fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
+        &self,
+        vec: Vec<Incr<'a, T>>,
+        init: R,
+        f: F,
+        update: U,
+        full_compute_every_n_changes: Option<u32>,
+    ) -> Incr<'a, R>
+    where
+        F: FnMut(R, &T) -> R + 'a,
+        U: FnMut(R, &T, &T) -> R + 'a,
+    {
+        self.0
+            .unordered_fold(vec, init, f, update, full_compute_every_n_changes)
+    }
+
+    pub fn var<T: Value<'a>>(&self, value: T) -> Var<'a, T> {
+        self.0.var_in_scope(value, Scope::Top)
+    }
+
+    pub fn var_current_scope<T: Value<'a>>(&self, value: T) -> Var<'a, T> {
+        self.0.var_in_scope(value, self.0.current_scope())
+    }
+
+    pub fn unsubscribe(&self, token: SubscriptionToken) {
+        self.0.unsubscribe(token)
+    }
+
+    pub fn set_max_height_allowed(&self, new_max_height: usize) {
+        self.0.set_max_height_allowed(new_max_height)
+    }
+
+    pub fn stats(&self) -> Stats {
+        Stats {
+            created: self.0.num_nodes_created.get(),
+            changed: self.0.num_nodes_changed.get(),
+            recomputed: self.0.num_nodes_recomputed.get(),
+            invalidated: self.0.num_nodes_invalidated.get(),
+            became_necessary: self.0.num_nodes_became_necessary.get(),
+            became_unnecessary: self.0.num_nodes_became_unnecessary.get(),
+            necessary: self.0.num_nodes_became_necessary.get()
+                - self.0.num_nodes_became_unnecessary.get(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Stats {
+    pub created: usize,
+    pub changed: usize,
+    pub recomputed: usize,
+    pub invalidated: usize,
+    pub became_necessary: usize,
+    pub became_unnecessary: usize,
+    pub necessary: usize,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub struct StatsDiff {
+    pub created: isize,
+    pub changed: isize,
+    pub recomputed: isize,
+    pub invalidated: isize,
+    pub became_necessary: isize,
+    pub became_unnecessary: isize,
+    pub necessary: isize,
+}
+
+impl Debug for StatsDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut f = f.debug_struct("StatsDiff");
+        let mut field = |name: &str, x: isize| {
+            if x != 0 {
+                f.field(name, &x);
+            }
+        };
+        field("created", self.created);
+        field("changed", self.changed);
+        field("recomputed", self.recomputed);
+        field("invalidated", self.invalidated);
+        field("became_necessary", self.became_necessary);
+        field("became_unnecessary", self.became_unnecessary);
+        field("necessary", self.necessary);
+        drop(field);
+        f.finish()
+    }
+}
+
+impl Stats {
+    pub fn diff(&self, other: Self) -> StatsDiff {
+        StatsDiff {
+            created: self.created as isize - other.created as isize,
+            changed: self.changed as isize - other.changed as isize,
+            recomputed: self.recomputed as isize - other.recomputed as isize,
+            invalidated: self.invalidated as isize - other.invalidated as isize,
+            became_necessary: self.became_necessary as isize - other.became_necessary as isize,
+            became_unnecessary: self.became_unnecessary as isize
+                - other.became_unnecessary as isize,
+            necessary: self.necessary as isize - other.necessary as isize,
+        }
+    }
+}
+
+impl Sub for Stats {
+    type Output = StatsDiff;
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.diff(rhs)
     }
 }

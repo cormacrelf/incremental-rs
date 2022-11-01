@@ -1,13 +1,13 @@
-#[cfg(test)]
+#[cfg(all(test, not(feature = "rust-analyzer")))]
 use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use incremental::{Cutoff, Incr, Observer, ObserverError, State, StatsDiff, Var};
+use incremental::{Cutoff, Incr, IncrState, Observer, ObserverError, StatsDiff, Var};
 
 #[test]
 fn testit() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(5);
     var.set(10);
     let observer = var.observe();
@@ -17,7 +17,7 @@ fn testit() {
 
 #[test]
 fn test_map() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(5);
     let mapped = var.map(|x| dbg!(dbg!(x) * 10));
     let observer = mapped.observe();
@@ -30,7 +30,7 @@ fn test_map() {
 
 #[test]
 fn test_map2() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let a = incr.var(5);
     let b = incr.var(8);
     let mapped = a.map2(&b, |a, b| dbg!(dbg!(a) + dbg!(b)));
@@ -46,7 +46,7 @@ fn test_map2() {
 }
 #[test]
 fn test_map_map2() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let a = incr.var(5);
     let b = incr.var(8);
     let map_left = a.map(|a| dbg!(a * 10));
@@ -73,7 +73,7 @@ fn test_bind_existing() {
     println!("");
     println!("------------------------------------------------------------------");
     println!("------------------------------------------------------------------");
-    let incr = State::new();
+    let incr = IncrState::new();
     let choose = incr.var(Choose::B);
     let b = incr.var(5);
     let c = incr.var(10);
@@ -120,7 +120,7 @@ fn test_bind_existing() {
 /// Exercisees Adjust_heights_heap for a variable that was created from scratch inside a bind
 #[test]
 fn create_var_in_bind() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let lhs = incr.var(true);
     let state = incr.clone();
     let o = lhs
@@ -170,7 +170,7 @@ fn create_var_in_bind() {
 
 #[test]
 fn bind_changing_heights_outside() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let is_short = incr.var(true);
     // this is a very short graph, height 1.
     let short_graph = incr.var(5).watch();
@@ -210,7 +210,7 @@ fn bind_changing_heights_outside() {
 
 #[test]
 fn bind_changing_heights_inside() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let is_short = incr.var(true);
     let i2 = incr.clone();
     let obs = is_short
@@ -241,7 +241,7 @@ fn bind_changing_heights_inside() {
 
 #[test]
 fn observer_ugly() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let lhs = incr.var(true);
     let unused = incr.var(2);
     let unused_w = unused.watch();
@@ -279,7 +279,7 @@ fn observer_ugly() {
 #[test]
 fn enumerate() {
     let g = std::cell::Cell::new(0);
-    let incr = State::new();
+    let incr = IncrState::new();
     let v = incr.var("first");
     let m = v.enumerate(|i, &x| {
         g.set(i + 1);
@@ -314,13 +314,13 @@ fn map_mutable() {
 fn map_mutable_inner(global: &mut String) {
     // this is just for fun
     struct Computation<'a> {
-        incr: Rc<State<'a>>,
+        incr: IncrState<'a>,
         setter: Var<'a, &'static str>,
         #[allow(dead_code)]
         total_len: Observer<'a, usize>,
     }
 
-    let incr = State::new();
+    let incr = IncrState::new();
     let setter = incr.var("a");
     let total_len = setter
         .map(|s| {
@@ -343,7 +343,7 @@ fn map_mutable_inner(global: &mut String) {
 
 #[test]
 fn mutable_string() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let v = incr.var("hello");
     let mut buf = String::new();
     let o = v
@@ -365,7 +365,7 @@ fn mutable_string() {
 
 #[test]
 fn fold() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let vars = [incr.var(10), incr.var(20), incr.var(30)];
     let watches = vars.iter().map(Var::watch).collect();
     let sum = incr.fold(watches, 0, |acc, x| acc + x);
@@ -380,7 +380,7 @@ fn fold() {
 
 #[test]
 fn bind_fold() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let v1 = incr.var(10i32);
     let v2 = incr.var(20);
     let v3 = incr.var(30);
@@ -402,7 +402,7 @@ fn bind_fold() {
 
 #[test]
 fn unordered_fold() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let v1 = incr.var(10i32);
     let v2 = incr.var(20);
     let v3 = incr.var(30);
@@ -472,7 +472,7 @@ impl PartialEq<u32> for CallCounter {
 fn unordered_fold_inverse() {
     let f = CallCounter::new("f");
     let finv = CallCounter::new("finv");
-    let incr = State::new();
+    let incr = IncrState::new();
     let v1 = incr.var(10i32);
     let v2 = incr.var(20);
     let v3 = incr.var(30);
@@ -512,7 +512,7 @@ fn unordered_fold_inverse() {
 
 #[test]
 fn incr_map_uf() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let mut b = BTreeMap::new();
     b.insert("five", 5);
     b.insert("eight", 8);
@@ -548,7 +548,7 @@ fn incr_map_uf() {
 
 #[test]
 fn incr_map_filter_mapi() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let mut b = BTreeMap::new();
     b.insert("five", 5);
     b.insert("ten", 10);
@@ -564,7 +564,7 @@ fn incr_map_filter_mapi() {
 #[test]
 fn incr_map_primes() {
     let primes = primes_lt(1_000_000);
-    let incr = State::new();
+    let incr = IncrState::new();
     let mut b = BTreeMap::new();
     b.insert("five", 5);
     b.insert("seven", 7);
@@ -621,7 +621,7 @@ fn primes_lt(bound: usize) -> Vec<usize> {
 
 #[test]
 fn var_set_during_stabilisation() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let v = incr.var(10_i32);
     let v_ = v.clone();
     let o = v
@@ -641,7 +641,7 @@ fn var_set_during_stabilisation() {
 
 #[test]
 fn var_update_simple() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let o = var.observe();
     incr.stabilise();
@@ -653,7 +653,7 @@ fn var_update_simple() {
 
 #[test]
 fn var_update_during_stabilisation() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let var_ = var.clone();
     let o = var
@@ -675,7 +675,7 @@ fn var_update_during_stabilisation() {
 
 #[test]
 fn var_update_before_set_during_stabilisation() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let var_ = var.clone();
     let o = var
@@ -693,7 +693,7 @@ fn var_update_before_set_during_stabilisation() {
 
 #[test]
 fn test_constant() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let c = incr.constant(5);
     let m = c.map(|x| x + 10);
     let o = m.observe();
@@ -719,8 +719,8 @@ fn test_constant() {
 #[test]
 #[should_panic = "assertion failed: Rc::ptr_eq"]
 fn two_worlds() {
-    let one = State::new();
-    let two = State::new();
+    let one = IncrState::new();
+    let two = IncrState::new();
     let v2 = two.var(9);
     let v2_ = v2.watch();
     let _o = one.constant(5).bind(move |_| v2_.clone()).observe();
@@ -732,7 +732,7 @@ fn two_worlds() {
 #[test]
 fn cutoff_rc_ptr_eq() {
     let sum_counter = &CallCounter::new("map on rc");
-    let incr = State::new();
+    let incr = IncrState::new();
     let rc: Rc<Vec<i32>> = Rc::new(vec![1i32, 2, 3]);
     let var = incr.var(rc.clone());
     let v = var.clone();
@@ -772,7 +772,7 @@ fn cutoff_rc_ptr_eq() {
 #[test]
 fn cutoff_sum() {
     let add10_counter = CallCounter::new("sum + 10");
-    let incr = State::new();
+    let incr = IncrState::new();
     let vec = vec![1i32, 2, 3];
     let v = incr.var(vec);
     let o = v
@@ -799,7 +799,7 @@ fn cutoff_sum() {
 
 #[test]
 fn map_with_old_reuse() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let v = incr.var(100);
     let o = v
         .map_with_old(|old: Option<Rc<String>>, input: &i32| {
@@ -828,7 +828,7 @@ fn map_with_old_reuse() {
 #[test]
 fn observer_subscribe_drop() {
     let call_count = CallCounter::new("subscriber");
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
     observer
@@ -854,7 +854,7 @@ fn observer_subscribe_drop() {
 #[test]
 fn observer_unsubscribe() {
     let call_count = CallCounter::new("subscriber");
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
     let token = observer
@@ -877,7 +877,7 @@ fn observer_unsubscribe() {
 
 #[test]
 fn state_unsubscribe_after_observer_dropped() {
-    let incr = State::new();
+    let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
     let token = observer
@@ -906,7 +906,7 @@ fn state_unsubscribe_after_observer_dropped() {
 #[test]
 fn incr_map_rc() {
     let counter = CallCounter::new("mapper");
-    let incr = State::new();
+    let incr = IncrState::new();
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
     let observer = var
@@ -932,7 +932,7 @@ fn incr_map_rc() {
 #[test]
 fn incr_filter_mapi() {
     let counter = CallCounter::new("mapper");
-    let incr = State::new();
+    let incr = IncrState::new();
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
     let observer = var
@@ -960,7 +960,7 @@ fn incr_filter_mapi() {
     assert_eq!(counter, 3);
 }
 
-fn stabilise_diff(incr: &Rc<State>, msg: &str) -> incremental::StatsDiff {
+fn stabilise_diff(incr: &incremental::IncrState, msg: &str) -> incremental::StatsDiff {
     let before = incr.stats();
     incr.stabilise();
     let delta = incr.stats() - before;
@@ -970,7 +970,7 @@ fn stabilise_diff(incr: &Rc<State>, msg: &str) -> incremental::StatsDiff {
 
 #[test]
 fn becomes_unnecessary() {
-    let incr = State::new();
+    let incr = IncrState::new();
 
     let zero = incr.stats();
     let v = incr.var(10);

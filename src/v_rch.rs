@@ -18,7 +18,7 @@ mod var;
 
 use crate::v_rch::kind::BindMainId;
 use crate::v_rch::node::Incremental;
-use crate::State;
+use crate::IncrState;
 
 use self::cutoff::Cutoff;
 use self::kind::Kind;
@@ -404,9 +404,9 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     pub fn binds<F, R>(&self, mut f: F) -> Incr<'a, R>
     where
         R: Value<'a>,
-        F: FnMut(&Rc<State<'a>>, &T) -> Incr<'a, R> + 'a,
+        F: FnMut(&IncrState<'a>, &T) -> Incr<'a, R> + 'a,
     {
-        let cloned = self.node.state();
+        let cloned = self.node.state().public();
         self.bind(move |value: &T| f(&cloned, value))
     }
 
@@ -513,8 +513,8 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     ///
     /// ```
     /// use std::rc::Rc;
-    /// use incremental::{State, Cutoff};
-    /// let incr = State::new();
+    /// use incremental::{IncrState, Cutoff};
+    /// let incr = IncrState::new();
     /// let var = incr.var(Rc::new(5));
     /// var.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
     /// // but note that doing this will now cause the change below

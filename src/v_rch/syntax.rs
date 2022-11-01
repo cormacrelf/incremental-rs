@@ -41,7 +41,7 @@ impl<'a, I1: Value<'a>, I2: Value<'a>, I3: Value<'a>> MapBuilder3<'a, I1, I2, I3
 
 #[test]
 fn test_syntax() {
-    let incr = crate::State::new();
+    let incr = crate::IncrState::new();
     let i1 = incr.constant(5);
     let i2 = incr.constant(10);
     let i3 = incr.constant(9);

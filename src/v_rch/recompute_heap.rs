@@ -96,6 +96,18 @@ impl<'a> RecomputeHeap<'a> {
     pub(crate) fn max_height_allowed(&self) -> i32 {
         self.queues.len() as i32 - 1
     }
+    pub(crate) fn set_max_height_allowed(&mut self, new_max_height: usize) {
+        #[cfg(debug_assertions)]
+        {
+            // this should be ensured by adjust-heights-heap's tracking of highest node seen.
+            for i in new_max_height + 1..self.queues.len() {
+                assert!(self.queues.get(i).is_none())
+            }
+        }
+        self.queues.resize(new_max_height, VecDeque::new());
+        self.height_lower_bound =
+            std::cmp::min(self.height_lower_bound, self.queues.len() as i32 + 1);
+    }
     pub(crate) fn increase_height(&mut self, node: &NodeRef<'a>, old_height: i32) {
         debug_assert!(node.old_height() >= 0);
         debug_assert!(node.height() > node.old_height());

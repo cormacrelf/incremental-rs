@@ -1,4 +1,4 @@
-fn stabilise_diff(incr: &std::rc::Rc<incremental::State>, msg: &str) -> incremental::StatsDiff {
+fn stabilise_diff(incr: &incremental::IncrState, msg: &str) -> incremental::StatsDiff {
     let before = incr.stats();
     incr.stabilise();
     let delta = incr.stats() - before;
@@ -10,7 +10,7 @@ mod projections_and_cutoffs {
     use super::*;
     use std::rc::Rc;
 
-    use incremental::{Incr, State, StatsDiff};
+    use incremental::{Incr, IncrState, StatsDiff};
     use test_log::test;
 
     #[derive(Debug, Clone, PartialEq)]
@@ -53,7 +53,7 @@ mod projections_and_cutoffs {
 
     #[test]
     fn one() {
-        let incr = State::new();
+        let incr = IncrState::new();
         let z = incr.var(Z {
             a: Rc::new(vec![3, 2]),
             b: (1, 4),
@@ -135,7 +135,7 @@ mod projections_and_cutoffs {
 
     #[test]
     fn two() {
-        let incr = State::new();
+        let incr = IncrState::new();
         let z = incr.var(Z {
             a: Rc::new(vec![3, 2]),
             b: (1, 4),

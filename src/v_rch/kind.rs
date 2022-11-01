@@ -4,7 +4,6 @@ use std::rc::{Rc, Weak};
 use crate::{Incr, Value};
 
 use refl::Id;
-type Unit<T> = Id<(), T>;
 
 use super::array_fold::ArrayFold;
 use super::node::Input;

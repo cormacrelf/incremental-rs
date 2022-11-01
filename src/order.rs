@@ -1,4 +1,5 @@
 //! Traits and types for partially ordered sets.
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

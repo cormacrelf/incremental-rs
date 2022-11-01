@@ -3,10 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 #[cfg(test)]
 use test_log::test;
 
-use crate::{Incr, State, Value};
+use crate::{Incr, Value};
 
 use super::kind::NodeGenerics;
 use super::node::Input;
+use super::state::State;
 
 #[derive(Copy, Clone, Debug)]
 enum Cycle {

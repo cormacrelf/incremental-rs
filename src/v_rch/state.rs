@@ -1,11 +1,9 @@
-use crate::{Cutoff, SubscriptionToken};
-
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
-use super::symmetric_fold::{DiffElement, SymmetricDiffMap, SymmetricDiffMapOwned};
 use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value, WeakNode};
+use crate::SubscriptionToken;
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
@@ -18,14 +16,13 @@ use super::{public, Incr};
 use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io::Write;
 use std::marker::PhantomData;
-use std::ops::Sub;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
-pub struct State<'a> {
+pub(crate) struct State<'a> {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
     pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap<'a>>,
     pub(crate) recompute_heap: RefCell<RecomputeHeap<'a>>,
@@ -83,13 +80,16 @@ pub enum IncrStatus {
 }
 
 impl<'a> State<'a> {
+    pub(crate) fn public(self: &Rc<Self>) -> public::IncrState<'a> {
+        public::IncrState(self.clone())
+    }
     pub(crate) fn weak(self: &Rc<Self>) -> Weak<Self> {
         Rc::downgrade(self)
     }
     pub(crate) fn current_scope(&self) -> Scope<'a> {
         self.current_scope.borrow().clone()
     }
-    pub fn new() -> Rc<Self> {
+    pub(crate) fn new() -> Rc<Self> {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Rc::new(State {
             recompute_heap: RefCell::new(RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
@@ -119,7 +119,7 @@ impl<'a> State<'a> {
         })
     }
 
-    pub fn constant<T: Value<'a>>(self: &Rc<Self>, value: T) -> Incr<'a, T> {
+    pub(crate) fn constant<T: Value<'a>>(self: &Rc<Self>, value: T) -> Incr<'a, T> {
         let node = Node::<Constant<'a, T>>::create(
             self.weak(),
             self.current_scope(),
@@ -128,7 +128,7 @@ impl<'a> State<'a> {
         Incr { node }
     }
 
-    pub fn fold<F, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn fold<F, T: Value<'a>, R: Value<'a>>(
         self: &Rc<Self>,
         vec: Vec<Incr<'a, T>>,
         init: R,
@@ -149,7 +149,7 @@ impl<'a> State<'a> {
         Incr { node }
     }
 
-    pub fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
         self: &Rc<Self>,
         vec: Vec<Incr<'a, T>>,
         init: R,
@@ -165,7 +165,7 @@ impl<'a> State<'a> {
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
         self: &Rc<Self>,
         vec: Vec<Incr<'a, T>>,
         init: R,
@@ -180,15 +180,7 @@ impl<'a> State<'a> {
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub fn var<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
-        self.var_in_scope(value, Scope::Top)
-    }
-
-    pub fn var_current_scope<T: Value<'a>>(self: &Rc<Self>, value: T) -> public::Var<'a, T> {
-        self.var_in_scope(value, self.current_scope())
-    }
-
-    fn var_in_scope<T: Value<'a>>(
+    pub(crate) fn var_in_scope<T: Value<'a>>(
         self: &Rc<Self>,
         value: T,
         scope: Scope<'a>,
@@ -329,7 +321,7 @@ impl<'a> State<'a> {
         self.status.set(IncrStatus::NotStabilising);
     }
 
-    pub fn stabilise(&self) {
+    pub(crate) fn stabilise(&self) {
         let span = tracing::info_span!("stabilise");
         span.in_scope(|| {
             assert_eq!(self.status.get(), IncrStatus::NotStabilising);
@@ -387,88 +379,23 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn unsubscribe(&self, token: SubscriptionToken) {
+    pub(crate) fn unsubscribe(&self, token: SubscriptionToken) {
         let all_obs = self.all_observers.borrow();
         if let Some(obs) = all_obs.get(&token.observer_id()) {
             obs.unsubscribe(token).unwrap();
         }
     }
 
-    pub fn stats(&self) -> Stats {
-        Stats {
-            created: self.num_nodes_created.get(),
-            changed: self.num_nodes_changed.get(),
-            recomputed: self.num_nodes_recomputed.get(),
-            invalidated: self.num_nodes_invalidated.get(),
-            became_necessary: self.num_nodes_became_necessary.get(),
-            became_unnecessary: self.num_nodes_became_unnecessary.get(),
-            necessary: self.num_nodes_became_necessary.get()
-                - self.num_nodes_became_unnecessary.get(),
+    pub(crate) fn set_max_height_allowed(&self, new_max_height: usize) {
+        if self.status.get() == IncrStatus::Stabilising {
+            panic!("tried to set_max_height_allowed during stabilisation");
         }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Stats {
-    pub created: usize,
-    pub changed: usize,
-    pub recomputed: usize,
-    pub invalidated: usize,
-    pub became_necessary: usize,
-    pub became_unnecessary: usize,
-    pub necessary: usize,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub struct StatsDiff {
-    pub created: isize,
-    pub changed: isize,
-    pub recomputed: isize,
-    pub invalidated: isize,
-    pub became_necessary: isize,
-    pub became_unnecessary: isize,
-    pub necessary: isize,
-}
-
-impl Debug for StatsDiff {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut f = f.debug_struct("StatsDiff");
-        let mut field = |name: &str, x: isize| {
-            if x != 0 {
-                f.field(name, &x);
-            }
-        };
-        field("created", self.created);
-        field("changed", self.changed);
-        field("recomputed", self.recomputed);
-        field("invalidated", self.invalidated);
-        field("became_necessary", self.became_necessary);
-        field("became_unnecessary", self.became_unnecessary);
-        field("necessary", self.necessary);
-        drop(field);
-        f.finish()
-    }
-}
-
-impl Stats {
-    pub fn diff(&self, other: Self) -> StatsDiff {
-        StatsDiff {
-            created: self.created as isize - other.created as isize,
-            changed: self.changed as isize - other.changed as isize,
-            recomputed: self.recomputed as isize - other.recomputed as isize,
-            invalidated: self.invalidated as isize - other.invalidated as isize,
-            became_necessary: self.became_necessary as isize - other.became_necessary as isize,
-            became_unnecessary: self.became_unnecessary as isize
-                - other.became_unnecessary as isize,
-            necessary: self.necessary as isize - other.necessary as isize,
-        }
-    }
-}
-
-impl Sub for Stats {
-    type Output = StatsDiff;
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.diff(rhs)
+        let mut ah_heap = self.adjust_heights_heap.borrow_mut();
+        ah_heap.set_max_height_allowed(new_max_height);
+        drop(ah_heap);
+        let mut rc_heap = self.recompute_heap.borrow_mut();
+        rc_heap.set_max_height_allowed(new_max_height);
+        drop(rc_heap);
     }
 }
 

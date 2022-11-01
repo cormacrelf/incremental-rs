@@ -30,13 +30,13 @@ impl<'a> AdjustHeightsHeap<'a> {
             queues: vec![Default::default(); max_height_allowed + 1],
         }
     }
-    pub(crate) fn set_max_height_allowed(&mut self, new_mha: i32) {
-        if new_mha < self.max_height_seen {
+    pub(crate) fn set_max_height_allowed(&mut self, new_mha: usize) {
+        if (new_mha as i32) < self.max_height_seen {
             panic!("cannot set max_height_allowed less than max height already seen");
         }
         debug_assert!(self.is_empty());
         debug_assert_eq!(calculate_len(&self.queues), 0);
-        self.queues.resize(new_mha as usize, VecDeque::new());
+        self.queues.resize(new_mha, VecDeque::new());
     }
     pub(crate) fn add_unless_mem(&mut self, node: NodeRef<'a>) {
         if node.height_in_adjust_heights_heap().get() == -1 {
@@ -154,19 +154,19 @@ impl<'a> Invariant for AdjustHeightsHeap<'a> {
         }
         assert!(self.max_height_seen >= 0);
         assert!(self.max_height_seen <= self.max_height_allowed());
-        // self.queues.invariant();
+        self.queues.invariant();
     }
 }
 
-// impl<'a> Invariant for Vec<VecDeque<NodeRef<'a>>> {
-//     fn invariant(&self) {
-//         let queues: &[Queue<'a>] = self.as_slice();
-//         for (height, q) in queues.iter().enumerate() {
-//             let q: &Queue<'a> = q;
-//             let height = height as i32;
-//             for node in q.iter() {
-//                 assert!(node.height_in_adjust_heights_heap().get() == height);
-//             }
-//         }
-//     }
-// }
+impl<'a> Invariant for Vec<VecDeque<NodeRef<'a>>> {
+    fn invariant(&self) {
+        let queues: &[Queue<'a>] = self.as_slice();
+        for (height, q) in queues.iter().enumerate() {
+            let q: &Queue<'a> = q;
+            let height = height as i32;
+            for node in q.iter() {
+                assert!(node.height_in_adjust_heights_heap().get() == height);
+            }
+        }
+    }
+}

@@ -9,7 +9,7 @@ use super::state::IncrStatus;
 use super::state::State;
 use super::Incr;
 use core::fmt::Debug;
-use std::cell::{Cell, RefCell, RefMut};
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 pub(crate) struct VarGenerics<'a, T: Value<'a>>(std::marker::PhantomData<&'a T>);
@@ -182,7 +182,7 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
 fn var_drop() {
     DID_DROP.with(|cell| cell.set(0));
     {
-        let incr = State::new();
+        let incr = crate::IncrState::new();
         println!("before var created");
         let v = incr.var(10);
         println!("before watch created");
@@ -200,7 +200,7 @@ fn var_drop() {
 fn var_drop_delayed() {
     DID_DROP.with(|cell| cell.set(0));
     {
-        let incr = State::new();
+        let incr = crate::IncrState::new();
         let v = incr.var(10);
         let w = v.watch();
         let c = incr.constant(9).bind(move |x| {
