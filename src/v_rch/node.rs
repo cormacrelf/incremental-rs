@@ -1,5 +1,3 @@
-// use enum_dispatch::enum_dispatch;
-
 use crate::v_rch::MapWithOld;
 use crate::Value;
 
@@ -39,38 +37,35 @@ impl NodeId {
     }
 }
 
-/// Needs a better name but ok
 #[derive(Debug)]
 pub(crate) struct NodeInner<'a> {
-    pub(crate) state: Weak<State<'a>>,
-    // TODO: optimise the one parent case
-    // pub(crate) num_parents: i32,
-    // parent0
-    // parent1_and_beyond
-    pub(crate) my_parent_index_in_child_at_index: Vec<i32>,
-    pub(crate) my_child_index_in_parent_at_index: Vec<i32>,
-    pub(crate) force_necessary: bool,
+    pub state: Weak<State<'a>>,
+    pub my_parent_index_in_child_at_index: Vec<i32>,
+    pub my_child_index_in_parent_at_index: Vec<i32>,
+    pub force_necessary: bool,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
-    pub(crate) id: NodeId,
-    pub(crate) inner: RefCell<NodeInner<'a>>,
-    pub(crate) kind: RefCell<Kind<'a, G>>,
-    pub(crate) value_opt: RefCell<Option<G::R>>,
-    pub(crate) old_value_opt: RefCell<Option<G::R>>,
+    pub id: NodeId,
+    pub inner: RefCell<NodeInner<'a>>,
+    pub kind: RefCell<Kind<'a, G>>,
+    pub value_opt: RefCell<Option<G::R>>,
+    pub old_value_opt: RefCell<Option<G::R>>,
     pub height: Cell<i32>,
     pub old_height: Cell<i32>,
     pub height_in_recompute_heap: Cell<i32>,
     pub height_in_adjust_heights_heap: Cell<i32>,
     pub is_in_handle_after_stabilisation: Cell<bool>,
     pub num_on_update_handlers: Cell<i32>,
-    pub(crate) created_in: Scope<'a>,
+    pub created_in: Scope<'a>,
     pub recomputed_at: Cell<StabilisationNum>,
     pub changed_at: Cell<StabilisationNum>,
     weak_self: Weak<Self>,
-    pub(crate) parents: RefCell<Vec<ParentRef<'a, G::R>>>,
-    pub(crate) observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
-    pub(crate) cutoff: Cell<Cutoff<G::R>>,
+
+    // TODO: optimise the one parent case
+    pub parents: RefCell<Vec<ParentRef<'a, G::R>>>,
+    pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
+    pub cutoff: Cell<Cutoff<G::R>>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -267,6 +262,8 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn height_in_recompute_heap(&self) -> &Cell<i32>;
     fn height_in_adjust_heights_heap(&self) -> &Cell<i32>;
     fn is_in_handle_after_stabilisation(&self) -> &Cell<bool>;
+
+    /// AdjustHeightsHeap::ensure_height_requirements
     fn ensure_parent_height_requirements(
         &self,
         ahh: &mut AdjustHeightsHeap<'a>,
