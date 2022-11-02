@@ -13,7 +13,8 @@ use super::node::Node;
 use super::scope::Scope;
 use super::var::{Var, WeakVar};
 use super::{public, Incr};
-use super::{recompute_heap::RecomputeHeap, stabilisation_num::StabilisationNum};
+use super::stabilisation_num::StabilisationNum;
+use super::recompute_heap::RecomputeHeap;
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use std::rc::{Rc, Weak};
 pub(crate) struct State<'a> {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
     pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap<'a>>,
-    pub(crate) recompute_heap: RefCell<RecomputeHeap<'a>>,
+    pub(crate) recompute_heap: RecomputeHeap<'a>,
     pub(crate) status: Cell<IncrStatus>,
     pub(crate) num_var_sets: Cell<usize>,
     pub(crate) num_nodes_recomputed: Cell<usize>,
@@ -92,7 +93,7 @@ impl<'a> State<'a> {
     pub(crate) fn new() -> Rc<Self> {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Rc::new(State {
-            recompute_heap: RefCell::new(RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
+            recompute_heap: RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED),
             adjust_heights_heap: RefCell::new(AdjustHeightsHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
             stabilisation_num: Cell::new(StabilisationNum(0)),
             num_var_sets: Cell::new(0),
@@ -331,8 +332,7 @@ impl<'a> State<'a> {
             while let Some(min) = {
                 // we need to access rch in recompute() > maybe_change_value()
                 // so fine grained access here
-                let mut rch = self.recompute_heap.borrow_mut();
-                rch.remove_min()
+                self.recompute_heap.remove_min()
             } {
                 min.recompute();
             }
@@ -371,8 +371,7 @@ impl<'a> State<'a> {
                     true, and because computing it takes O(number of children), node can be pushed
                     on the stack once per child, and expert nodes can have lots of children. */
                     if !node.is_in_recompute_heap() {
-                        let mut rch = self.recompute_heap.borrow_mut();
-                        rch.insert(node);
+                        self.recompute_heap.insert(node);
                     }
                 }
             }
@@ -390,12 +389,12 @@ impl<'a> State<'a> {
         if self.status.get() == IncrStatus::Stabilising {
             panic!("tried to set_max_height_allowed during stabilisation");
         }
-        let mut ah_heap = self.adjust_heights_heap.borrow_mut();
-        ah_heap.set_max_height_allowed(new_max_height);
-        drop(ah_heap);
-        let mut rc_heap = self.recompute_heap.borrow_mut();
-        rc_heap.set_max_height_allowed(new_max_height);
-        drop(rc_heap);
+        // let mut ah_heap = self.adjust_heights_heap.borrow_mut();
+        // ah_heap.set_max_height_allowed(new_max_height);
+        // drop(ah_heap);
+        // let mut rc_heap = self.recompute_heap.borrow_mut();
+        // rc_heap.set_max_height_allowed(new_max_height);
+        // drop(rc_heap);
     }
 
     pub(crate) fn set_height(&self, node: NodeRef<'a>, height: i32) {

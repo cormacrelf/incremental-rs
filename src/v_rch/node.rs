@@ -162,8 +162,8 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             );
             let t = self.state();
             let mut ah_heap = t.adjust_heights_heap.borrow_mut();
-            let mut rch = t.recompute_heap.borrow_mut();
-            ah_heap.adjust_heights(&mut rch, self.packed(), parent.packed());
+            let rch = &t.recompute_heap;
+            ah_heap.adjust_heights(rch, self.packed(), parent.packed());
         }
         self.state().propagate_invalidity();
         debug_assert!(parent.is_necessary());
@@ -172,8 +172,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             && (parent.recomputed_at().get().is_none() || self.edge_is_stale(parent.weak()))
         {
             let t = self.state();
-            let mut rch = t.recompute_heap.borrow_mut();
-            rch.insert(parent.packed());
+            t.recompute_heap.insert(parent.packed());
         }
     }
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
@@ -562,8 +561,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         debug_assert!(!self.is_in_recompute_heap());
         debug_assert!(self.is_necessary());
         if self.is_stale() {
-            let mut rch = t.recompute_heap.borrow_mut();
-            rch.insert(self.packed());
+            t.recompute_heap.insert(self.packed());
         }
     }
     fn check_if_unnecessary(&self) {
@@ -586,8 +584,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             let t = self.state();
-            let mut rch = t.recompute_heap.borrow_mut();
-            rch.remove(self.packed());
+            t.recompute_heap.remove(self.packed());
         }
     }
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ()) {
@@ -1003,8 +1000,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                         p.height()
                     );
                     let t = self.state();
-                    let mut rch = t.recompute_heap.borrow_mut();
-                    rch.insert(p.packed());
+                    t.recompute_heap.insert(p.packed());
                 }
             }
         } else if old_value_opt.is_some() {

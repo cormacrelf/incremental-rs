@@ -103,7 +103,7 @@ impl<'a> AdjustHeightsHeap<'a> {
     }
     pub(crate) fn adjust_heights(
         &mut self,
-        rch: &mut RecomputeHeap<'a>,
+        rch: &RecomputeHeap<'a>,
         original_child: NodeRef<'a>,
         original_parent: NodeRef<'a>,
     ) {

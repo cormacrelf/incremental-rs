@@ -147,8 +147,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
                     "inserting var watch into recompute heap at height {:?}",
                     watch.height()
                 );
-                let mut heap = t.recompute_heap.borrow_mut();
-                heap.insert(watch.packed());
+                t.recompute_heap.insert(watch.packed());
             }
         }
     }
