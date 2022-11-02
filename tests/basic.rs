@@ -1,4 +1,3 @@
-#[cfg(all(test, not(feature = "rust-analyzer")))]
 use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};

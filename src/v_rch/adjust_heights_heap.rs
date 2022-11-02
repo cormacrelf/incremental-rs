@@ -80,9 +80,7 @@ impl<'a> AdjustHeightsHeap<'a> {
                 );
             }
         }
-        let old_height = node.height();
         node.set_height(height);
-        node.set_old_height(old_height);
     }
     pub(crate) fn ensure_height_requirement(
         &mut self,
@@ -132,7 +130,7 @@ impl<'a> AdjustHeightsHeap<'a> {
                 child
             );
             if child.is_in_recompute_heap() {
-                rch.increase_height(&child, child.old_height());
+                rch.increase_height(&child);
             }
             child.ensure_parent_height_requirements(self, &original_child, &original_parent);
             child.adjust_heights_bind_lhs_change(self, &original_child, &original_parent);

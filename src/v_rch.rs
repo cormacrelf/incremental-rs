@@ -609,9 +609,6 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
                 (old_out, did_change)
             }
         })
-        // TODO: clone the R value for the purpose of cutoffs that aren't always/never?
-        // we just went to a whole lot of trouble to avoid cloning R.
-        // .cutoff(Cutoff::Custom())
     }
 
     pub fn incr_unordered_fold<FAdd, FRemove, K, V, R>(

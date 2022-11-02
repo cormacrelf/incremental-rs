@@ -18,6 +18,6 @@ impl StabilisationNum {
 
 impl PartialOrder for StabilisationNum {
     fn less_equal(&self, other: &Self) -> bool {
-        self.0 <= other.0
+        self.0.less_than(&other.0)
     }
 }

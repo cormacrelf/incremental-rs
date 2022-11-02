@@ -16,6 +16,7 @@ use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
 use refl::Id;
+use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -42,7 +43,6 @@ pub(crate) struct NodeInner<'a> {
     pub state: Weak<State<'a>>,
     pub my_parent_index_in_child_at_index: Vec<i32>,
     pub my_child_index_in_parent_at_index: Vec<i32>,
-    pub force_necessary: bool,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
@@ -52,20 +52,46 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub value_opt: RefCell<Option<G::R>>,
     pub old_value_opt: RefCell<Option<G::R>>,
     pub height: Cell<i32>,
-    pub old_height: Cell<i32>,
+    /// Set from RecomputeHeap, and AdjustHeightsHeap via increase_height
     pub height_in_recompute_heap: Cell<i32>,
+    /// Used to avoid inserting into AHH twice.
+    /// -1 when not in AHH.
     pub height_in_adjust_heights_heap: Cell<i32>,
+    /// Used during stabilisation to add self to handle_after_stabilisation only once per stabilise cycle.
     pub is_in_handle_after_stabilisation: Cell<bool>,
+    /// Used during stabilisation to decide whether to handle_after_stabilisation at all (if > 0)
     pub num_on_update_handlers: Cell<i32>,
+    /// Scope the node was created in. Never modified.
     pub created_in: Scope<'a>,
+    /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
+    /// The time at which our value changed. -1 if never.
+    ///
+    /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
     pub changed_at: Cell<StabilisationNum>,
-    weak_self: Weak<Self>,
 
-    // TODO: optimise the one parent case
-    pub parents: RefCell<Vec<ParentRef<'a, G::R>>>,
+    pub force_necessary: Cell<bool>,
+
+    /// ParentRef knows which type it will receive. We know all our node's parents are going to have an
+    /// input of *our* G::R, so all our parents will have provided us with a ParentRef that
+    /// receives G::R.
+    ///
+    /// Most of the time, a node only has one parent. So we will use a SmallVec with space enough
+    /// for one without hitting the allocator.
+    pub parents: RefCell<SmallVec<[ParentRef<'a, G::R>; 1]>>,
+
+    /// A node knows its own observers. This way, in order to schedule a notification at the end
+    /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
+
+    /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
+    /// recomputation, which in turn helps determine if our parents are stale & need recomputing
+    /// themselves.
     pub cutoff: Cell<Cutoff<G::R>>,
+
+    /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
+    /// node's reference-counted pointer at any time.
+    weak_self: Weak<Self>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -199,6 +225,16 @@ pub(crate) trait Parent1<'a, I>: Debug + ErasedNode<'a> {
 }
 pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> {}
 
+/// Each node can be a parent for up to a dozen or so (map12) different types.
+/// ParentRef is an enum that knows, by the tag, which kind of parent this node is behaving as,
+/// and the various Parent1/Parent2 traits embed that static, type-level information in their
+/// implementation. So all a *child* node has to do is pass through its G::R, and the parent
+/// will make sure it passes the correct kind of ParentRef that has an implementation for that
+/// type.
+///
+/// Ultimately, we only need one type-aware method from these parent nodes. That's
+/// `child_changed`. And we only need for UnorderedArrayFold & eventually Expert. Lot of work
+/// for one method. But there you go.
 #[derive(Clone, Debug)]
 pub(crate) enum ParentRef<'a, T> {
     I1(Weak<dyn Parent1<'a, T> + 'a>),
@@ -273,12 +309,11 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn height(&self) -> i32;
     /// Only for use from AdjustHeightsHeap.
     fn set_height(&self, height: i32);
-    fn old_height(&self) -> i32;
-    fn set_old_height(&self, height: i32);
     fn is_stale(&self) -> bool;
     fn is_stale_with_respect_to_a_child(&self) -> bool;
     fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool;
     fn is_necessary(&self) -> bool;
+    fn force_necessary(&self) -> &Cell<bool>;
     fn needs_to_be_computed(&self) -> bool;
     fn became_necessary(&self);
     fn became_necessary_propagate(&self);
@@ -426,12 +461,6 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         tracing::trace!("{:?} set height to {height}", self.id);
         self.height.set(height);
     }
-    fn old_height(&self) -> i32 {
-        self.old_height.get()
-    }
-    fn set_old_height(&self, height: i32) {
-        self.old_height.set(height);
-    }
     fn is_stale(&self) -> bool {
         let k = self.kind.borrow();
         match &*k {
@@ -449,6 +478,8 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             | Kind::Map2(_)
             | Kind::BindLhsChange(..)
             | Kind::BindMain(..) => {
+                // i.e. never recomputed, or a child has changed more recently than we have been
+                // recomputed
                 self.recomputed_at.get() == StabilisationNum(-1)
                     || self.is_stale_with_respect_to_a_child()
             }
@@ -473,10 +504,13 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         !self.parents.borrow().is_empty()
             || !self.observers.borrow().is_empty()
             // || kind is freeze
-            || self.inner().borrow().force_necessary
+            || self.force_necessary.get()
     }
     fn needs_to_be_computed(&self) -> bool {
         self.is_necessary() && self.is_stale()
+    }
+    fn force_necessary(&self) -> &Cell<bool> {
+        &self.force_necessary
     }
     // Not used in add_parent_without_adjusting_heights, I think.
     // Used for `set_freeze`, `add_observers`
@@ -907,21 +941,20 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 state,
                 my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
                 my_child_index_in_parent_at_index: vec![-1],
-                force_necessary: false,
             }),
             created_in,
             changed_at: Cell::new(StabilisationNum::init()),
             height: Cell::new(-1),
-            old_height: Cell::new(-1),
             height_in_recompute_heap: Cell::new(-1),
             height_in_adjust_heights_heap: Cell::new(-1),
             is_in_handle_after_stabilisation: false.into(),
+            force_necessary: false.into(),
             num_on_update_handlers: 0.into(),
             recomputed_at: Cell::new(StabilisationNum::init()),
             value_opt: RefCell::new(None),
             old_value_opt: RefCell::new(None),
             kind: RefCell::new(kind),
-            parents: vec![].into(),
+            parents: smallvec::smallvec![].into(),
             observers: HashMap::new().into(),
             cutoff: Cutoff::PartialEq.into(),
         }
@@ -1008,14 +1041,11 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
                 /* We force [old_child] to temporarily be necessary so that [add_parent] can't
                 mistakenly think it is unnecessary and transition it to necessary (which would
                 add duplicate edges and break things horribly). */
-                let oc_inner = old_child_node.inner();
-                let mut oci = oc_inner.borrow_mut();
-                oci.force_necessary = true;
+                old_child_node.force_necessary().set(true);
                 {
                     new_child_node.state_add_parent(child_index, bind_main.as_parent());
                 }
-                oci.force_necessary = false;
-                drop(oci);
+                old_child_node.force_necessary().set(false);
                 old_child_node.check_if_unnecessary();
             }
         }
@@ -1129,5 +1159,5 @@ fn test_node_size() {
     let state = State::new();
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
-    assert_eq!(core::mem::size_of_val(&*node), 376);
+    assert_eq!(core::mem::size_of_val(&*node), 392);
 }
