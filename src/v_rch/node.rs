@@ -49,10 +49,9 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub state: Weak<State<'a>>,
 
     /* The fields from [recomputed_at] to [created_in] are grouped together and are in the
-       same order as they are used by [State.recompute] This has a positive performance
-       impact due to cache effects.  Don't change the order of these nodes without
-       performance testing. */
-
+    same order as they are used by [State.recompute] This has a positive performance
+    impact due to cache effects.  Don't change the order of these nodes without
+    performance testing. */
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
     pub value_opt: RefCell<Option<G::R>>,
@@ -92,7 +91,6 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
-
 }
 
 #[derive(Debug)]
@@ -163,9 +161,9 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
                 parent.height()
             );
             let t = self.state();
-            let mut ahh = t.adjust_heights_heap.borrow_mut();
+            let mut ah_heap = t.adjust_heights_heap.borrow_mut();
             let mut rch = t.recompute_heap.borrow_mut();
-            ahh.adjust_heights(&mut rch, self.packed(), parent.packed());
+            ah_heap.adjust_heights(&mut rch, self.packed(), parent.packed());
         }
         self.state().propagate_invalidity();
         debug_assert!(parent.is_necessary());
@@ -197,10 +195,13 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             if let Some(end_p) = end_p_weak.upgrade_erased() {
                 let end_p_indices_cell = end_p.parent_child_indices();
                 let mut end_p_indices = end_p_indices_cell.borrow_mut();
-                let end_child_index = child_indices.my_child_index_in_parent_at_index[last_parent_index];
+                let end_child_index =
+                    child_indices.my_child_index_in_parent_at_index[last_parent_index];
                 // link parent_index & end_child_index
-                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
-                child_indices.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
+                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] =
+                    parent_index;
+                child_indices.my_child_index_in_parent_at_index[parent_index as usize] =
+                    end_child_index;
             }
         }
         // unlink last_parent_index & child_index
@@ -856,8 +857,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         match &*kind {
             Kind::BindLhsChange(_, bind) => {
                 let Some(bind) = bind.upgrade() else { return };
-                let span = tracing::debug_span!("adjust_heights_bind_lhs_change");
-                span.in_scope(|| {
+                tracing::debug_span!("adjust_heights_bind_lhs_change").in_scope(|| {
                     let all = bind.all_nodes_created_on_rhs.borrow();
                     for rnode_weak in all.iter() {
                         let rnode = rnode_weak.upgrade().unwrap();
@@ -944,7 +944,9 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             weak_self: Weak::<Self>::new(),
             state,
             parent_child_indices: RefCell::new(ParentChildIndices {
-                my_parent_index_in_child_at_index: SmallVec::with_capacity(kind.initial_num_children()),
+                my_parent_index_in_child_at_index: SmallVec::with_capacity(
+                    kind.initial_num_children(),
+                ),
                 my_child_index_in_parent_at_index: smallvec![-1],
             }),
             created_in,

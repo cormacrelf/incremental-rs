@@ -132,6 +132,8 @@ impl<'a> AdjustHeightsHeap<'a> {
             if child.is_in_recompute_heap() {
                 rch.increase_height(&child);
             }
+            // for each of the child's parents, add it to the heap
+            // if child height >= parent height.
             child.ensure_parent_height_requirements(self, &original_child, &original_parent);
             child.adjust_heights_bind_lhs_change(self, &original_child, &original_parent);
         }

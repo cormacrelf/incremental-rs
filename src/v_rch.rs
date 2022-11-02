@@ -176,7 +176,6 @@ where
     mapper: RefCell<F>,
     rhs: RefCell<Option<Incr<'a, R>>>,
     rhs_scope: RefCell<Scope<'a>>,
-    // to_disconnect: RefCell<Option<RefCell<Incr<'a, R>>>>,
     all_nodes_created_on_rhs: RefCell<Vec<WeakNode<'a>>>,
 }
 
@@ -249,9 +248,9 @@ where
     type R = R;
     type BindLhs = T;
     type BindRhs = R;
-    /// BindLhsChange (a sentinel)
-    type I1 = R;
     /// Rhs
+    type I1 = R;
+    /// BindLhsChange (a sentinel)
     type I2 = ();
     type F1 = fn(&Self::I1) -> Self::R;
     type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
