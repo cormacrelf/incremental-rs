@@ -16,7 +16,7 @@ use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
 use refl::Id;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -38,17 +38,46 @@ impl NodeId {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ParentChildIndices<'a> {
-    pub my_parent_index_in_child_at_index: Vec<i32>,
-    pub my_child_index_in_parent_at_index: Vec<i32>,
-}
-
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub id: NodeId,
-    pub parent_child_indices: RefCell<ParentChildIndices<'a>>,
-    pub kind: RefCell<Kind<'a, G>>,
+
+    /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
+    /// node's reference-counted pointer at any time.
+    weak_self: Weak<Self>,
+
+    /// A reference to the incremental State we're part of.
+    pub state: Weak<State<'a>>,
+
+    /* The fields from [recomputed_at] to [created_in] are grouped together and are in the
+       same order as they are used by [State.recompute] This has a positive performance
+       impact due to cache effects.  Don't change the order of these nodes without
+       performance testing. */
+
+    /// The time at which we were last recomputed. -1 if never.
+    pub recomputed_at: Cell<StabilisationNum>,
     pub value_opt: RefCell<Option<G::R>>,
+    pub kind: RefCell<Kind<'a, G>>,
+    /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
+    /// recomputation, which in turn helps determine if our parents are stale & need recomputing
+    /// themselves.
+    pub cutoff: Cell<Cutoff<G::R>>,
+    /// The time at which our value changed. -1 if never.
+    ///
+    /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
+    pub changed_at: Cell<StabilisationNum>,
+    /// Used during stabilisation to decide whether to handle_after_stabilisation at all (if > 0)
+    pub num_on_update_handlers: Cell<i32>,
+    /// ParentRef knows which type it will receive. We know all our node's parents are going to have an
+    /// input of *our* G::R, so all our parents will have provided us with a ParentRef that
+    /// receives G::R.
+    ///
+    /// Most of the time, a node only has one parent. So we will use a SmallVec with space enough
+    /// for one without hitting the allocator.
+    pub parents: RefCell<SmallVec<[ParentRef<'a, G::R>; 1]>>,
+    /// Scope the node was created in. Never modified.
+    pub created_in: Scope<'a>,
+
+    pub parent_child_indices: RefCell<ParentChildIndices>,
     pub old_value_opt: RefCell<Option<G::R>>,
     pub height: Cell<i32>,
     /// Set from RecomputeHeap, and AdjustHeightsHeap via increase_height
@@ -58,42 +87,18 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub height_in_adjust_heights_heap: Cell<i32>,
     /// Used during stabilisation to add self to handle_after_stabilisation only once per stabilise cycle.
     pub is_in_handle_after_stabilisation: Cell<bool>,
-    /// Used during stabilisation to decide whether to handle_after_stabilisation at all (if > 0)
-    pub num_on_update_handlers: Cell<i32>,
-    /// Scope the node was created in. Never modified.
-    pub created_in: Scope<'a>,
-    /// The time at which we were last recomputed. -1 if never.
-    pub recomputed_at: Cell<StabilisationNum>,
-    /// The time at which our value changed. -1 if never.
-    ///
-    /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
-    pub changed_at: Cell<StabilisationNum>,
-
     pub force_necessary: Cell<bool>,
-
-    /// ParentRef knows which type it will receive. We know all our node's parents are going to have an
-    /// input of *our* G::R, so all our parents will have provided us with a ParentRef that
-    /// receives G::R.
-    ///
-    /// Most of the time, a node only has one parent. So we will use a SmallVec with space enough
-    /// for one without hitting the allocator.
-    pub parents: RefCell<SmallVec<[ParentRef<'a, G::R>; 1]>>,
 
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
 
-    /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
-    /// recomputation, which in turn helps determine if our parents are stale & need recomputing
-    /// themselves.
-    pub cutoff: Cell<Cutoff<G::R>>,
+}
 
-    /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
-    /// node's reference-counted pointer at any time.
-    weak_self: Weak<Self>,
-
-    /// A reference to the incremental State we're part of.
-    pub state: Weak<State<'a>>,
+#[derive(Debug)]
+pub(crate) struct ParentChildIndices {
+    pub my_parent_index_in_child_at_index: SmallVec<[i32; 2]>,
+    pub my_child_index_in_parent_at_index: SmallVec<[i32; 1]>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -322,7 +327,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
-    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices<'a>>;
+    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices>;
     fn state_opt(&self) -> Option<Rc<State<'a>>>;
     fn state(&self) -> Rc<State<'a>>;
     fn weak(&self) -> WeakNode<'a>;
@@ -370,7 +375,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn packed(&self) -> NodeRef<'a> {
         self.weak_self.upgrade().unwrap() as NodeRef<'a>
     }
-    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices<'a>> {
+    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices> {
         &self.parent_child_indices
     }
     fn state_opt(&self) -> Option<Rc<State<'a>>> {
@@ -939,8 +944,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
             weak_self: Weak::<Self>::new(),
             state,
             parent_child_indices: RefCell::new(ParentChildIndices {
-                my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
-                my_child_index_in_parent_at_index: vec![-1],
+                my_parent_index_in_child_at_index: SmallVec::with_capacity(kind.initial_num_children()),
+                my_child_index_in_parent_at_index: smallvec![-1],
             }),
             created_in,
             changed_at: Cell::new(StabilisationNum::init()),
@@ -1155,5 +1160,5 @@ fn test_node_size() {
     let state = State::new();
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
-    assert_eq!(core::mem::size_of_val(&*node), 392);
+    assert_eq!(core::mem::size_of_val(&*node), 400);
 }
