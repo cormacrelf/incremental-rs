@@ -7,6 +7,7 @@ pub use super::internal_observer::{ObserverError, SubscriptionToken};
 pub use super::node_update::NodeUpdate;
 pub use super::Incr;
 pub use super::Value;
+pub use super::node::GraphvizDot;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;

@@ -11,7 +11,8 @@ use super::state::State;
 use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::cell::Ref;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Write, Display, self};
 use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
@@ -22,7 +23,7 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct NodeId(usize);
 impl NodeId {
     fn next() -> Self {
@@ -298,6 +299,8 @@ impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
 pub(crate) trait ErasedNode<'a>: Debug {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
+    fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
+    fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
@@ -333,6 +336,8 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn weak(&self) -> WeakNode<'a>;
     fn packed(&self) -> NodeRef<'a>;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ());
+    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef<'a>));
+    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef<'a>));
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate(&self);
     fn invalidate_node(&self);
@@ -356,7 +361,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
 }
 
 impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
             .field("kind", &self.kind.borrow())
@@ -913,6 +918,71 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
         }
     }
+    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef<'a>)) {
+        let mut seen = HashSet::new();
+        self.iter_descendants_internal(&mut seen, f)
+    }
+    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef<'a>)) {
+        if !seen.contains(&self.id) {
+            seen.insert(self.id);
+            f(&self.packed());
+            self.foreach_child(&mut |_ix, child| child.iter_descendants_internal(seen, f))
+        }
+    }
+    fn dot_label(&self, f: &mut dyn Write) -> fmt::Result {
+        match &*self.kind.borrow() {
+            Kind::Invalid => return write!(f, "Invalid"),
+            Kind::Uninitialised => return write!(f, "Uninitialised"),
+            Kind::Constant(v) => return write!(f, "Constant({v:?})"),
+            Kind::ArrayFold(_) => write!(f, "ArrayFold"),
+            Kind::UnorderedArrayFold(_) => write!(f, "UnorderedArrayFold"),
+            Kind::Var(_) => write!(f, "Var"),
+            Kind::Map(_) => write!(f, "Map"),
+            Kind::MapWithOld(_) => write!(f, "MapWithOld"),
+            Kind::Map2(_) => write!(f, "Map2"),
+            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange"),
+            Kind::BindMain(_, _) => write!(f, "BindMain"),
+        }?;
+        write!(f, " => {:?}", self.value_opt())
+    }
+
+    fn dot_write(&self, f: &mut dyn Write) -> fmt::Result {
+        fn node_name(node: &NodeRef) -> String {
+            node.id().0.to_string()
+        }
+        fn print_node(f: &mut dyn Write, node: &NodeRef, name: &str) -> fmt::Result {
+            write!(f, "  {} [", name)?;
+            write!(f, "label=\"")?;
+            node.dot_label(f)?;
+            writeln!(f, "\"]")?;
+            Ok(())
+        }
+        writeln!(f, "digraph G {{")?;
+        writeln!(f, "rankdir = BT")?;
+        let mut bind_edges = vec![];
+        let mut seen = HashSet::new();
+        self.iter_descendants_internal(&mut seen, &mut |node| {
+            let name = node_name(node);
+            print_node(f, node, &name).unwrap();
+            node.foreach_child(&mut |_, child| {
+                writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
+            });
+            match &*self.kind.borrow() {
+                Kind::BindLhsChange(_, bind) => {
+                    let Some(bind)  = bind.upgrade() else { return };
+                    for rhs in bind.all_nodes_created_on_rhs.borrow().iter().filter_map(Weak::upgrade) {
+                        bind_edges.push((node.clone(), rhs.clone()));
+                    }
+                }
+                _ => {}
+            }
+        });
+        for (bind, rhs) in bind_edges {
+            writeln!(f, "  {} -> {} [style=dashed]", node_name(&bind), node_name(&rhs))?;
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
 }
 
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
@@ -1159,4 +1229,29 @@ fn test_node_size() {
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
     assert_eq!(core::mem::size_of_val(&*node), 400);
+}
+
+pub struct GraphvizDot<'a>(NodeRef<'a>);
+
+impl<'a> GraphvizDot<'a> {
+    pub fn new<T>(incr: &Incr<'a, T>) -> Self {
+        Self(incr.node.packed())
+    }
+    pub fn save_to_file(&self, named: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::fs::File;
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(named)?;
+        write!(file, "{}", self)
+    }
+}
+
+impl Display for GraphvizDot<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.dot_write(f)
+    }
 }
