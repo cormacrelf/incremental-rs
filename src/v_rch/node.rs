@@ -39,15 +39,14 @@ impl NodeId {
 }
 
 #[derive(Debug)]
-pub(crate) struct NodeInner<'a> {
-    pub state: Weak<State<'a>>,
+pub(crate) struct ParentChildIndices<'a> {
     pub my_parent_index_in_child_at_index: Vec<i32>,
     pub my_child_index_in_parent_at_index: Vec<i32>,
 }
 
 pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     pub id: NodeId,
-    pub inner: RefCell<NodeInner<'a>>,
+    pub parent_child_indices: RefCell<ParentChildIndices<'a>>,
     pub kind: RefCell<Kind<'a, G>>,
     pub value_opt: RefCell<Option<G::R>>,
     pub old_value_opt: RefCell<Option<G::R>>,
@@ -92,6 +91,9 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
     /// node's reference-counted pointer at any time.
     weak_self: Weak<Self>,
+
+    /// A reference to the incremental State we're part of.
+    pub state: Weak<State<'a>>,
 }
 
 pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
@@ -173,15 +175,14 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     }
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
         let child = self;
-        let child_inner = child.inner();
-        let mut ci = child_inner.borrow_mut();
+        let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
         let parent = parent_weak.upgrade_erased().unwrap();
-        let parent_inner = parent.inner();
-        let mut parent_i = parent_inner.borrow_mut();
+        let parent_indices_cell = parent.parent_child_indices();
+        let mut parent_indices = parent_indices_cell.borrow_mut();
 
         debug_assert!(child_parents.len() >= 1);
-        let parent_index = parent_i.my_parent_index_in_child_at_index[child_index as usize];
+        let parent_index = parent_indices.my_parent_index_in_child_at_index[child_index as usize];
         debug_assert!(parent_weak.ptr_eq(&child_parents[parent_index as usize].clone()));
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
@@ -189,17 +190,17 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             // small.
             let end_p_weak = child_parents[last_parent_index].clone();
             if let Some(end_p) = end_p_weak.upgrade_erased() {
-                let end_p_inner = end_p.inner();
-                let mut end_p_i = end_p_inner.borrow_mut();
-                let end_child_index = ci.my_child_index_in_parent_at_index[last_parent_index];
+                let end_p_indices_cell = end_p.parent_child_indices();
+                let mut end_p_indices = end_p_indices_cell.borrow_mut();
+                let end_child_index = child_indices.my_child_index_in_parent_at_index[last_parent_index];
                 // link parent_index & end_child_index
-                end_p_i.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
-                ci.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
+                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
+                child_indices.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
             }
         }
         // unlink last_parent_index & child_index
-        parent_i.my_parent_index_in_child_at_index[child_index as usize] = -1;
-        ci.my_child_index_in_parent_at_index[last_parent_index] = -1;
+        parent_indices.my_parent_index_in_child_at_index[child_index as usize] = -1;
+        child_indices.my_child_index_in_parent_at_index[last_parent_index] = -1;
 
         // now do what we just did but super easily in the actual Vec
         child_parents.swap_remove(parent_index as usize);
@@ -321,7 +322,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
-    fn inner(&self) -> &RefCell<NodeInner<'a>>;
+    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices<'a>>;
     fn state_opt(&self) -> Option<Rc<State<'a>>>;
     fn state(&self) -> Rc<State<'a>>;
     fn weak(&self) -> WeakNode<'a>;
@@ -353,9 +354,8 @@ impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            // .field("height", &self.height.get())
             .field("kind", &self.kind.borrow())
-            // .field("inner", &self.inner)
+            // .field("height", &self.height.get())
             .finish()
     }
 }
@@ -370,14 +370,14 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     fn packed(&self) -> NodeRef<'a> {
         self.weak_self.upgrade().unwrap() as NodeRef<'a>
     }
-    fn inner(&self) -> &RefCell<NodeInner<'a>> {
-        &self.inner
+    fn parent_child_indices(&self) -> &RefCell<ParentChildIndices<'a>> {
+        &self.parent_child_indices
     }
     fn state_opt(&self) -> Option<Rc<State<'a>>> {
-        self.inner().borrow().state.upgrade()
+        self.state.upgrade()
     }
     fn state(&self) -> Rc<State<'a>> {
-        self.inner().borrow().state.upgrade().unwrap()
+        self.state.upgrade().unwrap()
     }
     fn is_valid(&self) -> bool {
         let k = self.kind.borrow();
@@ -937,8 +937,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         Node {
             id: NodeId::next(),
             weak_self: Weak::<Self>::new(),
-            inner: RefCell::new(NodeInner {
-                state,
+            state,
+            parent_child_indices: RefCell::new(ParentChildIndices {
                 my_parent_index_in_child_at_index: Vec::with_capacity(kind.initial_num_children()),
                 my_child_index_in_parent_at_index: vec![-1],
             }),
@@ -976,19 +976,16 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         should_change: bool,
     ) {
         if should_change {
-            let inner = self.inner.borrow();
-            let istate = inner.state.upgrade().unwrap();
+            let pci = self.parent_child_indices.borrow();
+            let t = self.state();
             self.value_opt.replace(Some(value));
-            self.changed_at.set(istate.stabilisation_num.get());
-            istate
-                .num_nodes_changed
-                .set(istate.num_nodes_changed.get() + 1);
+            self.changed_at.set(t.stabilisation_num.get());
+            t.num_nodes_changed.set(t.num_nodes_changed.get() + 1);
             self.maybe_handle_after_stabilisation();
             let parents = self.parents.borrow();
             for (parent_index, parent) in parents.iter().enumerate() {
                 let Some(p) = parent.upgrade_erased() else { continue };
-                let i = self.inner().borrow();
-                let child_index = i.my_child_index_in_parent_at_index[parent_index];
+                let child_index = pci.my_child_index_in_parent_at_index[parent_index];
                 {
                     parent.child_changed(&self.as_child(), child_index, old_value_opt.clone());
                 }
@@ -1063,25 +1060,24 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
 
     fn add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
         let child = self;
-        let child_inner = self.inner();
-        let mut ci = child_inner.borrow_mut();
+        let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
 
         // we're appending here
         let parent = parent_weak.upgrade_erased().unwrap();
         let parent_index = child_parents.len() as i32;
-        let parent_inner = parent.inner();
-        let mut parent_i = parent_inner.borrow_mut();
+        let parent_indices_cell = parent.parent_child_indices();
+        let mut parent_indices = parent_indices_cell.borrow_mut();
 
-        while ci.my_child_index_in_parent_at_index.len() <= parent_index as usize {
-            ci.my_child_index_in_parent_at_index.push(-1);
+        while child_indices.my_child_index_in_parent_at_index.len() <= parent_index as usize {
+            child_indices.my_child_index_in_parent_at_index.push(-1);
         }
-        ci.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
+        child_indices.my_child_index_in_parent_at_index[parent_index as usize] = child_index;
 
-        while parent_i.my_parent_index_in_child_at_index.len() <= child_index as usize {
-            parent_i.my_parent_index_in_child_at_index.push(-1);
+        while parent_indices.my_parent_index_in_child_at_index.len() <= child_index as usize {
+            parent_indices.my_parent_index_in_child_at_index.push(-1);
         }
-        parent_i.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
+        parent_indices.my_parent_index_in_child_at_index[child_index as usize] = parent_index;
 
         child_parents.push(parent_weak);
     }
