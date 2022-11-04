@@ -86,8 +86,10 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         let t = self.state.upgrade().unwrap();
         match t.status.get() {
             IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {
-                let mut v = self.value.borrow_mut();
-                f(&mut v);
+                {
+                    let mut v = self.value.borrow_mut();
+                    f(&mut v);
+                }
                 self.did_set_var_while_not_stabilising();
             }
             IncrStatus::Stabilising => {

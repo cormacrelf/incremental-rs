@@ -329,12 +329,11 @@ impl<'a> State<'a> {
             let mut stdout = std::io::stdout();
             stdout.flush().unwrap();
             self.stabilise_start();
-            while let Some(min) = {
-                // we need to access rch in recompute() > maybe_change_value()
-                // so fine grained access here
-                self.recompute_heap.remove_min()
-            } {
-                min.recompute();
+            while let Some(mut min_layer) = self.recompute_heap.swap_min_layer() {
+                for node in min_layer.drain(..) {
+                    node.recompute();
+                    node.height_in_recompute_heap().set(-1);
+                }
             }
             self.stabilise_end();
         });
