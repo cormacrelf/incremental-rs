@@ -23,8 +23,8 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct NodeId(usize);
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct NodeId(pub(crate) usize);
 impl NodeId {
     fn next() -> Self {
         thread_local! {
@@ -36,6 +36,11 @@ impl NodeId {
             x.set(next);
             NodeId(next)
         })
+    }
+}
+impl fmt::Debug for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "id={}", self.0)
     }
 }
 
@@ -167,10 +172,10 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             ah_heap.adjust_heights(rch, self.packed(), parent.packed());
         }
         self.state().propagate_invalidity();
-        debug_assert!(parent.is_necessary());
         /* we only add necessary parents */
+        debug_assert!(parent.is_necessary());
         if !parent.is_in_recompute_heap()
-            && (parent.recomputed_at().get().is_none() || self.edge_is_stale(parent.weak()))
+            && (parent.recomputed_at().get().is_never() || self.edge_is_stale(parent.weak()))
         {
             let t = self.state();
             t.recompute_heap.insert(parent.packed());
@@ -301,6 +306,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
+    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef<'a>, NodeRef<'a>)>);
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
@@ -647,17 +653,20 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.maybe_change_value(v.clone());
             }
             Kind::Var(var) => {
-                let value = var.value.borrow();
-                let v = value.clone();
-                tracing::debug!("recomputing Var(id={id:?}) <- {v:?}");
-                drop(value);
-                self.maybe_change_value(v);
+                let new_value = {
+                    let value = var.value.borrow();
+                    value.clone()
+                };
+                tracing::debug!("recomputing Var({id:?}) <- {new_value:?}");
+                self.maybe_change_value(new_value);
             }
             Kind::Map(map) => {
                 let map: &MapNode<G::F1, G::I1, G::R> = map;
-                let input = map.input.value_as_ref().unwrap();
-                let mut f = map.mapper.borrow_mut();
-                let new_value = f(&input);
+                let new_value = {
+                    let input = map.input.value_as_ref().unwrap();
+                    let mut f = map.mapper.borrow_mut();
+                    f(&input)
+                };
                 tracing::debug!("<- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
@@ -680,7 +689,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 tracing::debug!("recomputing Map2(id={id:?}) <- {new_value:?}");
                 self.maybe_change_value(new_value);
             }
-            Kind::BindLhsChange(id, bind) => {
+            Kind::BindLhsChange(casts, bind) => {
                 let Some(bind) = bind.upgrade() else { return };
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
@@ -733,12 +742,12 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 debug_assert!(self.is_valid());
-                self.maybe_change_value(id.r_unit.cast(()));
+                self.maybe_change_value(casts.r_unit.cast(()));
             }
-            Kind::BindMain(id, bind) => {
+            Kind::BindMain(casts, bind) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 tracing::debug!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
-                self.copy_child_bindrhs(&rhs.node, id.rhs_r);
+                self.copy_child_bindrhs(&rhs.node, casts.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
             Kind::UnorderedArrayFold(uaf) => {
@@ -930,10 +939,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result {
+        let id = self.id;
         match &*self.kind.borrow() {
-            Kind::Invalid => return write!(f, "Invalid"),
-            Kind::Uninitialised => return write!(f, "Uninitialised"),
-            Kind::Constant(v) => return write!(f, "Constant({v:?})"),
+            Kind::Invalid => return write!(f, "Invalid({id:?})"),
+            Kind::Uninitialised => return write!(f, "Uninitialised({id:?})"),
+            Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?})"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
             Kind::UnorderedArrayFold(_) => write!(f, "UnorderedArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
@@ -943,42 +953,63 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange"),
             Kind::BindMain(_, _) => write!(f, "BindMain"),
         }?;
-        write!(f, " => {:?}", self.value_opt())
+        write!(f, "({id:?})")?;
+        if let Some(val) = self.value_as_ref() {
+            write!(f, " => {:?}", &*val)?;
+        }
+        Ok(())
     }
 
+    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef<'a>, NodeRef<'a>)>) {
+        match &*self.kind.borrow() {
+            Kind::BindLhsChange(_, bind) => {
+                tracing::warn!("about to check bindlhschange.bind {:?}", bind.upgrade());
+                let Some(bind)  = bind.upgrade() else { return };
+                let all = bind.all_nodes_created_on_rhs.borrow();
+                tracing::warn!("graphviz:all_nodes_created_on_rhs = {:?}", &*all);
+                for rhs in all.iter().filter_map(Weak::upgrade) {
+                    tracing::info!("bind created on RHS: {rhs:?}");
+                    bind_edges.push((self.packed(), rhs.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result {
         fn node_name(node: &NodeRef) -> String {
             node.id().0.to_string()
         }
         fn print_node(f: &mut dyn Write, node: &NodeRef, name: &str) -> fmt::Result {
             write!(f, "  {} [", name)?;
-            write!(f, "label=\"")?;
-            node.dot_label(f)?;
-            writeln!(f, "\"]")?;
+            write!(f, "label=")?;
+            let t = node.state();
+            let r = t.stabilisation_num.get();
+            let mut buf = String::new();
+            node.dot_label(&mut buf)?;
+            write!(f, "{:?}", buf)?;
+            if node.recomputed_at().get().add1() < r {
+                write!(f, ", color=grey, fontcolor=grey")?;
+            }
+            writeln!(f, "]")?;
             Ok(())
         }
         writeln!(f, "digraph G {{")?;
-        writeln!(f, "rankdir = BT")?;
+        writeln!(f, "  rankdir = BT")?;
         let mut bind_edges = vec![];
         let mut seen = HashSet::new();
         self.iter_descendants_internal(&mut seen, &mut |node| {
+            tracing::warn!("graphviz:doing a node {:?}", node);
             let name = node_name(node);
             print_node(f, node, &name).unwrap();
             node.foreach_child(&mut |_, child| {
                 writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
             });
-            match &*self.kind.borrow() {
-                Kind::BindLhsChange(_, bind) => {
-                    let Some(bind)  = bind.upgrade() else { return };
-                    for rhs in bind.all_nodes_created_on_rhs.borrow().iter().filter_map(Weak::upgrade) {
-                        bind_edges.push((node.clone(), rhs.clone()));
-                    }
-                }
-                _ => {}
-            }
+            node.dot_add_bind_edges(&mut bind_edges);
         });
         for (bind, rhs) in bind_edges {
-            writeln!(f, "  {} -> {} [style=dashed]", node_name(&bind), node_name(&rhs))?;
+            if seen.contains(&rhs.id()) {
+                writeln!(f, "  {} -> {} [style=dashed]", node_name(&bind), node_name(&rhs))?;
+            }
         }
         writeln!(f, "}}")?;
         Ok(())
@@ -986,6 +1017,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
 }
 
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
+    tracing::warn!("draining all_nodes_created_on_rhs for invalidation");
     for node in all_nodes_created_on_rhs.drain(..) {
         if let Some(node) = node.upgrade() {
             node.invalidate_node();
@@ -1234,8 +1266,11 @@ fn test_node_size() {
 pub struct GraphvizDot<'a>(NodeRef<'a>);
 
 impl<'a> GraphvizDot<'a> {
+    pub(crate) fn new_erased(erased: NodeRef<'a>) -> Self {
+        Self(erased)
+    }
     pub fn new<T>(incr: &Incr<'a, T>) -> Self {
-        Self(incr.node.packed())
+        Self::new_erased(incr.node.packed())
     }
     pub fn save_to_file(&self, named: &str) -> std::io::Result<()> {
         use std::io::Write;

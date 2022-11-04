@@ -178,6 +178,9 @@ impl<'a> State<'a> {
         F: FnMut(R, &T) -> R + 'a,
         U: FnMut(R, &T, &T) -> R + 'a,
     {
+        if vec.is_empty() {
+            return self.constant(init);
+        }
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 

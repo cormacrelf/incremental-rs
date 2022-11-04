@@ -380,19 +380,26 @@ fn fold() {
 #[test]
 fn bind_fold() {
     let incr = IncrState::new();
+
     let v1 = incr.var(10i32);
     let v2 = incr.var(20);
     let v3 = incr.var(30);
-    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+
+    let vars = incr.var(vec![v1.clone(), v2, v3]);
+
     let sum = vars.binds(|incr, vars| {
-        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+        let watches = vars.iter().map(Var::watch).collect();
         incr.fold(watches, 0, |acc, x| acc + x)
     });
+
     let obs = sum.observe();
     incr.stabilise();
     assert_eq!(obs.value(), Ok(60));
+
     v1.set(40);
     incr.stabilise();
+    obs.save_dot_to_file("bind_fold.dot");
+
     assert_eq!(obs.value(), Ok(90));
     vars.set(vec![v1.clone()]);
     incr.stabilise();
@@ -402,12 +409,15 @@ fn bind_fold() {
 #[test]
 fn unordered_fold() {
     let incr = IncrState::new();
+
     let v1 = incr.var(10i32);
     let v2 = incr.var(20);
     let v3 = incr.var(30);
-    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+
+    let vars = incr.var(vec![v1.clone(), v2, v3]);
+
     let sum = vars.binds(|incr, vars| {
-        let watches: Vec<Incr<i32>> = vars.iter().map(Var::watch).collect();
+        let watches = vars.iter().map(Var::watch).collect();
         incr.unordered_fold(
             watches,
             0,
@@ -416,15 +426,25 @@ fn unordered_fold() {
             None,
         )
     });
+
     let obs = sum.observe();
     incr.stabilise();
+    obs.save_dot_to_file("unordered_fold-1.dot");
     assert_eq!(obs.value(), Ok(60));
+
     v1.set(40);
     incr.stabilise();
+    obs.save_dot_to_file("unordered_fold-2.dot");
+
     assert_eq!(obs.value(), Ok(90));
     vars.set(vec![v1.clone()]);
     incr.stabilise();
+    obs.save_dot_to_file("unordered_fold-3.dot");
     assert_eq!(obs.value(), Ok(40));
+
+    vars.set(vec![]);
+    incr.stabilise();
+    obs.save_dot_to_file("unordered_fold-4.dot");
 }
 
 #[derive(Debug)]
@@ -543,6 +563,7 @@ fn incr_map_uf() {
     setter.set(b.clone());
     incr.stabilise();
     assert_eq!(o.value(), Ok(113));
+    o.save_dot_to_file("incr_map_uf.dot");
 }
 
 #[test]
@@ -670,6 +691,7 @@ fn var_update_during_stabilisation() {
     assert_eq!(o.value(), Ok(5));
     incr.stabilise();
     assert_eq!(o.value(), Ok(6));
+    o.save_dot_to_file("var_update_during_stabilisation.dot");
 }
 
 #[test]
@@ -713,6 +735,7 @@ fn test_constant() {
     flip.set(!flip.get());
     incr.stabilise();
     assert_eq!(o2.value(), Ok(10));
+    o2.save_dot_to_file("test_constant.dot");
 }
 
 #[test]

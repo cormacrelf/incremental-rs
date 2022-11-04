@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use std::fmt;
 use std::ops::{Deref, Sub};
 use std::rc::Rc;
 
@@ -60,6 +61,12 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
     pub fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError> {
         self.internal.unsubscribe(token)
     }
+
+    pub fn save_dot_to_file(&self, named: &str) {
+        GraphvizDot::new_erased(self.internal.observing())
+            .save_to_file(named)
+            .unwrap();
+    }
 }
 
 impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
@@ -84,12 +91,23 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
 }
 
 // Just to hide the Rc in the interface
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Var<'a, T: Value<'a>> {
     internal: Rc<InternalVar<'a, T>>,
     sentinel: Rc<()>,
     // for the Deref impl
     watch: Incr<'a, T>,
+}
+
+impl<'a, T: Value<'a>> fmt::Debug for Var<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut tuple = f.debug_tuple("Var");
+        let internal = self.internal.value.borrow();
+        tuple
+            .field(&self.id())
+            .field(&*internal)
+            .finish()
+    }
 }
 
 impl<'a, T: Value<'a>> PartialEq for Var<'a, T> {

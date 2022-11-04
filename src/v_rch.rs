@@ -18,7 +18,7 @@ mod var;
 
 use crate::v_rch::kind::BindMainId;
 use crate::v_rch::node::Incremental;
-use crate::IncrState;
+use crate::{IncrState, GraphvizDot};
 
 use self::cutoff::Cutoff;
 use self::kind::Kind;
@@ -204,6 +204,7 @@ where
         self.lhs_change.height.get()
     }
     fn add_node(&self, node: WeakNode<'a>) {
+        tracing::info!("added node to scope {self:?}: {:?}", node.upgrade());
         let mut all = self.all_nodes_created_on_rhs.borrow_mut();
         all.push(node);
     }
@@ -438,28 +439,33 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
             lhs_change,
             main: Rc::downgrade(&main),
         });
-        let bind_scope = Scope::Bind(Rc::downgrade(&bind) as Weak<dyn BindScope<'a>>);
-        let mut rhs_scope = bind.rhs_scope.borrow_mut();
-        *rhs_scope = bind_scope;
+        {
+            let mut rhs_scope = bind.rhs_scope.borrow_mut();
+            *rhs_scope = Scope::Bind(Rc::downgrade(&bind) as Weak<dyn BindScope<'a>>);
+        }
 
         let main_incr = Incr { node: main.clone() };
-        let mut main_kind = main.kind.borrow_mut();
-        *main_kind = Kind::BindMain(
-            BindMainId {
-                input_lhs_i2: refl(),
-                input_rhs_i1: refl(),
-                rhs_r: refl(),
-            },
-            bind.clone(),
-        );
-        let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
-        *lhs_change_kind = Kind::BindLhsChange(
-            kind::BindLhsId {
-                r_unit: refl(),
-                input_lhs_i2: refl(),
-            },
-            Rc::downgrade(&bind),
-        );
+        {
+            let mut main_kind = main.kind.borrow_mut();
+            *main_kind = Kind::BindMain(
+                BindMainId {
+                    input_lhs_i2: refl(),
+                    input_rhs_i1: refl(),
+                    rhs_r: refl(),
+                },
+                bind.clone(),
+                );
+        }
+        {
+            let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
+            *lhs_change_kind = Kind::BindLhsChange(
+                kind::BindLhsId {
+                    r_unit: refl(),
+                    input_lhs_i2: refl(),
+                },
+                Rc::downgrade(&bind),
+                );
+        }
         /* We set [lhs_change] to never cutoff so that whenever [lhs] changes, [main] is
         recomputed.  This is necessary to handle cases where [f] returns an existing stable
         node, in which case the [lhs_change] would be the only thing causing [main] to be
@@ -524,6 +530,10 @@ impl<'a, T: Value<'a>> Incr<'a, T> {
     ///
     pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
         self.node.set_cutoff(cutoff);
+    }
+
+    pub fn save_dot_to_file(&self, named: &str) {
+        GraphvizDot::new(self).save_to_file(named).unwrap();
     }
 }
 

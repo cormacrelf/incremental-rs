@@ -47,8 +47,8 @@ where
     R: Debug + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ListAllNode")
-            // .field("inputs", &self.inputs)
+        f.debug_struct("ArrayFold")
+            .field("len", &self.children.len())
             .finish()
     }
 }
