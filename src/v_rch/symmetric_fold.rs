@@ -185,7 +185,7 @@ pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
         FAdd: FnMut(R, &K, &V) -> R,
         FRemove: FnMut(R, &K, &V) -> R,
         K: Ord,
-        V: Eq,
+        V: PartialEq,
     {
         self.symmetric_diff(other)
             .fold(init, |mut acc, elem| match elem {
@@ -215,7 +215,7 @@ pub(crate) trait SymmetricDiffMapOwned<K, V> {
         FAdd: FnMut(R, K, V) -> R,
         FRemove: FnMut(R, K, V) -> R,
         K: Ord,
-        V: Eq,
+        V: PartialEq,
         Self: Sized,
     {
         self.symmetric_diff_owned(other)
@@ -230,7 +230,7 @@ pub(crate) trait SymmetricDiffMapOwned<K, V> {
     }
 }
 
-impl<'a, K: Ord + 'a, V: Eq + 'a> SymmetricDiffMap<'a, K, V> for BTreeMap<K, V> {
+impl<'a, K: Ord + 'a, V: PartialEq + 'a> SymmetricDiffMap<'a, K, V> for BTreeMap<K, V> {
     type Iter = SymmetricDiff<'a, K, V>;
     fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter {
         SymmetricDiff {
@@ -241,7 +241,7 @@ impl<'a, K: Ord + 'a, V: Eq + 'a> SymmetricDiffMap<'a, K, V> for BTreeMap<K, V> 
     }
 }
 
-impl<K: Ord, V: Eq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
+impl<K: Ord, V: PartialEq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
     type Iter = SymmetricDiffOwned<K, V>;
     fn symmetric_diff_owned(self, other: Self) -> SymmetricDiffOwned<K, V> {
         SymmetricDiffOwned {
@@ -271,9 +271,9 @@ impl<K: Ord, V> GenericMap<K, V> for BTreeMap<K, V> {
 
 pub trait SymmetricMapMap<K, V> {
     type UnderlyingMap: GenericMap<K, V>;
-    type OutputMap<V2: Eq + Clone>: SymmetricMapMap<K, V2>;
+    type OutputMap<V2: PartialEq + Clone>: SymmetricMapMap<K, V2>;
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap;
-    fn filter_map_collect<V2: Eq + Clone>(
+    fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,
     ) -> Self::OutputMap<V2>;
@@ -293,15 +293,15 @@ pub trait SymmetricFoldMap<K, V> {
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R;
 }
 
-impl<K: Ord + Clone, V: Eq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+impl<K: Ord + Clone, V: PartialEq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
     type UnderlyingMap = BTreeMap<K, V>;
-    type OutputMap<V2: Eq + Clone> = Rc<BTreeMap<K, V2>>;
+    type OutputMap<V2: PartialEq + Clone> = Rc<BTreeMap<K, V2>>;
     #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         Rc::make_mut(self)
     }
     #[inline]
-    fn filter_map_collect<V2: Eq + Clone>(
+    fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,
     ) -> Self::OutputMap<V2> {
@@ -309,7 +309,7 @@ impl<K: Ord + Clone, V: Eq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>>
     }
 }
 
-impl<K: Ord, V: Eq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
+impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
     fn symmetric_fold<R>(
         &self,
         other: &Self,
@@ -329,13 +329,13 @@ impl<K: Ord, V: Eq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
     }
 }
 
-impl<K: Ord + Clone, V: Eq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+impl<K: Ord + Clone, V: PartialEq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
     type UnderlyingMap = Self;
-    type OutputMap<V2: Eq + Clone> = BTreeMap<K, V2>;
+    type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
     fn make_mut(&mut self) -> &mut Self {
         self
     }
-    fn filter_map_collect<V2: Eq + Clone>(
+    fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,
     ) -> Self::OutputMap<V2> {
@@ -344,7 +344,7 @@ impl<K: Ord + Clone, V: Eq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
             .collect()
     }
 }
-impl<K: Ord, V: Eq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
+impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
     fn symmetric_fold<R>(
         &self,
         other: &Self,
