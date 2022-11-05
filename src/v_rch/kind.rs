@@ -6,10 +6,10 @@ use crate::{Incr, Value};
 use refl::Id;
 
 use super::array_fold::ArrayFold;
-use super::node::Input;
+use super::node::{Input, Node};
 use super::unordered_fold::UnorderedArrayFold;
 use super::var::Var;
-use super::{BindNode, Map2Node, MapNode, MapWithOld};
+use super::{BindNode, Map2Node, MapNode, MapWithOld, MapRefNode, BindLhsChangeNodeGenerics};
 
 pub(crate) trait NodeGenerics: 'static {
     type R: Value;
@@ -18,6 +18,7 @@ pub(crate) trait NodeGenerics: 'static {
     type I1: Value;
     type I2: Value;
     type F1: FnMut(&Self::I1) -> Self::R;
+    type FRef: Fn(&Self::I1) -> &Self::R;
     type F2: FnMut(&Self::I1, &Self::I2) -> Self::R;
     type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold: FnMut(Self::R, &Self::I1) -> Self::R;
@@ -26,8 +27,6 @@ pub(crate) trait NodeGenerics: 'static {
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
-    Invalid,
-    Uninitialised,
     Constant(G::R),
     ArrayFold(ArrayFold<G::Fold, G::I1, G::R>),
     UnorderedArrayFold(UnorderedArrayFold<G::Fold, G::Update, G::I1, G::R>),
@@ -36,18 +35,20 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Var(Rc<Var<G::R>>),
     Map(MapNode<G::F1, G::I1, G::R>),
     MapWithOld(MapWithOld<G::WithOld, G::I1, G::R>),
+    MapRef(MapRefNode<G::FRef, G::I1, G::R>),
     Map2(Map2Node<G::F2, G::I1, G::I2, G::R>),
     BindLhsChange(
         BindLhsId<G>,
         // Ownership goes
-        // a node with Kind::BindMain owns BindNode
-        // BindNode owns a node with Kind::LhsChange
-        // Hence it would be a cycle for Kind::LhsChange to own BindNode.
-        Weak<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        // a Kind::BindMain holds a BindNode & the BindLhsChange
+        // a Kind::BindLhsChange holds a BindNode
+        // BindNode holds weak refs to both
+        Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
     ),
     BindMain(
         BindMainId<G>,
         Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        Rc<Node<BindLhsChangeNodeGenerics<G::B1, G::BindLhs, G::BindRhs>>>,
     ),
 }
 
@@ -80,8 +81,6 @@ impl<G: NodeGenerics> Debug for BindMainId<G> {
 impl<G: NodeGenerics> Debug for Kind<G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Kind::Invalid => write!(f, "Invalid"),
-            Kind::Uninitialised => write!(f, "Uninitialised"),
             Kind::Constant(v) => write!(f, "Constant({v:?})"),
             Kind::ArrayFold(af) => write!(f, "ArrayFold({af:?})"),
             Kind::UnorderedArrayFold(uaf) => write!(f, "UnorderedArrayFold({uaf:?})"),
@@ -90,7 +89,8 @@ impl<G: NodeGenerics> Debug for Kind<G> {
             Kind::MapWithOld(map) => write!(f, "MapWithOld({:?})", map),
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
             Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
-            Kind::BindMain(_, bind) => write!(f, "BindMain({:?})", bind),
+            Kind::BindMain(_, bind, _) => write!(f, "BindMain({:?})", bind),
+            Kind::MapRef(mapref) => write!(f, "MapRef({:?})", mapref),
         }
     }
 }
@@ -99,12 +99,10 @@ impl<G: NodeGenerics> Kind<G> {
     pub(crate) const BIND_RHS_CHILD_INDEX: i32 = 1;
     pub(crate) fn initial_num_children(&self) -> usize {
         match self {
-            Self::Invalid => 0,
-            Self::Uninitialised => 0,
             Self::Constant(_) => 0,
             Self::ArrayFold(af) => af.children.len(),
             Self::Var(_) => 0,
-            Self::Map(_) | Self::MapWithOld(_) => 1,
+            Self::Map(_) | Self::MapWithOld(_) | Self::MapRef(_) => 1,
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,
@@ -127,4 +125,5 @@ impl<T: Value> NodeGenerics for Constant<T> {
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }

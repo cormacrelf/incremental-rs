@@ -25,6 +25,7 @@ impl<R: Value> NodeGenerics for VarGenerics<R> {
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &R;
 }
 
 // For the delayed variable set list (set_during_stabilisation).
@@ -48,7 +49,7 @@ impl<T: Value> ErasedVariable for Var<T> {
         }
     }
     fn id(&self) -> NodeId {
-        self.node_id
+        self.node_id.get()
     }
     fn break_rc_cycle(&self) {
         self.node.take();
@@ -60,8 +61,10 @@ pub struct Var<T: Value> {
     pub(crate) value: RefCell<T>,
     pub(crate) value_set_during_stabilisation: RefCell<Option<T>>,
     pub(crate) set_at: Cell<StabilisationNum>,
+    // mutable for initialisation
     pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
-    pub(crate) node_id: NodeId,
+    // mutable for initialisation
+    pub(crate) node_id: Cell<NodeId>,
 }
 
 impl<T: Value> Debug for Var<T> {

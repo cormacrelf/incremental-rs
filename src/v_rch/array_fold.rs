@@ -18,7 +18,7 @@ where
     pub(crate) fn compute(&self) -> R {
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
-        self.children.iter().fold(acc, |acc, x| {
+        self.children.iter().fold(acc, |mut acc, x| {
             let v = x.node.value_as_ref().unwrap();
             f(acc, &v)
         })
@@ -40,6 +40,7 @@ where
     type Fold = F;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 impl<F, I, R> Debug for ArrayFold<F, I, R>

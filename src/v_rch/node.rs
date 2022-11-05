@@ -8,7 +8,7 @@ use super::kind::{Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
 use super::state::State;
-use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode};
+use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode, MapRefNode};
 use core::fmt::Debug;
 use std::cell::Ref;
 use std::collections::{HashMap, HashSet};
@@ -61,7 +61,8 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
     pub value_opt: RefCell<Option<G::R>>,
-    pub kind: RefCell<Kind<G>>,
+    pub is_valid: Cell<bool>,
+    pub kind: Kind<G>,
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
@@ -109,7 +110,9 @@ pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
 
 pub(crate) trait Incremental<R>: ErasedNode + Debug {
     fn as_input(&self) -> Input<R>;
+    #[deprecated = "doesn't work with Kind::MapRef"]
     fn latest(&self) -> R;
+    #[deprecated = "doesn't work with Kind::MapRef"]
     fn value_opt(&self) -> Option<R>;
     fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<R>);
     fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
@@ -128,8 +131,17 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.value_opt.borrow().clone().unwrap()
     }
     fn value_as_ref(&self) -> Option<Ref<G::R>> {
+        match &self.kind {
+            Kind::MapRef(mapref) => {
+                let mapper = &mapref.mapper;
+                let input = mapref.input.value_as_ref()?;
+                let mapped = Ref::filter_map(input, |iref| Some(mapper(&iref))).ok();
+                return mapped
+            }
+            _ => {}
+        }
         let v = self.value_opt.borrow();
-        Ref::filter_map(v, |v| v.as_ref()).ok()
+        Ref::filter_map(v, |o| o.as_ref()).ok()
     }
     fn value_opt(&self) -> Option<G::R> {
         self.value_opt.borrow().clone()
@@ -226,10 +238,10 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
 }
 
 pub(crate) trait ParentNode<I> {
-    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<I>);
+    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<&I>);
 }
 pub(crate) trait Parent1<I>: Debug + ErasedNode {
-    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<I>);
+    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<&I>);
 }
 pub(crate) trait Parent2<I>: Debug + ErasedNode {}
 
@@ -266,7 +278,7 @@ impl<T: Value> ParentRef<T> {
 }
 
 impl<T: Value> ParentNode<T> for ParentRef<T> {
-    fn child_changed(&self, child: &Input<T>, child_index: i32, old_value_opt: Option<T>) {
+    fn child_changed(&self, child: &Input<T>, child_index: i32, old_value_opt: Option<&T>) {
         match self {
             Self::I1(i1) => {
                 let i1 = i1.upgrade().unwrap();
@@ -279,14 +291,27 @@ impl<T: Value> ParentNode<T> for ParentRef<T> {
 }
 impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {}
 impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
-    fn child_changed(&self, child: &Input<G::I1>, child_index: i32, old_value_opt: Option<G::I1>) {
-        let k = self.kind.borrow();
-        match &*k {
+    fn child_changed(&self, child: &Input<G::I1>, child_index: i32, old_value_opt: Option<&G::I1>) {
+        match &self.kind {
             // Kind::Expert => ...,
             Kind::UnorderedArrayFold(uaf) => {
                 let new_value = child.value_as_ref().unwrap();
-                uaf.child_changed(child, child_index, old_value_opt, &*new_value)
+                uaf.child_changed(child, child_index, old_value_opt, &new_value)
             }
+            Kind::MapRef(mapref) => {
+                let self_old = old_value_opt.map(|v| (mapref.mapper)(v));
+                let child_new = child.value_as_ref().unwrap();
+                let self_new = (mapref.mapper)(&child_new);
+
+                let did_change =
+                    self_old.is_none() || self.cutoff.get().should_cutoff(self_old.unwrap(), self_new);
+                // now we propagate to parent
+                // we can do this because we know we don't have to wait for "all our children"
+                // i.e. we know there is only one that could have fired child_change on us in the
+                // first place.
+                self.maybe_change_value_manual(self_old, None, did_change)
+            }
+            // TODO: same for MapWithOld. While we still have access to the old value?
             _ => {}
         }
     }
@@ -361,7 +386,7 @@ impl<G: NodeGenerics> Debug for Node<G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            .field("kind", &self.kind.borrow())
+            .field("kind", &self.kind)
             // .field("height", &self.height.get())
             .finish()
     }
@@ -387,37 +412,30 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.state.upgrade().unwrap()
     }
     fn is_valid(&self) -> bool {
-        let k = self.kind.borrow();
-        match &*k {
-            Kind::Invalid => false,
-            _ => true,
-        }
+        self.is_valid.get()
     }
     fn should_be_invalidated(&self) -> bool {
-        let k = self.kind.borrow();
-        match &*k {
-            Kind::Uninitialised => panic!(),
-            Kind::Invalid | Kind::Constant(_) | Kind::Var(_) => false,
+        match &self.kind {
+            Kind::Constant(_) | Kind::Var(_) => false,
             Kind::ArrayFold(..)
             | Kind::UnorderedArrayFold(..)
             | Kind::Map(..)
             | Kind::MapWithOld(..)
+            | Kind::MapRef(..)
             | Kind::Map2(..) => self.has_invalid_child(),
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
             reason as above).  This is equivalent to [has_invalid_child t]. */
             Kind::BindLhsChange(_, bind) => {
-                let Some(bind) = bind.upgrade() else { return false };
                 !bind.lhs.is_valid()
             }
             /* [Bind_main], [If_then_else], and [Join_main] are invalid if their *_change child is,
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
-            Kind::BindMain(_, bind) => !bind.lhs_change.is_valid(),
+            Kind::BindMain(_, _, lhs_change) => !lhs_change.is_valid(),
         }
     }
     fn propagate_invalidity_helper(&self) {
-        let k = self.kind.borrow();
-        match &*k {
+        match &self.kind {
             // Kind::Expert => ...
             kind => {
                 #[cfg(debug_assertions)]
@@ -469,9 +487,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.height.set(height);
     }
     fn is_stale(&self) -> bool {
-        let k = self.kind.borrow();
-        match &*k {
-            Kind::Invalid | Kind::Uninitialised => panic!(),
+        match &self.kind {
             Kind::Var(var) => {
                 let set_at = var.set_at.get();
                 let recomputed_at = self.recomputed_at.get();
@@ -481,6 +497,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::ArrayFold(_)
             | Kind::UnorderedArrayFold(_)
             | Kind::Map(_)
+            // for MapRef, we never "recompute" ourselves. the action happens in
+            // child_changed/value_as_ref
+            | Kind::MapRef(_)
             | Kind::MapWithOld(_)
             | Kind::Map2(_)
             | Kind::BindLhsChange(..)
@@ -578,8 +597,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.maybe_handle_after_stabilisation();
         t.set_height(self.packed(), -1);
         self.remove_children();
-        let kind = self.kind.borrow();
-        match &*kind {
+        match &self.kind {
             Kind::UnorderedArrayFold(uaf) => uaf.force_full_compute(),
             _ => {}
         }
@@ -590,23 +608,20 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef) -> ()) {
-        let k = self.kind.borrow();
-        match &*k {
-            Kind::Invalid => {}
-            Kind::Uninitialised => {}
+        match &self.kind {
             Kind::Constant(_) => {}
-            Kind::Map(MapNode { input, .. }) => f(0, input.packed()),
-            Kind::MapWithOld(MapWithOld { input, .. }) => f(0, input.packed()),
+            Kind::Map(MapNode { input, ..})
+            | Kind::MapRef(MapRefNode { input, .. })
+            | Kind::MapWithOld(MapWithOld { input, .. }) => f(0, input.packed()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
             Kind::BindLhsChange(_, bind) => {
-                let Some(bind) = bind.upgrade() else { return };
                 f(0, bind.lhs.packed())
             }
-            Kind::BindMain(_, bind) => {
-                f(0, bind.lhs_change.packed());
+            Kind::BindMain(_, bind, lhs_change) => {
+                f(0, lhs_change.packed());
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
                     f(1, rhs.node.packed())
                 }
@@ -636,10 +651,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let t = self.state();
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
         self.recomputed_at.set(t.stabilisation_num.get());
-        let k = self.kind.borrow();
         let id = self.id;
         let height = self.height();
-        match &*k {
+        match &self.kind {
             Kind::Constant(v) => {
                 self.maybe_change_value(v.clone());
             }
@@ -654,12 +668,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::Map(map) => {
                 let map: &MapNode<G::F1, G::I1, G::R> = map;
                 let new_value = {
-                    let input = map.input.value_as_ref().unwrap();
                     let mut f = map.mapper.borrow_mut();
+                    let input = map.input.value_as_ref().unwrap();
                     f(&input)
                 };
                 tracing::debug!("<- {new_value:?}");
                 self.maybe_change_value(new_value);
+            }
+            Kind::MapRef(MapRefNode { input, mapper, did_change }) => {
+                // do nothing! all the action happens in child_changed and value_as_ref
             }
             Kind::MapWithOld(map) => {
                 let map: &MapWithOld<G::WithOld, G::I1, G::R> = map;
@@ -669,7 +686,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let old_value_is_none = old_value.is_none();
                 let (new_value, did_change) = f(old_value, &input);
                 tracing::debug!("<- {new_value:?}");
-                self.maybe_change_value_manual(None, new_value, old_value_is_none || did_change);
+                // WARN: None for old_value_opt is wrong
+                self.maybe_change_value_manual(None, Some(new_value), old_value_is_none || did_change);
             }
             Kind::Map2(map2) => {
                 let map2: &Map2Node<G::F2, G::I1, G::I2, G::R> = map2;
@@ -681,7 +699,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.maybe_change_value(new_value);
             }
             Kind::BindLhsChange(casts, bind) => {
-                let Some(bind) = bind.upgrade() else { return };
                 // leaves an empty vec for next time
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
                 let t = self.state();
@@ -708,7 +725,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 right away. This way, if the new child is invalid, we'll satisfy the invariant
                 saying that [needs_to_be_computed bind_main] in [propagate_invalidity] */
                 self.changed_at.set(t.stabilisation_num.get());
-                if let Some(main) = bind.main.upgrade() {
+                let main_ = bind.main.borrow();
+                if let Some(main) = main_.upgrade() {
                     main.change_child_bind_rhs(
                         old_rhs.clone(),
                         rhs,
@@ -735,7 +753,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 debug_assert!(self.is_valid());
                 self.maybe_change_value(casts.r_unit.cast(()));
             }
-            Kind::BindMain(casts, bind) => {
+            Kind::BindMain(casts, bind, _) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 tracing::debug!("-- recomputing BindMain(id={id:?}, h={height:?}) <- {rhs:?}");
                 self.copy_child_bindrhs(&rhs.node, casts.rhs_r);
@@ -745,8 +763,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 tracing::debug!("-- recomputing UAF {uaf:?}");
                 self.maybe_change_value(uaf.compute())
             }
-            Kind::Invalid => panic!("should not have Kind::Invalid nodes in the recompute heap"),
-            Kind::Uninitialised => panic!("recomputing uninitialised node"),
         }
     }
     /* Note that the two following functions are not symmetric of one another: in [let y =
@@ -837,15 +853,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             //  | Bind_main bind -> invalidate_nodes_created_on_rhs bind.all_nodes_created_on_rhs
             //  | Step_function { alarm; clock; _ } -> remove_alarm clock alarm
             //  | _ -> ());
-            let mut kind = self.kind.borrow_mut();
-            match &*kind {
-                Kind::BindMain(_, bind) => {
+            match &self.kind {
+                Kind::BindMain(_, bind, _) => {
                     let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
                     invalidate_nodes_created_on_rhs(&mut all);
                 }
                 _ => {}
             }
-            *kind = Kind::Invalid;
+            self.is_valid.set(false)
         }
     }
 
@@ -855,10 +870,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         oc: &NodeRef,
         op: &NodeRef,
     ) {
-        let kind = self.kind.borrow();
-        match &*kind {
+        match &self.kind {
             Kind::BindLhsChange(_, bind) => {
-                let Some(bind) = bind.upgrade() else { return };
                 tracing::debug_span!("adjust_heights_bind_lhs_change").in_scope(|| {
                     let all = bind.all_nodes_created_on_rhs.borrow();
                     for rnode_weak in all.iter() {
@@ -911,10 +924,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         } else if !self.is_necessary() {
             NodeUpdateDelayed::Unnecessary
         } else {
-            let val = self.value_as_ref();
-            match val {
-                Some(_) => NodeUpdateDelayed::Changed,
-                None => NodeUpdateDelayed::Necessary,
+            match self.value_as_ref().is_some() {
+                true => NodeUpdateDelayed::Changed,
+                false => NodeUpdateDelayed::Necessary,
             }
         }
     }
@@ -931,31 +943,29 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result {
         let id = self.id;
-        match &*self.kind.borrow() {
-            Kind::Invalid => return write!(f, "Invalid({id:?})"),
-            Kind::Uninitialised => return write!(f, "Uninitialised({id:?})"),
+        match &self.kind {
             Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?})"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
             Kind::UnorderedArrayFold(_) => write!(f, "UnorderedArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
             Kind::Map(_) => write!(f, "Map"),
+            Kind::MapRef(_) => write!(f, "MapRef"),
             Kind::MapWithOld(_) => write!(f, "MapWithOld"),
             Kind::Map2(_) => write!(f, "Map2"),
             Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange"),
-            Kind::BindMain(_, _) => write!(f, "BindMain"),
+            Kind::BindMain(..) => write!(f, "BindMain"),
         }?;
         write!(f, "({id:?})")?;
-        if let Some(val) = self.value_as_ref() {
-            write!(f, " => {:?}", &*val)?;
+        if let Some(val) =  self.value_as_ref() {
+            write!(f, " => {:?}", val)?;
         }
         Ok(())
     }
 
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>) {
-        match &*self.kind.borrow() {
+        match &self.kind {
             Kind::BindLhsChange(_, bind) => {
-                tracing::warn!("about to check bindlhschange.bind {:?}", bind.upgrade());
-                let Some(bind)  = bind.upgrade() else { return };
+                tracing::warn!("about to check bindlhschange.bind {:?}", bind);
                 let all = bind.all_nodes_created_on_rhs.borrow();
                 tracing::warn!("graphviz:all_nodes_created_on_rhs = {:?}", &*all);
                 for rhs in all.iter().filter_map(Weak::upgrade) {
@@ -1055,10 +1065,11 @@ impl<G: NodeGenerics> Node<G> {
             recomputed_at: Cell::new(StabilisationNum::init()),
             value_opt: RefCell::new(None),
             old_value_opt: RefCell::new(None),
-            kind: RefCell::new(kind),
+            kind,
             parents: smallvec::smallvec![].into(),
             observers: HashMap::new().into(),
             cutoff: Cutoff::PartialEq.into(),
+            is_valid: true.into(),
         }
         .into_rc()
     }
@@ -1068,19 +1079,19 @@ impl<G: NodeGenerics> Node<G> {
         let cutoff = self.cutoff.get();
         let should_change = old_value_opt.is_none()
             || !cutoff.should_cutoff(old_value_opt.as_ref().unwrap(), &value);
-        self.maybe_change_value_manual(old_value_opt, value, should_change)
+        self.maybe_change_value_manual(old_value_opt.as_ref(), Some(value), should_change)
     }
 
     fn maybe_change_value_manual(
         &self,
-        old_value_opt: Option<G::R>,
-        value: G::R,
+        old_value_opt: Option<&G::R>,
+        value_opt: Option<G::R>,
         should_change: bool,
     ) {
         if should_change {
             let pci = self.parent_child_indices.borrow();
             let t = self.state();
-            self.value_opt.replace(Some(value));
+            self.value_opt.replace(value_opt);
             self.changed_at.set(t.stabilisation_num.get());
             t.num_nodes_changed.set(t.num_nodes_changed.get() + 1);
             self.maybe_handle_after_stabilisation();
@@ -1089,7 +1100,7 @@ impl<G: NodeGenerics> Node<G> {
                 let Some(p) = parent.upgrade_erased() else { continue };
                 let child_index = pci.my_child_index_in_parent_at_index[parent_index];
                 {
-                    parent.child_changed(&self.as_child(), child_index, old_value_opt.clone());
+                    parent.child_changed(&self.as_child(), child_index, old_value_opt);
                 }
                 debug_assert!(p.needs_to_be_computed());
                 if !p.is_in_recompute_heap() {
@@ -1103,7 +1114,7 @@ impl<G: NodeGenerics> Node<G> {
             }
         } else if old_value_opt.is_some() {
             tracing::info!("cutoff applied to value change");
-            self.value_opt.replace(old_value_opt);
+            self.value_opt.replace(old_value_opt.cloned());
         }
     }
 
@@ -1114,9 +1125,8 @@ impl<G: NodeGenerics> Node<G> {
         child_index: i32,
     ) {
         let bind_main = self;
-        let k = bind_main.kind.borrow();
-        let id = match &*k {
-            Kind::BindMain(id, _) => id,
+        let id = match &bind_main.kind {
+            Kind::BindMain(id, ..) => id,
             _ => return,
         };
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
@@ -1193,24 +1203,21 @@ impl<G: NodeGenerics> Node<G> {
         self.weak_self.clone().upgrade().unwrap()
     }
     fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b, G>) {
-        let k = self.kind.borrow();
-        match &*k {
-            Kind::Invalid => {}
-            Kind::Uninitialised => {}
+        match &self.kind {
             Kind::Constant(_) => {}
-            Kind::Map(MapNode { input, .. }) => (f.i1)(0, input.clone().as_input()),
-            Kind::MapWithOld(MapWithOld { input, .. }) => (f.i1)(0, input.clone().as_input()),
+            Kind::Map(MapNode { input, ..})
+            | Kind::MapRef(MapRefNode { input, .. })
+            | Kind::MapWithOld(MapWithOld { input, .. }) => (f.i1)(0, input.clone().as_input()),
             Kind::Map2(Map2Node { one, two, .. }) => {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());
             }
             Kind::BindLhsChange(id, bind) => {
-                let Some(bind) = bind.upgrade() else { return };
                 let input = id.input_lhs_i2.cast(bind.lhs.as_input());
                 (f.i2)(0, input)
             }
-            Kind::BindMain(id, bind) => {
-                let input = id.input_lhs_i2.cast(bind.lhs_change.as_input());
+            Kind::BindMain(id, bind, lhs_change) => {
+                let input = id.input_lhs_i2.cast(lhs_change.as_input());
                 (f.i2)(0, input);
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
                     let input = id.input_rhs_i1.cast(rhs.node.as_input());

@@ -16,7 +16,7 @@ mod syntax;
 mod unordered_fold;
 mod var;
 
-use crate::v_rch::kind::BindMainId;
+use crate::v_rch::kind::{BindMainId, BindLhsId};
 use crate::v_rch::node::Incremental;
 use crate::{GraphvizDot, IncrState};
 
@@ -24,10 +24,11 @@ use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
-use self::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
+use self::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap, merge_shared_impl, MergeElement};
 use fmt::Debug;
 use refl::refl;
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::Hash;
 use std::rc::{Rc, Weak};
@@ -118,6 +119,7 @@ where
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 impl<F, T1, T2, R> Debug for Map2Node<F, T1, T2, R>
@@ -155,6 +157,7 @@ where
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 impl<F, T, R> Debug for MapNode<F, T, R>
@@ -194,6 +197,7 @@ where
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = F;
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 impl<F, T, R> Debug for MapWithOld<F, T, R>
@@ -212,8 +216,8 @@ where
     T: Value,
     F: FnMut(&T) -> Incr<R> + 'static,
 {
-    lhs_change: Rc<Node<BindLhsChangeNodeGenerics<F, T, R>>>,
-    main: Weak<Node<BindNodeMainGenerics<F, T, R>>>,
+    lhs_change: RefCell<Weak<Node<BindLhsChangeNodeGenerics<F, T, R>>>>,
+    main: RefCell<Weak<Node<BindNodeMainGenerics<F, T, R>>>>,
     lhs: Input<T>,
     mapper: RefCell<F>,
     rhs: RefCell<Option<Incr<R>>>,
@@ -235,15 +239,19 @@ where
     F: FnMut(&T) -> Incr<R>,
 {
     fn is_valid(&self) -> bool {
-        let Some(main) = self.main.upgrade() else { return false };
+        let main_ = self.main.borrow();
+        let Some(main) = main_.upgrade() else { return false };
         main.is_valid()
     }
     fn is_necessary(&self) -> bool {
-        let Some(main) = self.main.upgrade() else { return false };
+        let main_ = self.main.borrow();
+        let Some(main) = main_.upgrade() else { return false };
         main.is_necessary()
     }
     fn height(&self) -> i32 {
-        self.lhs_change.height.get()
+        let lhs_change_ = self.lhs_change.borrow();
+        let lhs_change = lhs_change_.upgrade().unwrap();
+        lhs_change.height.get()
     }
     fn add_node(&self, node: WeakNode) {
         tracing::info!("added node to scope {self:?}: {:?}", node.upgrade());
@@ -252,7 +260,7 @@ where
     }
 }
 
-struct BindLhsChangeNodeGenerics<F, T, R> {
+pub(crate) struct BindLhsChangeNodeGenerics<F, T, R> {
     _phantom: std::marker::PhantomData<(F, T, R)>,
 }
 
@@ -275,6 +283,7 @@ where
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 struct BindNodeMainGenerics<F, T, R> {
@@ -301,6 +310,7 @@ where
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &Self::R;
 }
 
 impl<F, T, R> Debug for BindNode<F, T, R>
@@ -366,6 +376,27 @@ impl<T: Value> Incr<T> {
             let (b, didchange) = f(old_opt.and_then(|x| oi.take().map(|oi| (oi, x))), a);
             *oi = Some(a.clone());
             (b, didchange)
+        })
+    }
+
+    fn with_old_input_output2<R, T2, F>(&self, other: &Incr<T2>, mut f: F) -> Incr<R>
+    where
+        R: Value,
+        T2: Value,
+        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static,
+    {
+        let old_input: RefCell<Option<(T, T2)>> = RefCell::new(None);
+        // TODO: too much cloning
+        self.map2(other, |a, b| (a.clone(), b.clone()))
+            .map_with_old(move |old_opt, (a, b)| {
+            let mut oi = old_input.borrow_mut();
+            let (r, didchange) = f(
+                old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
+                a,
+                b
+            );
+            *oi = Some((a.clone(), b.clone()));
+            (r, didchange)
         })
     }
 
@@ -451,62 +482,50 @@ impl<T: Value> Incr<T> {
         F: FnMut(&T) -> Incr<R> + 'static,
     {
         let state = self.node.state();
+        let bind = Rc::new_cyclic(|weak| BindNode {
+            lhs: self.clone().node,
+            mapper: f.into(),
+            rhs: RefCell::new(None),
+            rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
+            all_nodes_created_on_rhs: RefCell::new(vec![]),
+            lhs_change: Weak::new().into(),
+            main: Weak::new().into(),
+        });
         let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
             state.weak(),
             state.current_scope(),
-            Kind::Uninitialised,
-        );
-        tracing::debug!(
-            "creating bind with scope height {:?}",
-            state.current_scope().height()
+            Kind::BindLhsChange(
+                BindLhsId {
+                    input_lhs_i2: refl(),
+                    r_unit: refl(),
+                },
+                bind.clone()
+            ),
         );
         let main = Node::<BindNodeMainGenerics<F, T, R>>::create(
             state.weak(),
             state.current_scope(),
-            Kind::Uninitialised,
-        );
-        let bind = Rc::new(BindNode {
-            lhs: self.clone().node,
-            mapper: f.into(),
-            rhs: RefCell::new(None),
-            rhs_scope: RefCell::new(Scope::Top),
-            all_nodes_created_on_rhs: RefCell::new(vec![]),
-            lhs_change,
-            main: Rc::downgrade(&main),
-        });
-        {
-            let mut rhs_scope = bind.rhs_scope.borrow_mut();
-            *rhs_scope = Scope::Bind(Rc::downgrade(&bind) as Weak<dyn BindScope>);
-        }
-
-        let main_incr = Incr { node: main.clone() };
-        {
-            let mut main_kind = main.kind.borrow_mut();
-            *main_kind = Kind::BindMain(
+            Kind::BindMain(
                 BindMainId {
-                    input_lhs_i2: refl(),
-                    input_rhs_i1: refl(),
-                    rhs_r: refl(),
+                    rhs_r: refl(), input_rhs_i1: refl(), input_lhs_i2: refl()
                 },
                 bind.clone(),
-            );
-        }
+                lhs_change.clone()
+            ),
+        );
         {
-            let mut lhs_change_kind = bind.lhs_change.kind.borrow_mut();
-            *lhs_change_kind = Kind::BindLhsChange(
-                kind::BindLhsId {
-                    r_unit: refl(),
-                    input_lhs_i2: refl(),
-                },
-                Rc::downgrade(&bind),
-            );
+            let mut bind_lhs_change = bind.lhs_change.borrow_mut();
+            let mut bind_main = bind.main.borrow_mut();
+            *bind_lhs_change = Rc::downgrade(&lhs_change);
+            *bind_main = Rc::downgrade(&main);
         }
+
         /* We set [lhs_change] to never cutoff so that whenever [lhs] changes, [main] is
         recomputed.  This is necessary to handle cases where [f] returns an existing stable
         node, in which case the [lhs_change] would be the only thing causing [main] to be
         stale. */
-        bind.lhs_change.set_cutoff(Cutoff::Never);
-        main_incr
+        lhs_change.set_cutoff(Cutoff::Never);
+        Incr { node: main }
     }
 
     /// Creates an observer for this incremental.
@@ -627,20 +646,20 @@ impl<T: Value> Incr<T> {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();
                 let _: &mut <T::OutputMap<V2> as SymmetricMapMap<K, V2>>::UnderlyingMap = old_in
-                    .symmetric_fold(input, old_out_mut, |out, change| {
+                    .symmetric_fold(input, old_out_mut, |out, (key, change)| {
                         did_change = true;
                         match change {
-                            DiffElement::Left((key, _)) => {
+                            DiffElement::Left(_) => {
                                 out.remove(&key);
                             }
-                            DiffElement::Right((key, newval)) => {
+                            DiffElement::Right(newval) => {
                                 if let Some(v2) = f(key, newval) {
                                     out.insert(key.clone(), v2);
                                 } else {
                                     out.remove(key);
                                 }
                             }
-                            DiffElement::Unequal((key, _), (_, newval)) => {
+                            DiffElement::Unequal(_, newval) => {
                                 if let Some(v2) = f(key, newval) {
                                     out.insert(key.clone(), v2);
                                 } else {
@@ -680,19 +699,133 @@ impl<T: Value> Incr<T> {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded: R = old_in.symmetric_fold(new_in, old_out, |mut acc, difference| {
+                let folded: R = old_in.symmetric_fold(new_in, old_out, |mut acc, (key, difference)| {
                     did_change = true;
                     match difference {
-                        DiffElement::Left((key, value)) => remove(acc, key, value),
-                        DiffElement::Right((key, value)) => add(acc, key, value),
-                        DiffElement::Unequal((lk, lv), (rk, rv)) => {
-                            acc = remove(acc, lk, lv);
-                            add(acc, rk, rv)
+                        DiffElement::Left(value) => remove(acc, key, value),
+                        DiffElement::Right(value) => add(acc, key, value),
+                        DiffElement::Unequal(lv, rv) => {
+                            acc = remove(acc, key, lv);
+                            add(acc, key, rv)
                         }
                     }
                 });
                 (folded, did_change)
             }
         })
+    }
+}
+
+impl<T> DiffElement<T> {
+    fn new_data(self) -> Option<T> {
+        match self {
+            DiffElement::Left(_) => None,
+            DiffElement::Right(r) | DiffElement::Unequal(_, r) => Some(r),
+        }
+    }
+}
+
+impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
+    pub fn incr_merge<F, V2, R>(&self, other: &Incr<BTreeMap<K, V2>>, mut f: F) -> Incr<BTreeMap<K, R>>
+    where
+        V2: Value,
+        R: Value,
+        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static,
+    {
+        self.with_old_input_output2(other, move |old, new_left_map, new_right_map| {
+            let mut did_change = false;
+            let output = merge_shared_impl(
+                old,
+                new_left_map,
+                new_right_map,
+                |mut acc_output, key, merge_elem| {
+                    use MergeElement::*;
+                    did_change = true;
+                    let data = match merge_elem {
+                        Both((_, left_diff), (_, right_diff)) => {
+                            (left_diff.new_data(), right_diff.new_data())
+                        }
+                        Left((_, left_diff)) => {
+                            (left_diff.new_data(), new_right_map.get(key))
+                        }
+                        Right((_, right_diff)) => {
+                            (new_left_map.get(key), right_diff.new_data())
+                        }
+                    };
+                    let output_data_opt = match data {
+                        (None, None) => None,
+                        (Some(x), None) => f(key, MergeElement::Left(x)),
+                        (None, Some(x)) => f(key, MergeElement::Right(x)),
+                        (Some(a), Some(b)) => f(key, MergeElement::Both(a, b)),
+                    };
+                    match output_data_opt {
+                        None => acc_output.remove(key),
+                        Some(r) => acc_output.insert(key.clone(), r),
+                    };
+                    acc_output
+                }
+            );
+            // WARN: should analyse when it has changed!!!
+            (output, did_change)
+        })
+    }
+}
+
+impl<T: Value> Incr<T> {
+    fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
+    where
+        F: for<'a> Fn(&'a T) -> &'a R + 'static
+    {
+        let state = self.node.state();
+        let node = Node::<MapRefNode<F, T, R>>::create(
+            state.weak(),
+            state.current_scope(),
+            Kind::MapRef(MapRefNode {
+                input: self.node.clone(),
+                did_change: true.into(),
+                mapper: f,
+            }),
+        );
+        Incr { node }
+    }
+}
+
+pub(crate) struct MapRefNode<F, T, R>
+where
+    F: Fn(&T) -> &R + 'static,
+{
+    input: Input<T>,
+    mapper: F,
+    /// initial value true.
+    did_change: Cell<bool>,
+}
+
+impl<F, T, R> NodeGenerics for MapRefNode<F, T, R>
+where
+    T: Value,
+    R: Value,
+    F: Fn(&T) -> &R + 'static,
+{
+    type R = R;
+    type BindLhs = ();
+    type BindRhs = ();
+    type I1 = T;
+    type I2 = ();
+    type F1 = fn(&Self::I1) -> R;
+    type F2 = fn(&Self::I1, &Self::I2) -> R;
+    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
+    type Fold = fn(Self::R, &Self::I1) -> Self::R;
+    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
+    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = F;
+}
+
+impl<F, T, R> Debug for MapRefNode<F, T, R>
+where
+    F: Fn(&T) -> &R + 'static,
+    R: Value,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("MapNode").finish()
     }
 }

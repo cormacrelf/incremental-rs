@@ -9,7 +9,7 @@ use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
 };
 use super::kind::{Constant, Kind};
-use super::node::Node;
+use super::node::{Node, NodeId};
 use super::recompute_heap::RecomputeHeap;
 use super::scope::Scope;
 use super::stabilisation_num::StabilisationNum;
@@ -186,21 +186,20 @@ impl State {
         value: T,
         scope: Scope,
     ) -> public::Var<T> {
-        let node =
-            Node::<super::var::VarGenerics<T>>::create(self.weak(), scope, Kind::Uninitialised);
         let var = Rc::new(Var {
             state: self.weak(),
             set_at: Cell::new(self.stabilisation_num.get()),
             value: RefCell::new(value),
-            node_id: node.id,
-            node: RefCell::new(Some(node)),
+            node_id: NodeId(0).into(),
+            node: RefCell::new(None),
             value_set_during_stabilisation: RefCell::new(None),
         });
+        let node =
+            Node::<super::var::VarGenerics<T>>::create(self.weak(), scope, Kind::Var(var.clone()));
         {
-            let node = var.node.borrow();
-            let n = node.as_ref().expect("we just created var's node as Some");
-            let mut kind = n.kind.borrow_mut();
-            *kind = Kind::Var(var.clone());
+            let mut slot = var.node.borrow_mut();
+            var.node_id.set(node.id);
+            slot.replace(node);
         }
         public::Var::new(var)
     }

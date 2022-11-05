@@ -141,7 +141,7 @@ where
     }
 
     pub(crate) fn full_compute(&self) -> R {
-        let acc = self.init.clone();
+        let mut acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
         self.children.iter().fold(acc, |acc, x| {
             let v = x.node.value_as_ref().unwrap();
@@ -162,7 +162,7 @@ where
         &self,
         child: &Input<I>,
         child_index: i32,
-        old_value_opt: Option<I>,
+        old_value_opt: Option<&I>,
         new_value: &I,
     ) {
         tracing::info!("child_changed {:?} -> {:?}", old_value_opt, new_value);
@@ -179,7 +179,7 @@ where
                 [Uopt.is_some t.fold_value] and [Uopt.is_some old_value_opt]. */
                 let x = update(
                     old.as_ref().unwrap().clone(),
-                    old_value_opt.as_ref().unwrap(),
+                    old_value_opt.unwrap(),
                     &new_value,
                 );
                 Some(x)
@@ -204,4 +204,5 @@ where
     type Fold = F;
     type Update = U;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type FRef = fn(&Self::I1) -> &R;
 }

@@ -147,7 +147,7 @@ impl<T: Value> Var<T> {
     }
     #[inline]
     pub fn id(&self) -> NodeId {
-        self.internal.node_id
+        self.internal.node_id.get()
     }
 }
 

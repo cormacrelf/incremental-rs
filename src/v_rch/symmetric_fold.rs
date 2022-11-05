@@ -75,6 +75,74 @@ where
     }
 }
 
+// Same but with a custom comparator
+struct MergeOnceWith<I, J, F>
+where
+    I: Iterator,
+    J: Iterator,
+    F: Fn(&I::Item, &J::Item) -> Ordering,
+{
+    a: Peekable<I>,
+    b: Peekable<J>,
+    f: F,
+    fused: Option<bool>,
+}
+
+impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering>
+MergeOnceWith<I, J, F>
+{
+    fn new(a: I, b: J, f: F) -> Self {
+        Self { a: a.peekable(), b: b.peekable(), f, fused: None }
+    }
+}
+
+impl<I, J, F> Iterator for MergeOnceWith<I, J, F>
+where
+    I: Iterator,
+    J: Iterator,
+    F: Fn(&I::Item, &J::Item) -> Ordering,
+{
+    type Item = MergeElement<I::Item, J::Item>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let ordering: Ordering = match self.fused {
+            Some(true) => Ordering::Less,
+            Some(false) => Ordering::Greater,
+            None => match (self.a.peek(), self.b.peek()) {
+                (Some(a), Some(b)) => (self.f)(a, b),
+                (Some(_), None) => {
+                    self.fused = Some(true);
+                    Ordering::Less
+                }
+                (None, Some(_)) => {
+                    self.fused = Some(false);
+                    Ordering::Greater
+                }
+                (None, None) => return None,
+            },
+        };
+
+        match ordering {
+            Ordering::Equal => {
+                self.a.next()
+                    .zip(self.b.next())
+                    .map(|(a, b)| MergeElement::Both(a, b))
+            }
+            Ordering::Less => {
+                if self.fused.is_none() {
+                    drop(self.b.next());
+                }
+                self.a.next().map(MergeElement::Left)
+            }
+            Ordering::Greater => {
+                if self.fused.is_none() {
+                    drop(self.a.next());
+                }
+                self.b.next().map(MergeElement::Right)
+            }
+        }
+    }
+}
+
 pub(crate) struct SymmetricDiffOwned<K, V> {
     self_: Peekable<IntoIter<K, V>>,
     other: Peekable<IntoIter<K, V>>,
@@ -136,7 +204,7 @@ where
     K: Ord,
     V: PartialEq,
 {
-    type Item = DiffElement<(&'a K, &'a V)>;
+    type Item = (&'a K, DiffElement<&'a V>);
     fn next(&mut self) -> Option<Self::Item> {
         let mut key;
         let elem = loop {
@@ -144,15 +212,21 @@ where
             let s = self.self_.get(key);
             let o = self.other.get(key);
             match (s, o) {
-                (Some(a), Some(b)) if a != b => break DiffElement::Unequal((key, a), (key, b)),
+                (Some(a), Some(b)) if a != b => break DiffElement::Unequal(a, b),
                 (Some(a), Some(b)) => continue,
-                (Some(a), _) => break DiffElement::Left((key, a)),
-                (_, Some(b)) => break DiffElement::Right((key, b)),
+                (Some(a), _) => break DiffElement::Left(a),
+                (_, Some(b)) => break DiffElement::Right(b),
                 _ => return None,
             }
         };
-        Some(elem)
+        Some((key, elem))
     }
+}
+
+pub enum MergeElement<L, R> {
+    Left(L),
+    Right(R),
+    Both(L, R),
 }
 
 pub enum DiffElement<V> {
@@ -170,7 +244,7 @@ fn test_merge_once() {
 }
 
 pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
-    type Iter: Iterator<Item = DiffElement<(&'a K, &'a V)>>;
+    type Iter: Iterator<Item = (&'a K, DiffElement<&'a V>)>;
 
     fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter;
 
@@ -188,13 +262,13 @@ pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
         V: PartialEq,
     {
         self.symmetric_diff(other)
-            .fold(init, |mut acc, elem| match elem {
+            .fold(init, |mut acc, (key, elem)| match elem {
                 DiffElement::Unequal(left, right) => {
-                    acc = add(acc, right.0, right.1);
-                    remove(acc, left.0, left.1)
+                    acc = add(acc, key, right);
+                    remove(acc, key, left)
                 }
-                DiffElement::Left(left) => remove(acc, left.0, left.1),
-                DiffElement::Right(right) => add(acc, right.0, right.1),
+                DiffElement::Left(left) => remove(acc, key, left),
+                DiffElement::Right(right) => add(acc, key, right),
             })
     }
 }
@@ -284,7 +358,7 @@ pub trait SymmetricFoldMap<K, V> {
         &self,
         other: &Self,
         init: R,
-        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+        f: impl FnMut(R, (&K, DiffElement<&V>)) -> R,
     ) -> R;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
@@ -314,7 +388,7 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
         &self,
         other: &Self,
         init: R,
-        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+        f: impl FnMut(R, (&K, DiffElement<&V>)) -> R,
     ) -> R {
         let self_target = self.deref();
         let other_target = other.deref();
@@ -349,7 +423,7 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
         &self,
         other: &Self,
         init: R,
-        f: impl FnMut(R, DiffElement<(&K, &V)>) -> R,
+        f: impl FnMut(R, (&K, DiffElement<&V>)) -> R,
     ) -> R {
         self.symmetric_diff(other).fold(init, f)
     }
@@ -361,4 +435,36 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R {
         self.into_iter().fold(init, f)
     }
+}
+
+pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
+    old: Option<(BTreeMap<K, V1>, BTreeMap<K, V2>, BTreeMap<K, R>)>,
+    new_left_map: &BTreeMap<K, V1>,
+    new_right_map: &BTreeMap<K, V2>,
+    mut f: impl FnMut(BTreeMap<K, R>, &K, MergeElement<(&K, DiffElement<&V1>), (&K, DiffElement<&V2>)>) -> BTreeMap<K, R>,
+) -> BTreeMap<K, R> {
+    let (old_left_map, old_right_map, old_output) = match old {
+        None => (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
+        Some(x) => x,
+    };
+    let left_diff = old_left_map.symmetric_diff(new_left_map);
+    let right_diff = old_right_map.symmetric_diff(new_right_map);
+    // relies on the key iteration being sorted, as in BTreeMap.
+    let merge = MergeOnceWith::new(
+        left_diff,
+        right_diff,
+        |(k, _), (k2, _)| k.cmp(k2)
+    );
+    merge
+        .fold(old_output, |output, merge_elem| {
+        let key = match merge_elem {
+            MergeElement::Left((key, _))| MergeElement::Right((key, _)) => key,
+            MergeElement::Both((left_key, _), (right_key, _)) => {
+                // comparisons can be expensive
+                // assert_eq!(left_key, right_key);
+                left_key
+            }
+        };
+        f(output, key, merge_elem)
+    })
 }
