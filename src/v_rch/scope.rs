@@ -3,12 +3,12 @@ use std::rc::Weak;
 use super::{BindScope, NodeRef};
 
 #[derive(Debug, Clone)]
-pub(crate) enum Scope<'a> {
+pub(crate) enum Scope {
     Top,
-    Bind(Weak<dyn BindScope<'a>>),
+    Bind(Weak<dyn BindScope>),
 }
 
-impl<'a> Scope<'a> {
+impl Scope {
     fn equals(&self, other: &Self) -> bool {
         match self {
             Scope::Top => match other {
@@ -39,7 +39,7 @@ impl<'a> Scope<'a> {
             }
         }
     }
-    pub(crate) fn add_node(&self, node: NodeRef<'a>) {
+    pub(crate) fn add_node(&self, node: NodeRef) {
         assert!(node.created_in().equals(self));
         match self {
             Self::Top => {}

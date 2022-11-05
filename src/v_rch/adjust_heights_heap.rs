@@ -5,17 +5,17 @@ use super::NodeRef;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-type Queue<'a> = VecDeque<NodeRef<'a>>;
+type Queue = VecDeque<NodeRef>;
 
 #[derive(Debug)]
-pub(crate) struct AdjustHeightsHeap<'a> {
+pub(crate) struct AdjustHeightsHeap {
     length: usize,
     height_lower_bound: i32,
     max_height_seen: i32,
-    queues: Vec<Queue<'a>>,
+    queues: Vec<Queue>,
 }
 
-impl<'a> AdjustHeightsHeap<'a> {
+impl AdjustHeightsHeap {
     pub(crate) fn is_empty(&self) -> bool {
         self.length == 0
     }
@@ -38,7 +38,7 @@ impl<'a> AdjustHeightsHeap<'a> {
         debug_assert_eq!(calculate_len(&self.queues), 0);
         self.queues.resize(new_mha, VecDeque::new());
     }
-    pub(crate) fn add_unless_mem(&mut self, node: NodeRef<'a>) {
+    pub(crate) fn add_unless_mem(&mut self, node: NodeRef) {
         if node.height_in_adjust_heights_heap().get() == -1 {
             let height = node.height();
             /* We process nodes in increasing order of pre-adjusted height, so it is a bug if we
@@ -48,16 +48,16 @@ impl<'a> AdjustHeightsHeap<'a> {
             debug_assert!(height <= self.max_height_allowed());
             node.height_in_adjust_heights_heap().set(height);
             self.length += 1;
-            let q: &mut Queue<'a> = self.queues.get_mut(height as usize).unwrap();
+            let q: &mut Queue = self.queues.get_mut(height as usize).unwrap();
             q.push_back(node);
         }
     }
-    pub(crate) fn remove_min(&'_ mut self) -> Option<NodeRef<'a>> {
+    pub(crate) fn remove_min(&'_ mut self) -> Option<NodeRef> {
         if self.is_empty() {
             return None;
         }
         let mut height = self.height_lower_bound;
-        let mut q: &mut Queue<'a>;
+        let mut q: &mut Queue;
         while {
             q = self.queues.get_mut(height as usize)?;
             q.is_empty()
@@ -70,7 +70,7 @@ impl<'a> AdjustHeightsHeap<'a> {
         self.length -= 1;
         Some(node)
     }
-    pub(crate) fn set_height(&mut self, node: &NodeRef<'a>, height: i32) {
+    pub(crate) fn set_height(&mut self, node: &NodeRef, height: i32) {
         if height > self.max_height_seen {
             self.max_height_seen = height;
             if height > self.max_height_allowed() {
@@ -84,10 +84,10 @@ impl<'a> AdjustHeightsHeap<'a> {
     }
     pub(crate) fn ensure_height_requirement(
         &mut self,
-        original_child: &NodeRef<'a>,
-        original_parent: &NodeRef<'a>,
-        child: &NodeRef<'a>,
-        parent: &NodeRef<'a>,
+        original_child: &NodeRef,
+        original_parent: &NodeRef,
+        child: &NodeRef,
+        parent: &NodeRef,
     ) {
         debug_assert!(child.is_necessary());
         debug_assert!(parent.is_necessary());
@@ -103,9 +103,9 @@ impl<'a> AdjustHeightsHeap<'a> {
     }
     pub(crate) fn adjust_heights(
         &mut self,
-        rch: &RecomputeHeap<'a>,
-        original_child: NodeRef<'a>,
-        original_parent: NodeRef<'a>,
+        rch: &RecomputeHeap,
+        original_child: NodeRef,
+        original_parent: NodeRef,
     ) {
         tracing::debug!(
             "adjust_heights from child(id={:?},h={:?}) to parent(id={:?},h={:?})",
@@ -142,11 +142,11 @@ impl<'a> AdjustHeightsHeap<'a> {
     }
 }
 
-fn calculate_len<'a>(queues: &[Queue<'a>]) -> usize {
+fn calculate_len(queues: &[Queue]) -> usize {
     queues.iter().map(|q| q.len()).sum()
 }
 
-impl<'a> Invariant for AdjustHeightsHeap<'a> {
+impl Invariant for AdjustHeightsHeap {
     fn invariant(&self) {
         assert_eq!(self.length, calculate_len(&self.queues));
         assert!(self.height_lower_bound >= 0);
@@ -161,11 +161,11 @@ impl<'a> Invariant for AdjustHeightsHeap<'a> {
     }
 }
 
-impl<'a> Invariant for Vec<VecDeque<NodeRef<'a>>> {
+impl Invariant for Vec<VecDeque<NodeRef>> {
     fn invariant(&self) {
-        let queues: &[Queue<'a>] = self.as_slice();
+        let queues: &[Queue] = self.as_slice();
         for (height, q) in queues.iter().enumerate() {
-            let q: &Queue<'a> = q;
+            let q: &Queue = q;
             let height = height as i32;
             for node in q.iter() {
                 assert!(node.height_in_adjust_heights_heap().get() == height);

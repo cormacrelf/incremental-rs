@@ -30,31 +30,31 @@ impl ObserverId {
     }
 }
 
-pub(crate) struct InternalObserver<'a, T> {
+pub(crate) struct InternalObserver<T> {
     id: ObserverId,
     pub(crate) state: Cell<ObserverState>,
-    observing: Incr<'a, T>,
+    observing: Incr<T>,
     weak_self: Weak<Self>,
-    on_update_handlers: RefCell<HashMap<SubscriptionToken, OnUpdateHandler<'a, T>>>,
+    on_update_handlers: RefCell<HashMap<SubscriptionToken, OnUpdateHandler<T>>>,
     next_subscriber: Cell<SubscriptionToken>,
 }
 
-pub(crate) type WeakObserver<'a> = Weak<dyn ErasedObserver<'a> + 'a>;
-pub(crate) type StrongObserver<'a> = Rc<dyn ErasedObserver<'a> + 'a>;
+pub(crate) type WeakObserver = Weak<dyn ErasedObserver>;
+pub(crate) type StrongObserver = Rc<dyn ErasedObserver>;
 
-pub(crate) trait ErasedObserver<'a>: Debug + 'a {
+pub(crate) trait ErasedObserver: Debug {
     fn id(&self) -> ObserverId;
     fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<ObserverState>;
-    fn observing(&self) -> NodeRef<'a>;
-    fn disallow_future_use(&self, state: &State<'a>);
+    fn observing(&self) -> NodeRef;
+    fn disallow_future_use(&self, state: &State);
     fn num_handlers(&self) -> i32;
     fn add_to_observed_node(&self);
     fn remove_from_observed_node(&self);
     fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError>;
 }
 
-impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
+impl<T: Value> ErasedObserver for InternalObserver<T> {
     fn id(&self) -> ObserverId {
         self.id
     }
@@ -67,10 +67,10 @@ impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
     fn state(&self) -> &Cell<ObserverState> {
         &self.state
     }
-    fn observing(&self) -> NodeRef<'a> {
+    fn observing(&self) -> NodeRef {
         self.observing.node.clone().packed()
     }
-    fn disallow_future_use(&self, state: &State<'a>) {
+    fn disallow_future_use(&self, state: &State) {
         match self.state.get() {
             Disallowed | Unlinked => {}
             Created => {
@@ -141,7 +141,7 @@ impl<'a, T: Value<'a>> ErasedObserver<'a> for InternalObserver<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
+impl<T: Value> Debug for InternalObserver<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalObserver")
             .field("state", &self.state.get())
@@ -150,11 +150,11 @@ impl<'a, T: Value<'a>> Debug for InternalObserver<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> InternalObserver<'a, T> {
-    pub(crate) fn incr_state(&self) -> Option<Rc<State<'a>>> {
+impl<T: Value> InternalObserver<T> {
+    pub(crate) fn incr_state(&self) -> Option<Rc<State>> {
         self.observing.node.state_opt()
     }
-    pub(crate) fn new(observing: Incr<'a, T>) -> Rc<Self> {
+    pub(crate) fn new(observing: Incr<T>) -> Rc<Self> {
         let id = ObserverId::next();
         Rc::new_cyclic(|weak_self| Self {
             id,
@@ -191,7 +191,7 @@ impl<'a, T: Value<'a>> InternalObserver<'a, T> {
     }
     pub(crate) fn subscribe(
         &self,
-        handler: OnUpdateHandler<'a, T>,
+        handler: OnUpdateHandler<T>,
     ) -> Result<SubscriptionToken, ObserverError> {
         match self.state.get() {
             Disallowed | Unlinked => return Err(ObserverError::Disallowed),
@@ -217,7 +217,7 @@ impl<'a, T: Value<'a>> InternalObserver<'a, T> {
     }
     pub(crate) fn run_all(
         &self,
-        input: &Input<'a, T>,
+        input: &Input<T>,
         node_update: NodeUpdateDelayed,
         now: StabilisationNum,
     ) {
@@ -281,7 +281,7 @@ impl Display for ObserverError {
 impl std::error::Error for ObserverError {}
 
 #[cfg(debug_assertions)]
-impl<'a, T> Drop for InternalObserver<'a, T> {
+impl<T> Drop for InternalObserver<T> {
     fn drop(&mut self) {
         tracing::trace!("dropping InternalObserver with id {:?}", self.id);
         debug_assert!(matches!(self.state.get(), Disallowed | Unlinked));

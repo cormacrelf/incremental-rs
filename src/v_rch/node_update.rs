@@ -1,7 +1,7 @@
 use super::{node::Input, stabilisation_num::StabilisationNum};
 use std::cell::Cell;
 
-pub(crate) type BoxedUpdateFn<'a, T> = Box<dyn FnMut(NodeUpdate<&T>) + 'a>;
+pub(crate) type BoxedUpdateFn<T> = Box<dyn FnMut(NodeUpdate<&T>)>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Previously {
@@ -28,14 +28,14 @@ pub enum NodeUpdate<T> {
     Unnecessary,
 }
 
-pub(crate) struct OnUpdateHandler<'a, T> {
-    handler_fn: BoxedUpdateFn<'a, T>,
+pub(crate) struct OnUpdateHandler<T> {
+    handler_fn: BoxedUpdateFn<T>,
     previous_update_kind: Cell<Previously>,
     created_at: StabilisationNum,
 }
 
-impl<'a, T> OnUpdateHandler<'a, T> {
-    pub(crate) fn new(created_at: StabilisationNum, handler_fn: BoxedUpdateFn<'a, T>) -> Self {
+impl<T> OnUpdateHandler<T> {
+    pub(crate) fn new(created_at: StabilisationNum, handler_fn: BoxedUpdateFn<T>) -> Self {
         OnUpdateHandler {
             handler_fn,
             created_at,

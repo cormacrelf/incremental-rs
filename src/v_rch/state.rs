@@ -10,23 +10,22 @@ use super::internal_observer::{
 };
 use super::kind::{Constant, Kind};
 use super::node::Node;
+use super::recompute_heap::RecomputeHeap;
 use super::scope::Scope;
+use super::stabilisation_num::StabilisationNum;
 use super::var::{Var, WeakVar};
 use super::{public, Incr};
-use super::stabilisation_num::StabilisationNum;
-use super::recompute_heap::RecomputeHeap;
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::Write;
-use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
-pub(crate) struct State<'a> {
+pub(crate) struct State {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
-    pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap<'a>>,
-    pub(crate) recompute_heap: RecomputeHeap<'a>,
+    pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap>,
+    pub(crate) recompute_heap: RecomputeHeap,
     pub(crate) status: Cell<IncrStatus>,
     pub(crate) num_var_sets: Cell<usize>,
     pub(crate) num_nodes_recomputed: Cell<usize>,
@@ -36,32 +35,31 @@ pub(crate) struct State<'a> {
     pub(crate) num_nodes_became_unnecessary: Cell<usize>,
     pub(crate) num_nodes_invalidated: Cell<usize>,
     pub(crate) num_active_observers: Cell<usize>,
-    pub(crate) propagate_invalidity: RefCell<Vec<WeakNode<'a>>>,
-    pub(crate) run_on_update_handlers: RefCell<Vec<(WeakNode<'a>, NodeUpdateDelayed)>>,
-    pub(crate) handle_after_stabilisation: RefCell<Vec<WeakNode<'a>>>,
-    pub(crate) new_observers: RefCell<Vec<WeakObserver<'a>>>,
+    pub(crate) propagate_invalidity: RefCell<Vec<WeakNode>>,
+    pub(crate) run_on_update_handlers: RefCell<Vec<(WeakNode, NodeUpdateDelayed)>>,
+    pub(crate) handle_after_stabilisation: RefCell<Vec<WeakNode>>,
+    pub(crate) new_observers: RefCell<Vec<WeakObserver>>,
     // use a strong reference, because the InternalObserver for a dropped public::Observer
     // should stay alive until we've cleaned up after it.
-    pub(crate) all_observers: RefCell<HashMap<ObserverId, StrongObserver<'a>>>,
-    pub(crate) disallowed_observers: RefCell<Vec<WeakObserver<'a>>>,
-    pub(crate) current_scope: RefCell<Scope<'a>>,
-    pub(crate) set_during_stabilisation: RefCell<Vec<WeakVar<'a>>>,
-    pub(crate) dead_vars: RefCell<Vec<WeakVar<'a>>>,
-    _phantom: PhantomData<&'a ()>,
+    pub(crate) all_observers: RefCell<HashMap<ObserverId, StrongObserver>>,
+    pub(crate) disallowed_observers: RefCell<Vec<WeakObserver>>,
+    pub(crate) current_scope: RefCell<Scope>,
+    pub(crate) set_during_stabilisation: RefCell<Vec<WeakVar>>,
+    pub(crate) dead_vars: RefCell<Vec<WeakVar>>,
 
     #[cfg(debug_assertions)]
-    pub(crate) only_in_debug: OnlyInDebug<'a>,
+    pub(crate) only_in_debug: OnlyInDebug,
 }
 
 #[cfg(debug_assertions)]
 #[derive(Debug, Default)]
-pub(crate) struct OnlyInDebug<'a> {
-    currently_running_node: RefCell<Option<WeakNode<'a>>>,
+pub(crate) struct OnlyInDebug {
+    currently_running_node: RefCell<Option<WeakNode>>,
 }
 
 #[cfg(debug_assertions)]
-impl<'a> OnlyInDebug<'a> {
-    pub(crate) fn currently_running_node_exn(&self, name: &'static str) -> WeakNode<'a> {
+impl OnlyInDebug {
+    pub(crate) fn currently_running_node_exn(&self, name: &'static str) -> WeakNode {
         let crn = self.currently_running_node.borrow();
         match &*crn {
             None => panic!("can only call {} during stabilisation", name),
@@ -80,14 +78,14 @@ pub enum IncrStatus {
     // StabilisePreviouslyRaised,
 }
 
-impl<'a> State<'a> {
-    pub(crate) fn public(self: &Rc<Self>) -> public::IncrState<'a> {
+impl State {
+    pub(crate) fn public(self: &Rc<Self>) -> public::IncrState {
         public::IncrState(self.clone())
     }
     pub(crate) fn weak(self: &Rc<Self>) -> Weak<Self> {
         Rc::downgrade(self)
     }
-    pub(crate) fn current_scope(&self) -> Scope<'a> {
+    pub(crate) fn current_scope(&self) -> Scope {
         self.current_scope.borrow().clone()
     }
     pub(crate) fn new() -> Rc<Self> {
@@ -114,14 +112,13 @@ impl<'a> State<'a> {
             dead_vars: RefCell::new(vec![]),
             handle_after_stabilisation: RefCell::new(vec![]),
             run_on_update_handlers: RefCell::new(vec![]),
-            _phantom: Default::default(),
             #[cfg(debug_assertions)]
             only_in_debug: OnlyInDebug::default(),
         })
     }
 
-    pub(crate) fn constant<T: Value<'a>>(self: &Rc<Self>, value: T) -> Incr<'a, T> {
-        let node = Node::<Constant<'a, T>>::create(
+    pub(crate) fn constant<T: Value>(self: &Rc<Self>, value: T) -> Incr<T> {
+        let node = Node::<Constant<T>>::create(
             self.weak(),
             self.current_scope(),
             Kind::Constant(value),
@@ -129,16 +126,16 @@ impl<'a> State<'a> {
         Incr { node }
     }
 
-    pub(crate) fn fold<F, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn fold<F, T: Value, R: Value>(
         self: &Rc<Self>,
-        vec: Vec<Incr<'a, T>>,
+        vec: Vec<Incr<T>>,
         init: R,
         f: F,
-    ) -> Incr<'a, R>
+    ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'static,
     {
-        let node = Node::<ArrayFold<'a, F, T, R>>::create(
+        let node = Node::<ArrayFold<F, T, R>>::create(
             self.weak(),
             self.current_scope(),
             Kind::ArrayFold(ArrayFold {
@@ -150,33 +147,33 @@ impl<'a> State<'a> {
         Incr { node }
     }
 
-    pub(crate) fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn unordered_fold_inverse<F, FInv, T: Value, R: Value>(
         self: &Rc<Self>,
-        vec: Vec<Incr<'a, T>>,
+        vec: Vec<Incr<T>>,
         init: R,
         f: F,
         f_inverse: FInv,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R>
+    ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + Clone + 'a,
-        FInv: FnMut(R, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + Clone + 'static,
+        FInv: FnMut(R, &T) -> R + 'static,
     {
         let update = super::unordered_fold::make_update_fn_from_inverse(f.clone(), f_inverse);
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub(crate) fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
+    pub(crate) fn unordered_fold<F, U, T: Value, R: Value>(
         self: &Rc<Self>,
-        vec: Vec<Incr<'a, T>>,
+        vec: Vec<Incr<T>>,
         init: R,
         f: F,
         update: U,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R>
+    ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'a,
-        U: FnMut(R, &T, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'static,
+        U: FnMut(R, &T, &T) -> R + 'static,
     {
         if vec.is_empty() {
             return self.constant(init);
@@ -184,11 +181,11 @@ impl<'a> State<'a> {
         UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub(crate) fn var_in_scope<T: Value<'a>>(
+    pub(crate) fn var_in_scope<T: Value>(
         self: &Rc<Self>,
         value: T,
-        scope: Scope<'a>,
-    ) -> public::Var<'a, T> {
+        scope: Scope,
+    ) -> public::Var<T> {
         let node =
             Node::<super::var::VarGenerics<T>>::create(self.weak(), scope, Kind::Uninitialised);
         let var = Rc::new(Var {
@@ -208,7 +205,7 @@ impl<'a> State<'a> {
         public::Var::new(var)
     }
 
-    pub(crate) fn observe<T: Value<'a>>(&self, incr: Incr<'a, T>) -> Rc<InternalObserver<'a, T>> {
+    pub(crate) fn observe<T: Value>(&self, incr: Incr<T>) -> Rc<InternalObserver<T>> {
         let internal_observer = InternalObserver::new(incr);
         self.num_active_observers
             .set(self.num_active_observers.get() + 1);
@@ -332,7 +329,7 @@ impl<'a> State<'a> {
             let mut stdout = std::io::stdout();
             stdout.flush().unwrap();
             self.stabilise_start();
-            while let Some(mut min_layer) = self.recompute_heap.swap_min_layer() {
+            while let Some(mut min_layer) = self.recompute_heap.remove_min_layer() {
                 for node in min_layer.drain(..) {
                     node.recompute();
                     node.height_in_recompute_heap().set(-1);
@@ -399,13 +396,13 @@ impl<'a> State<'a> {
         // drop(rc_heap);
     }
 
-    pub(crate) fn set_height(&self, node: NodeRef<'a>, height: i32) {
+    pub(crate) fn set_height(&self, node: NodeRef, height: i32) {
         let mut ah_heap = self.adjust_heights_heap.borrow_mut();
         ah_heap.set_height(&node, height);
     }
 }
 
-impl<'a> Drop for State<'a> {
+impl Drop for State {
     fn drop(&mut self) {
         let dead_vars = self.dead_vars.get_mut();
         for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {

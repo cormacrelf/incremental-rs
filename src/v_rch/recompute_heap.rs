@@ -1,19 +1,19 @@
 use super::NodeRef;
-use std::cell::{RefCell, Cell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-type Queue<'a> = RefCell<VecDeque<NodeRef<'a>>>;
+type Queue = RefCell<VecDeque<NodeRef>>;
 
 #[derive(Debug)]
-pub(crate) struct RecomputeHeap<'a> {
-    queues: Vec<Queue<'a>>,
+pub(crate) struct RecomputeHeap {
+    queues: Vec<Queue>,
     height_lower_bound: Cell<i32>,
     length: Cell<usize>,
-    swap: Queue<'a>,
+    swap: Queue,
 }
 
-impl<'a> RecomputeHeap<'a> {
+impl RecomputeHeap {
     pub fn new(max_height_allowed: usize) -> Self {
         let mut queues = Vec::with_capacity(max_height_allowed + 1);
         for _ in 0..max_height_allowed + 1 {
@@ -27,7 +27,7 @@ impl<'a> RecomputeHeap<'a> {
         }
     }
 
-    pub fn get_queue(&self, height: i32) -> Option<&Queue<'a>> {
+    pub fn get_queue(&self, height: i32) -> Option<&Queue> {
         let h = if height < 0 {
             return None;
         } else {
@@ -36,14 +36,14 @@ impl<'a> RecomputeHeap<'a> {
         Some(self.queue_for(h))
     }
 
-    pub fn link(&self, node: NodeRef<'a>) {
+    pub fn link(&self, node: NodeRef) {
         assert!(node.height() <= self.max_height_allowed());
         node.height_in_recompute_heap().set(node.height());
         let Some(q) = self.get_queue(node.height()) else { return };
         q.borrow_mut().push_back(node);
     }
 
-    pub fn unlink(&self, node: &NodeRef<'a>) {
+    pub fn unlink(&self, node: &NodeRef) {
         let Some(queue) = self.get_queue(node.height_in_recompute_heap().get()) else { return };
         // Unfortunately we must scan for the node
         // if this is slow, we should use a hash set or something instead with a fast "remove_any"
@@ -56,7 +56,7 @@ impl<'a> RecomputeHeap<'a> {
         q.swap_remove_back(indexof);
     }
 
-    pub fn insert(&self, node: NodeRef<'a>) {
+    pub fn insert(&self, node: NodeRef) {
         tracing::trace!("inserting into RCH @ h={} {:?}", node.height(), node);
         debug_assert!(
             !node.is_in_recompute_heap() && node.needs_to_be_computed(),
@@ -70,7 +70,7 @@ impl<'a> RecomputeHeap<'a> {
         self.length.set(self.length.get() + 1)
     }
 
-    pub fn remove(&self, node: NodeRef<'a>) {
+    pub fn remove(&self, node: NodeRef) {
         debug_assert!(
             node.is_in_recompute_heap() && !node.needs_to_be_computed(),
             "incorrect attempt to remove node from recompute heap"
@@ -80,7 +80,7 @@ impl<'a> RecomputeHeap<'a> {
         self.length.set(self.length.get() - 1)
     }
 
-    pub(crate) fn increase_height(&self, node: &NodeRef<'a>) {
+    pub(crate) fn increase_height(&self, node: &NodeRef) {
         debug_assert!(node.height() > node.height_in_recompute_heap().get());
         debug_assert!(node.is_in_recompute_heap());
         debug_assert!(node.height() <= self.max_height_allowed());
@@ -88,13 +88,13 @@ impl<'a> RecomputeHeap<'a> {
         self.link(node.clone()); // sets height_in_recompute_heap <- height
     }
 
-    fn queue_for(&self, height: usize) -> &Queue<'a> {
+    fn queue_for(&self, height: usize) -> &Queue {
         self.queues
             .get(height)
             .expect("we just created this queue!")
     }
 
-    pub(crate) fn remove_min(&self) -> Option<NodeRef<'a>> {
+    pub(crate) fn remove_min(&self) -> Option<NodeRef> {
         if self.length.get() == 0 {
             return None;
         }
@@ -105,7 +105,8 @@ impl<'a> RecomputeHeap<'a> {
             queue = self.queues.get(self.height_lower_bound.get() as usize)?;
             queue.borrow().is_empty()
         } {
-            self.height_lower_bound.set(self.height_lower_bound.get() + 1);
+            self.height_lower_bound
+                .set(self.height_lower_bound.get() + 1);
             debug_assert!(self.height_lower_bound.get() as usize <= len);
         }
         let mut q = queue.borrow_mut();
@@ -115,7 +116,7 @@ impl<'a> RecomputeHeap<'a> {
         Some(removed)
     }
 
-    pub(crate) fn remove_min_layer(&self) -> Option<RefMut<VecDeque<NodeRef<'a>>>> {
+    pub(crate) fn remove_min_layer(&self) -> Option<RefMut<VecDeque<NodeRef>>> {
         if self.length.get() == 0 {
             return None;
         }
@@ -126,7 +127,8 @@ impl<'a> RecomputeHeap<'a> {
             queue = self.queues.get(self.height_lower_bound.get() as usize)?;
             queue.borrow().is_empty()
         } {
-            self.height_lower_bound.set(self.height_lower_bound.get() + 1);
+            self.height_lower_bound
+                .set(self.height_lower_bound.get() + 1);
             debug_assert!(self.height_lower_bound.get() as usize <= len);
         }
         let mut swap = self.swap.borrow_mut();
@@ -151,8 +153,9 @@ impl<'a> RecomputeHeap<'a> {
             }
         }
         self.queues.resize(new_max_height, Queue::default());
-        self.height_lower_bound.set(
-            std::cmp::min(self.height_lower_bound.get(), self.queues.len() as i32 + 1)
-        );
+        self.height_lower_bound.set(std::cmp::min(
+            self.height_lower_bound.get(),
+            self.queues.len() as i32 + 1,
+        ));
     }
 }

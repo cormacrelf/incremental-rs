@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 pub use super::cutoff::Cutoff;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
+pub use super::node::GraphvizDot;
 pub use super::node_update::NodeUpdate;
 pub use super::Incr;
+pub use super::WeakIncr;
 pub use super::Value;
-pub use super::node::GraphvizDot;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
@@ -18,13 +19,13 @@ use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
 
 #[derive(Clone)]
-pub struct Observer<'a, T: Value<'a>> {
-    internal: Rc<InternalObserver<'a, T>>,
+pub struct Observer<T: Value> {
+    internal: Rc<InternalObserver<T>>,
     sentinel: Rc<()>,
 }
 
-impl<'a, T: Value<'a>> Observer<'a, T> {
-    pub(crate) fn new(internal: Rc<InternalObserver<'a, T>>) -> Self {
+impl<T: Value> Observer<T> {
+    pub(crate) fn new(internal: Rc<InternalObserver<T>>) -> Self {
         Self {
             internal,
             sentinel: Rc::new(()),
@@ -42,7 +43,7 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
     /// Equivalent of `observer_on_update_exn`
     pub fn subscribe(
         &self,
-        on_update: impl FnMut(NodeUpdate<&T>) + 'a,
+        on_update: impl FnMut(NodeUpdate<&T>) + 'static,
     ) -> Result<SubscriptionToken, ObserverError> {
         let handler_fn = Box::new(on_update);
         let state = self
@@ -69,7 +70,7 @@ impl<'a, T: Value<'a>> Observer<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
+impl<T: Value> Drop for Observer<T> {
     fn drop(&mut self) {
         // all_observers holds another strong reference to internal. but we can be _sure_ we're the last public::Observer by using a sentinel Rc.
         if Rc::strong_count(&self.sentinel) <= 1 {
@@ -92,39 +93,36 @@ impl<'a, T: Value<'a>> Drop for Observer<'a, T> {
 
 // Just to hide the Rc in the interface
 #[derive(Clone)]
-pub struct Var<'a, T: Value<'a>> {
-    internal: Rc<InternalVar<'a, T>>,
+pub struct Var<T: Value> {
+    internal: Rc<InternalVar<T>>,
     sentinel: Rc<()>,
     // for the Deref impl
-    watch: Incr<'a, T>,
+    watch: Incr<T>,
 }
 
-impl<'a, T: Value<'a>> fmt::Debug for Var<'a, T> {
+impl<T: Value> fmt::Debug for Var<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut tuple = f.debug_tuple("Var");
         let internal = self.internal.value.borrow();
-        tuple
-            .field(&self.id())
-            .field(&*internal)
-            .finish()
+        tuple.field(&self.id()).field(&*internal).finish()
     }
 }
 
-impl<'a, T: Value<'a>> PartialEq for Var<'a, T> {
+impl<T: Value> PartialEq for Var<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id() == other.id()
     }
 }
 
-impl<'a, T: Value<'a>> Deref for crate::Var<'a, T> {
-    type Target = Incr<'a, T>;
+impl<T: Value> Deref for crate::Var<T> {
+    type Target = Incr<T>;
     fn deref(&self) -> &Self::Target {
         &self.watch
     }
 }
 
-impl<'a, T: Value<'a>> Var<'a, T> {
-    pub(crate) fn new(internal: Rc<InternalVar<'a, T>>) -> Self {
+impl<T: Value> Var<T> {
+    pub(crate) fn new(internal: Rc<InternalVar<T>>) -> Self {
         Self {
             watch: internal.watch(),
             internal,
@@ -136,7 +134,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         self.internal.set(value)
     }
     #[inline]
-    pub fn update(&self, f: impl Fn(&mut T)) {
+    pub fn update(&self, f: impl FnMut(&mut T) + 'static) {
         self.internal.update(f)
     }
     #[inline]
@@ -144,7 +142,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         self.internal.get()
     }
     #[inline]
-    pub fn watch(&self) -> Incr<'a, T> {
+    pub fn watch(&self) -> Incr<T> {
         self.watch.clone()
     }
     #[inline]
@@ -153,7 +151,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> Drop for Var<'a, T> {
+impl<T: Value> Drop for Var<T> {
     fn drop(&mut self) {
         tracing::trace!("dropping public::Var with id {:?}", self.id());
         // one is for us; one is for the watch node.
@@ -179,9 +177,9 @@ impl<'a, T: Value<'a>> Drop for Var<'a, T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct IncrState<'a>(pub(crate) Rc<State<'a>>);
+pub struct IncrState(pub(crate) Rc<State>);
 
-impl<'a> IncrState<'a> {
+impl IncrState {
     pub fn new() -> Self {
         Self(State::new())
     }
@@ -191,59 +189,54 @@ impl<'a> IncrState<'a> {
     }
 
     #[inline]
-    pub fn constant<T: Value<'a>>(&self, value: T) -> Incr<'a, T> {
+    pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
         self.0.constant(value)
     }
 
-    pub fn fold<F, T: Value<'a>, R: Value<'a>>(
-        &self,
-        vec: Vec<Incr<'a, T>>,
-        init: R,
-        f: F,
-    ) -> Incr<'a, R>
+    pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'static,
     {
         self.0.fold(vec, init, f)
     }
 
-    pub fn unordered_fold_inverse<F, FInv, T: Value<'a>, R: Value<'a>>(
+    pub fn unordered_fold_inverse<F, FInv, T: Value, R: Value>(
         &self,
-        vec: Vec<Incr<'a, T>>,
+        vec: Vec<Incr<T>>,
         init: R,
         f: F,
         f_inverse: FInv,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R>
+    ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + Clone + 'a,
-        FInv: FnMut(R, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + Clone + 'static,
+        FInv: FnMut(R, &T) -> R + 'static,
     {
         self.0
             .unordered_fold_inverse(vec, init, f, f_inverse, full_compute_every_n_changes)
     }
 
-    pub fn unordered_fold<F, U, T: Value<'a>, R: Value<'a>>(
+    pub fn unordered_fold<F, U, T: Value, R: Value>(
         &self,
-        vec: Vec<Incr<'a, T>>,
+        vec: Vec<Incr<T>>,
         init: R,
         f: F,
         update: U,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R>
+    ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'a,
-        U: FnMut(R, &T, &T) -> R + 'a,
+        F: FnMut(R, &T) -> R + 'static,
+        U: FnMut(R, &T, &T) -> R + 'static,
     {
         self.0
             .unordered_fold(vec, init, f, update, full_compute_every_n_changes)
     }
 
-    pub fn var<T: Value<'a>>(&self, value: T) -> Var<'a, T> {
+    pub fn var<T: Value>(&self, value: T) -> Var<T> {
         self.0.var_in_scope(value, Scope::Top)
     }
 
-    pub fn var_current_scope<T: Value<'a>>(&self, value: T) -> Var<'a, T> {
+    pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
         self.0.var_in_scope(value, self.0.current_scope())
     }
 
@@ -332,3 +325,7 @@ impl Sub for Stats {
         self.diff(rhs)
     }
 }
+
+
+
+

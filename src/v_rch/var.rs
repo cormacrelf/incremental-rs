@@ -12,8 +12,8 @@ use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-pub(crate) struct VarGenerics<'a, T: Value<'a>>(std::marker::PhantomData<&'a T>);
-impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
+pub(crate) struct VarGenerics<T: Value>(std::marker::PhantomData<T>);
+impl<R: Value> NodeGenerics for VarGenerics<R> {
     type R = R;
     type BindLhs = ();
     type BindRhs = ();
@@ -21,7 +21,7 @@ impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
     type I2 = ();
     type F1 = fn(&Self::I1) -> R;
     type F2 = fn(&Self::I1, &Self::I2) -> R;
-    type B1 = fn(&Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
@@ -30,15 +30,15 @@ impl<'a, R: Value<'a>> NodeGenerics<'a> for VarGenerics<'a, R> {
 // For the delayed variable set list (set_during_stabilisation).
 // We use Weak to ensure we don't interfere with the manual
 // Rc-cycle-breaking on public::Var.
-pub(crate) type WeakVar<'a> = Weak<dyn ErasedVariable<'a> + 'a>;
+pub(crate) type WeakVar = Weak<dyn ErasedVariable>;
 
-pub(crate) trait ErasedVariable<'a>: Debug {
+pub(crate) trait ErasedVariable: Debug {
     fn set_var_stabilise_end(&self);
     fn id(&self) -> NodeId;
     fn break_rc_cycle(&self);
 }
 
-impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
+impl<T: Value> ErasedVariable for Var<T> {
     fn set_var_stabilise_end(&self) {
         let v_opt = self.value_set_during_stabilisation.borrow_mut().take();
         // if it's None, then we were simply pushed onto the
@@ -55,16 +55,16 @@ impl<'a, T: Value<'a>> ErasedVariable<'a> for Var<'a, T> {
     }
 }
 
-pub struct Var<'a, T: Value<'a>> {
-    pub(crate) state: Weak<State<'a>>,
+pub struct Var<T: Value> {
+    pub(crate) state: Weak<State>,
     pub(crate) value: RefCell<T>,
     pub(crate) value_set_during_stabilisation: RefCell<Option<T>>,
     pub(crate) set_at: Cell<StabilisationNum>,
-    pub(crate) node: RefCell<Option<Rc<Node<'a, VarGenerics<'a, T>>>>>,
+    pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
     pub(crate) node_id: NodeId,
 }
 
-impl<'a, T: Value<'a>> Debug for Var<'a, T> {
+impl<T: Value> Debug for Var<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Var")
             .field("set_at", &self.set_at.get())
@@ -73,9 +73,9 @@ impl<'a, T: Value<'a>> Debug for Var<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> Var<'a, T> {
-    pub(crate) fn erased(self: &Rc<Self>) -> WeakVar<'a> {
-        Rc::downgrade(self) as WeakVar<'a>
+impl<T: Value> Var<T> {
+    pub(crate) fn erased(self: &Rc<Self>) -> WeakVar {
+        Rc::downgrade(self) as WeakVar
     }
 
     pub(crate) fn get(&self) -> T {
@@ -154,7 +154,7 @@ impl<'a, T: Value<'a>> Var<'a, T> {
         }
     }
 
-    pub(crate) fn watch(&self) -> Incr<'a, T> {
+    pub(crate) fn watch(&self) -> Incr<T> {
         Incr {
             node: self
                 .node
@@ -172,7 +172,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-impl<'a, T: Value<'a>> Drop for Var<'a, T> {
+impl<T: Value> Drop for Var<T> {
     fn drop(&mut self) {
         tracing::trace!("Dropping var with id {:?}", self.node_id);
         DID_DROP.with(|cell| cell.set(cell.get() + 1));

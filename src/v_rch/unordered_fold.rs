@@ -81,19 +81,19 @@ where
     }
 }
 
-pub(crate) struct UnorderedArrayFold<'a, F, U, I, R> {
+pub(crate) struct UnorderedArrayFold<F, U, I, R> {
     pub(crate) init: R,
     pub(crate) fold: RefCell<F>,
     pub(crate) update: RefCell<U>,
     pub(crate) fold_value: RefCell<Option<R>>,
-    pub(crate) children: Vec<Incr<'a, I>>,
+    pub(crate) children: Vec<Incr<I>>,
     cycle: Cell<Cycle>,
 }
 
-impl<'a, F, U, I, R> std::fmt::Debug for UnorderedArrayFold<'a, F, U, I, R>
+impl<F, U, I, R> std::fmt::Debug for UnorderedArrayFold<F, U, I, R>
 where
-    I: Value<'a>,
-    R: Value<'a>,
+    I: Value,
+    R: Value,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnorderedArrayFold")
@@ -105,22 +105,22 @@ where
     }
 }
 
-impl<'a, F, U, I, R> UnorderedArrayFold<'a, F, U, I, R>
+impl<F, U, I, R> UnorderedArrayFold<F, U, I, R>
 where
-    F: FnMut(R, &I) -> R + 'a,
-    U: FnMut(R, &I, &I) -> R + 'a,
-    I: Value<'a>,
-    R: Value<'a>,
+    F: FnMut(R, &I) -> R + 'static,
+    U: FnMut(R, &I, &I) -> R + 'static,
+    I: Value,
+    R: Value,
 {
     pub(crate) fn create_node(
-        state: &Rc<State<'a>>,
-        vec: Vec<Incr<'a, I>>,
+        state: &Rc<State>,
+        vec: Vec<Incr<I>>,
         init: R,
         f: F,
         update: U,
         full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<'a, R> {
-        let node = super::node::Node::<UnorderedArrayFold<'a, F, _, I, R>>::create(
+    ) -> Incr<R> {
+        let node = super::node::Node::<UnorderedArrayFold<F, _, I, R>>::create(
             state.weak(),
             state.current_scope(),
             super::kind::Kind::UnorderedArrayFold(UnorderedArrayFold {
@@ -160,7 +160,7 @@ where
 
     pub(crate) fn child_changed(
         &self,
-        child: &Input<'a, I>,
+        child: &Input<I>,
         child_index: i32,
         old_value_opt: Option<I>,
         new_value: &I,
@@ -188,10 +188,10 @@ where
     }
 }
 
-impl<'a, F, U, I: Value<'a>, R: Value<'a>> NodeGenerics<'a> for UnorderedArrayFold<'a, F, U, I, R>
+impl<F, U, I: Value, R: Value> NodeGenerics for UnorderedArrayFold<F, U, I, R>
 where
-    F: FnMut(R, &I) -> R + 'a,
-    U: FnMut(R, &I, &I) -> R + 'a,
+    F: FnMut(R, &I) -> R + 'static,
+    U: FnMut(R, &I, &I) -> R + 'static,
 {
     type R = R;
     type BindRhs = ();
@@ -200,7 +200,7 @@ where
     type I2 = ();
     type F1 = fn(&Self::I1) -> R;
     type F2 = fn(&Self::I1, &Self::I2) -> R;
-    type B1 = fn(&Self::BindLhs) -> Incr<'a, Self::BindRhs>;
+    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold = F;
     type Update = U;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);

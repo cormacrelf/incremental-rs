@@ -12,7 +12,7 @@ use super::{Incr, Map2Node, MapNode, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::cell::Ref;
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Write, Display, self};
+use std::fmt::{self, Display, Write};
 use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
@@ -44,7 +44,7 @@ impl fmt::Debug for NodeId {
     }
 }
 
-pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
+pub(crate) struct Node<G: NodeGenerics> {
     pub id: NodeId,
 
     /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
@@ -52,7 +52,7 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     weak_self: Weak<Self>,
 
     /// A reference to the incremental State we're part of.
-    pub state: Weak<State<'a>>,
+    pub state: Weak<State>,
 
     /* The fields from [recomputed_at] to [created_in] are grouped together and are in the
     same order as they are used by [State.recompute] This has a positive performance
@@ -61,7 +61,7 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
     pub value_opt: RefCell<Option<G::R>>,
-    pub kind: RefCell<Kind<'a, G>>,
+    pub kind: RefCell<Kind<G>>,
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
@@ -78,9 +78,9 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
     ///
     /// Most of the time, a node only has one parent. So we will use a SmallVec with space enough
     /// for one without hitting the allocator.
-    pub parents: RefCell<SmallVec<[ParentRef<'a, G::R>; 1]>>,
+    pub parents: RefCell<SmallVec<[ParentRef<G::R>; 1]>>,
     /// Scope the node was created in. Never modified.
-    pub created_in: Scope<'a>,
+    pub created_in: Scope,
 
     pub parent_child_indices: RefCell<ParentChildIndices>,
     pub old_value_opt: RefCell<Option<G::R>>,
@@ -96,7 +96,7 @@ pub(crate) struct Node<'a, G: NodeGenerics<'a>> {
 
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
-    pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<'a, G::R>>>>,
+    pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<G::R>>>>,
 }
 
 #[derive(Debug)]
@@ -105,23 +105,23 @@ pub(crate) struct ParentChildIndices {
     pub my_child_index_in_parent_at_index: SmallVec<[i32; 1]>,
 }
 
-pub(crate) type Input<'a, R> = Rc<dyn Incremental<'a, R> + 'a>;
+pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
 
-pub(crate) trait Incremental<'a, R>: ErasedNode<'a> + Debug {
-    fn as_input(&self) -> Input<'a, R>;
+pub(crate) trait Incremental<R>: ErasedNode + Debug {
+    fn as_input(&self) -> Input<R>;
     fn latest(&self) -> R;
     fn value_opt(&self) -> Option<R>;
-    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
-    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
-    fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, R>);
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<R>);
+    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
+    fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
     fn set_cutoff(&self, cutoff: Cutoff<R>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
-    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<'a, R>>);
+    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
     fn remove_observer(&self, id: ObserverId);
 }
 
-impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
-    fn as_input(&self) -> Input<'a, G::R> {
+impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
+    fn as_input(&self) -> Input<G::R> {
         self.weak_self.upgrade().unwrap() as Input<G::R>
     }
     fn latest(&self) -> G::R {
@@ -136,11 +136,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     }
 
     // #[tracing::instrument]
-    fn add_parent_without_adjusting_heights(
-        &self,
-        child_index: i32,
-        parent_weak: ParentRef<'a, G::R>,
-    ) {
+    fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let Some(p) = parent_weak.upgrade_erased() else { panic!() };
         debug_assert!(p.is_necessary());
         let was_necessary = self.is_necessary();
@@ -154,7 +150,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             self.became_necessary();
         }
     }
-    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+    fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let parent = parent_weak.upgrade_erased().unwrap();
         debug_assert!(parent.is_necessary());
         self.add_parent_without_adjusting_heights(child_index, parent_weak);
@@ -181,7 +177,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
             t.recompute_heap.insert(parent.packed());
         }
     }
-    fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+    fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
@@ -219,7 +215,7 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.set(cutoff)
     }
-    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<'a, G::R>>) {
+    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
         let mut os = self.observers.borrow_mut();
         os.insert(id, weak);
     }
@@ -229,13 +225,13 @@ impl<'a, G: NodeGenerics<'a> + 'a> Incremental<'a, G::R> for Node<'a, G> {
     }
 }
 
-pub(crate) trait ParentNode<'a, I> {
-    fn child_changed(&self, child: &Input<'a, I>, child_index: i32, old_value_opt: Option<I>);
+pub(crate) trait ParentNode<I> {
+    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<I>);
 }
-pub(crate) trait Parent1<'a, I>: Debug + ErasedNode<'a> {
-    fn child_changed(&self, child: &Input<'a, I>, child_index: i32, old_value_opt: Option<I>);
+pub(crate) trait Parent1<I>: Debug + ErasedNode {
+    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<I>);
 }
-pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> {}
+pub(crate) trait Parent2<I>: Debug + ErasedNode {}
 
 /// Each node can be a parent for up to a dozen or so (map12) different types.
 /// ParentRef is an enum that knows, by the tag, which kind of parent this node is behaving as,
@@ -248,13 +244,13 @@ pub(crate) trait Parent2<'a, I>: Debug + ErasedNode<'a> {}
 /// `child_changed`. And we only need for UnorderedArrayFold & eventually Expert. Lot of work
 /// for one method. But there you go.
 #[derive(Clone, Debug)]
-pub(crate) enum ParentRef<'a, T> {
-    I1(Weak<dyn Parent1<'a, T> + 'a>),
-    I2(Weak<dyn Parent2<'a, T> + 'a>),
+pub(crate) enum ParentRef<T> {
+    I1(Weak<dyn Parent1<T>>),
+    I2(Weak<dyn Parent2<T>>),
 }
 
-impl<'a, T: Value<'a>> ParentRef<'a, T> {
-    fn upgrade_erased(&self) -> Option<NodeRef<'a>> {
+impl<T: Value> ParentRef<T> {
+    fn upgrade_erased(&self) -> Option<NodeRef> {
         match self {
             Self::I1(w) => w.upgrade().map(|x| x.packed()),
             Self::I2(w) => w.upgrade().map(|x| x.packed()),
@@ -269,8 +265,8 @@ impl<'a, T: Value<'a>> ParentRef<'a, T> {
     }
 }
 
-impl<'a, T: Value<'a>> ParentNode<'a, T> for ParentRef<'a, T> {
-    fn child_changed(&self, child: &Input<'a, T>, child_index: i32, old_value_opt: Option<T>) {
+impl<T: Value> ParentNode<T> for ParentRef<T> {
+    fn child_changed(&self, child: &Input<T>, child_index: i32, old_value_opt: Option<T>) {
         match self {
             Self::I1(i1) => {
                 let i1 = i1.upgrade().unwrap();
@@ -281,14 +277,9 @@ impl<'a, T: Value<'a>> ParentNode<'a, T> for ParentRef<'a, T> {
         }
     }
 }
-impl<'a, G: NodeGenerics<'a>> Parent2<'a, G::I2> for Node<'a, G> {}
-impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
-    fn child_changed(
-        &self,
-        child: &Input<'a, G::I1>,
-        child_index: i32,
-        old_value_opt: Option<G::I1>,
-    ) {
+impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {}
+impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
+    fn child_changed(&self, child: &Input<G::I1>, child_index: i32, old_value_opt: Option<G::I1>) {
         let k = self.kind.borrow();
         match &*k {
             // Kind::Expert => ...,
@@ -301,12 +292,12 @@ impl<'a, G: NodeGenerics<'a>> Parent1<'a, G::I1> for Node<'a, G> {
     }
 }
 
-pub(crate) trait ErasedNode<'a>: Debug {
+pub(crate) trait ErasedNode: Debug {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
-    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef<'a>, NodeRef<'a>)>);
+    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
@@ -317,16 +308,16 @@ pub(crate) trait ErasedNode<'a>: Debug {
     /// AdjustHeightsHeap::ensure_height_requirements
     fn ensure_parent_height_requirements(
         &self,
-        ahh: &mut AdjustHeightsHeap<'a>,
-        original_child: &NodeRef<'a>,
-        original_parent: &NodeRef<'a>,
+        ahh: &mut AdjustHeightsHeap,
+        original_child: &NodeRef,
+        original_parent: &NodeRef,
     );
     fn height(&self) -> i32;
     /// Only for use from AdjustHeightsHeap.
     fn set_height(&self, height: i32);
     fn is_stale(&self) -> bool;
     fn is_stale_with_respect_to_a_child(&self) -> bool;
-    fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool;
+    fn edge_is_stale(&self, parent: WeakNode) -> bool;
     fn is_necessary(&self) -> bool;
     fn force_necessary(&self) -> &Cell<bool>;
     fn needs_to_be_computed(&self) -> bool;
@@ -337,13 +328,13 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices>;
-    fn state_opt(&self) -> Option<Rc<State<'a>>>;
-    fn state(&self) -> Rc<State<'a>>;
-    fn weak(&self) -> WeakNode<'a>;
-    fn packed(&self) -> NodeRef<'a>;
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ());
-    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef<'a>));
-    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef<'a>));
+    fn state_opt(&self) -> Option<Rc<State>>;
+    fn state(&self) -> Rc<State>;
+    fn weak(&self) -> WeakNode;
+    fn packed(&self) -> NodeRef;
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef) -> ());
+    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef));
+    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef));
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate(&self);
     fn invalidate_node(&self);
@@ -351,14 +342,14 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn assert_currently_running_node_is_child(&self, name: &'static str);
     #[cfg(debug_assertions)]
     fn assert_currently_running_node_is_parent(&self, name: &'static str);
-    fn has_child(&self, child: &WeakNode<'a>) -> bool;
+    fn has_child(&self, child: &WeakNode) -> bool;
     fn adjust_heights_bind_lhs_change(
         &self,
-        ahh: &mut AdjustHeightsHeap<'a>,
-        oc: &NodeRef<'a>,
-        op: &NodeRef<'a>,
+        ahh: &mut AdjustHeightsHeap,
+        oc: &NodeRef,
+        op: &NodeRef,
     );
-    fn created_in(&self) -> Scope<'a>;
+    fn created_in(&self) -> Scope;
     fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum);
     fn maybe_handle_after_stabilisation(&self);
     fn handle_after_stabilisation(&self);
@@ -366,7 +357,7 @@ pub(crate) trait ErasedNode<'a>: Debug {
     fn node_update(&self) -> NodeUpdateDelayed;
 }
 
-impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
+impl<G: NodeGenerics> Debug for Node<G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
@@ -376,23 +367,23 @@ impl<'a, G: NodeGenerics<'a>> Debug for Node<'a, G> {
     }
 }
 
-impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
+impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn id(&self) -> NodeId {
         self.id
     }
-    fn weak(&self) -> WeakNode<'a> {
-        self.weak_self.clone() as WeakNode<'a>
+    fn weak(&self) -> WeakNode {
+        self.weak_self.clone() as WeakNode
     }
-    fn packed(&self) -> NodeRef<'a> {
-        self.weak_self.upgrade().unwrap() as NodeRef<'a>
+    fn packed(&self) -> NodeRef {
+        self.weak_self.upgrade().unwrap() as NodeRef
     }
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices> {
         &self.parent_child_indices
     }
-    fn state_opt(&self) -> Option<Rc<State<'a>>> {
+    fn state_opt(&self) -> Option<Rc<State>> {
         self.state.upgrade()
     }
-    fn state(&self) -> Rc<State<'a>> {
+    fn state(&self) -> Rc<State> {
         self.state.upgrade().unwrap()
     }
     fn is_valid(&self) -> bool {
@@ -458,9 +449,9 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
     fn ensure_parent_height_requirements(
         &self,
-        ahh: &mut AdjustHeightsHeap<'a>,
-        original_child: &NodeRef<'a>,
-        original_parent: &NodeRef<'a>,
+        ahh: &mut AdjustHeightsHeap,
+        original_child: &NodeRef,
+        original_parent: &NodeRef,
     ) {
         let ps = self.parents.borrow();
         for parent in ps.iter() {
@@ -512,7 +503,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         });
         is_stale
     }
-    fn edge_is_stale(&self, parent: WeakNode<'a>) -> bool {
+    fn edge_is_stale(&self, parent: WeakNode) -> bool {
         let Some(parent) = parent.upgrade() else { return false };
         self.changed_at.get() > parent.recomputed_at().get()
     }
@@ -598,7 +589,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             t.recompute_heap.remove(self.packed());
         }
     }
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef<'a>) -> ()) {
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef) -> ()) {
         let k = self.kind.borrow();
         match &*k {
             Kind::Invalid => {}
@@ -681,7 +672,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
                 self.maybe_change_value_manual(None, new_value, old_value_is_none || did_change);
             }
             Kind::Map2(map2) => {
-                let map2: &Map2Node<'a, G::F2, G::I1, G::I2, G::R> = map2;
+                let map2: &Map2Node<G::F2, G::I1, G::I2, G::R> = map2;
                 let i1 = map2.one.value_as_ref().unwrap();
                 let i2 = map2.two.value_as_ref().unwrap();
                 let mut f = map2.mapper.borrow_mut();
@@ -801,7 +792,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             "({name}) currently running node was not a parent"
         );
     }
-    fn has_child(&self, child: &WeakNode<'a>) -> bool {
+    fn has_child(&self, child: &WeakNode) -> bool {
         let Some(upgraded) = child.upgrade() else { return false };
         let mut any = false;
         self.foreach_child(&mut |_ix, child| {
@@ -860,9 +851,9 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
 
     fn adjust_heights_bind_lhs_change(
         &self,
-        ahh: &mut AdjustHeightsHeap<'a>,
-        oc: &NodeRef<'a>,
-        op: &NodeRef<'a>,
+        ahh: &mut AdjustHeightsHeap,
+        oc: &NodeRef,
+        op: &NodeRef,
     ) {
         let kind = self.kind.borrow();
         match &*kind {
@@ -883,7 +874,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         }
     }
 
-    fn created_in(&self) -> Scope<'a> {
+    fn created_in(&self) -> Scope {
         self.created_in.clone()
     }
     fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum) {
@@ -927,11 +918,11 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
             }
         }
     }
-    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef<'a>)) {
+    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef)) {
         let mut seen = HashSet::new();
         self.iter_descendants_internal(&mut seen, f)
     }
-    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef<'a>)) {
+    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef)) {
         if !seen.contains(&self.id) {
             seen.insert(self.id);
             f(&self.packed());
@@ -960,7 +951,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         Ok(())
     }
 
-    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef<'a>, NodeRef<'a>)>) {
+    fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>) {
         match &*self.kind.borrow() {
             Kind::BindLhsChange(_, bind) => {
                 tracing::warn!("about to check bindlhschange.bind {:?}", bind.upgrade());
@@ -1008,7 +999,12 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
         });
         for (bind, rhs) in bind_edges {
             if seen.contains(&rhs.id()) {
-                writeln!(f, "  {} -> {} [style=dashed]", node_name(&bind), node_name(&rhs))?;
+                writeln!(
+                    f,
+                    "  {} -> {} [style=dashed]",
+                    node_name(&bind),
+                    node_name(&rhs)
+                )?;
             }
         }
         writeln!(f, "}}")?;
@@ -1016,7 +1012,7 @@ impl<'a, G: NodeGenerics<'a>> ErasedNode<'a> for Node<'a, G> {
     }
 }
 
-fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'_>>) {
+fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode>) {
     tracing::warn!("draining all_nodes_created_on_rhs for invalidation");
     for node in all_nodes_created_on_rhs.drain(..) {
         if let Some(node) = node.upgrade() {
@@ -1025,7 +1021,7 @@ fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode<'
     }
 }
 
-impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
+impl<G: NodeGenerics> Node<G> {
     pub fn into_rc(mut self) -> Rc<Self> {
         let rc = Rc::<Self>::new_cyclic(|weak| {
             self.weak_self = weak.clone();
@@ -1035,7 +1031,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         rc
     }
 
-    pub fn create(state: Weak<State<'a>>, created_in: Scope<'a>, kind: Kind<'a, G>) -> Rc<Self> {
+    pub fn create(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Rc<Self> {
         let t = state.upgrade().unwrap();
         t.num_nodes_created.set(t.num_nodes_created.get() + 1);
         Node {
@@ -1113,8 +1109,8 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
 
     fn change_child_bind_rhs(
         &self,
-        old_child: Option<Incr<'a, G::BindRhs>>,
-        new_child: Incr<'a, G::BindRhs>,
+        old_child: Option<Incr<G::BindRhs>>,
+        new_child: Incr<G::BindRhs>,
         child_index: i32,
     ) {
         let bind_main = self;
@@ -1163,7 +1159,7 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         }
     }
 
-    fn add_parent(&self, child_index: i32, parent_weak: ParentRef<'a, G::R>) {
+    fn add_parent(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
@@ -1187,16 +1183,16 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
         child_parents.push(parent_weak);
     }
 
-    fn as_parent(&self) -> ParentRef<'a, G::I1> {
+    fn as_parent(&self) -> ParentRef<G::I1> {
         ParentRef::I1(self.weak_self.clone())
     }
-    fn as_parent2(&self) -> ParentRef<'a, G::I2> {
+    fn as_parent2(&self) -> ParentRef<G::I2> {
         ParentRef::I2(self.weak_self.clone())
     }
-    fn as_child(&self) -> Input<'a, G::R> {
+    fn as_child(&self) -> Input<G::R> {
         self.weak_self.clone().upgrade().unwrap()
     }
-    fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'a, 'b, G>) {
+    fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b, G>) {
         let k = self.kind.borrow();
         match &*k {
             Kind::Invalid => {}
@@ -1249,9 +1245,9 @@ impl<'a, G: NodeGenerics<'a>> Node<'a, G> {
     }
 }
 
-struct ForeachChild<'a: 'b, 'b, G: NodeGenerics<'a>> {
-    i1: &'b mut dyn FnMut(i32, Input<'a, G::I1>),
-    i2: &'b mut dyn FnMut(i32, Input<'a, G::I2>),
+struct ForeachChild<'a, G: NodeGenerics> {
+    i1: &'a mut dyn FnMut(i32, Input<G::I1>),
+    i2: &'a mut dyn FnMut(i32, Input<G::I2>),
 }
 
 #[test]
@@ -1263,18 +1259,18 @@ fn test_node_size() {
     assert_eq!(core::mem::size_of_val(&*node), 400);
 }
 
-pub struct GraphvizDot<'a>(NodeRef<'a>);
+pub struct GraphvizDot(NodeRef);
 
-impl<'a> GraphvizDot<'a> {
-    pub(crate) fn new_erased(erased: NodeRef<'a>) -> Self {
+impl GraphvizDot {
+    pub(crate) fn new_erased(erased: NodeRef) -> Self {
         Self(erased)
     }
-    pub fn new<T>(incr: &Incr<'a, T>) -> Self {
+    pub fn new<T>(incr: &Incr<T>) -> Self {
         Self::new_erased(incr.node.packed())
     }
     pub fn save_to_file(&self, named: &str) -> std::io::Result<()> {
-        use std::io::Write;
         use std::fs::File;
+        use std::io::Write;
         let mut file = File::options()
             .read(true)
             .write(true)
@@ -1285,7 +1281,7 @@ impl<'a> GraphvizDot<'a> {
     }
 }
 
-impl Display for GraphvizDot<'_> {
+impl Display for GraphvizDot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.dot_write(f)
     }

@@ -312,11 +312,11 @@ fn map_mutable() {
 
 fn map_mutable_inner(global: &mut String) {
     // this is just for fun
-    struct Computation<'a> {
-        incr: IncrState<'a>,
-        setter: Var<'a, &'static str>,
+    struct Computation {
+        incr: IncrState,
+        setter: Var<&'static str>,
         #[allow(dead_code)]
-        total_len: Observer<'a, usize>,
+        total_len: Observer<usize>,
     }
 
     let incr = IncrState::new();
@@ -461,19 +461,16 @@ impl CallCounter {
     fn increment(&self) {
         self.1.set(self.1.get() + 1);
     }
-    fn wrap1<'a, A, R>(
-        &'a self,
-        mut f: impl (FnMut(&A) -> R) + 'a + Clone,
-    ) -> impl FnMut(&A) -> R + 'a + Clone {
+    fn wrap1<A, R>(&'a self, mut f: impl (FnMut(&A) -> R) + Clone) -> impl FnMut(&A) -> R + Clone {
         move |a| {
             self.increment();
             f(a)
         }
     }
-    fn wrap_folder<'a, B, R>(
+    fn wrap_folder<B, R>(
         &'a self,
-        mut f: impl (FnMut(R, &B) -> R) + 'a + Clone,
-    ) -> impl FnMut(R, &B) -> R + 'a + Clone {
+        mut f: impl (FnMut(R, &B) -> R) + Clone,
+    ) -> impl FnMut(R, &B) -> R + Clone {
         move |a, b| {
             self.increment();
             f(a, b)
