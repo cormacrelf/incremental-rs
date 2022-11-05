@@ -1263,7 +1263,7 @@ fn test_node_size() {
     let state = State::new();
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
-    assert_eq!(core::mem::size_of_val(&*node), 400);
+    assert_eq!(core::mem::size_of_val(&*node), 392);
 }
 
 pub struct GraphvizDot(NodeRef);

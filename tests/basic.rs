@@ -277,68 +277,67 @@ fn observer_ugly() {
 
 #[test]
 fn enumerate() {
-    let g = std::cell::Cell::new(0);
+    let g = CallCounter::new("g");
+    let g_ = g.clone();
     let incr = IncrState::new();
     let v = incr.var("first");
-    let m = v.enumerate(|i, &x| {
-        g.set(i + 1);
+    let m = v.enumerate(move |i, &x| {
+        g_.increment();
         x
     });
     let o = m.observe();
-    assert_eq!(g.get(), 0);
+    assert_eq!(*g, 0);
     incr.stabilise();
-    assert_eq!(g.get(), 1);
+    assert_eq!(*g, 1);
 
     v.set("second");
     v.set("second again");
-    assert_eq!(g.get(), 1);
+    assert_eq!(*g, 1);
     incr.stabilise();
-    assert_eq!(g.get(), 2);
+    assert_eq!(*g, 2);
 
     v.set("third");
-    assert_eq!(g.get(), 2);
+    assert_eq!(*g, 2);
     incr.stabilise();
-    assert_eq!(g.get(), 3);
+    assert_eq!(*g, 3);
     // ensure observer is alive to keep the map function running
     drop(o);
 }
 
-#[test]
-fn map_mutable() {
-    let mut global = String::new();
-    map_mutable_inner(&mut global);
-    assert_eq!(global, "abcde");
-}
+// #[test]
+// fn map_mutable() {
+//     let mut global = String::new();
+//     map_mutable_inner(&mut global);
+//     assert_eq!(global, "abcde");
+// }
 
-fn map_mutable_inner(global: &mut String) {
-    // this is just for fun
-    struct Computation {
-        incr: IncrState,
-        setter: Var<&'static str>,
-        #[allow(dead_code)]
-        total_len: Observer<usize>,
-    }
-
-    let incr = IncrState::new();
-    let setter = incr.var("a");
-    let total_len = setter
-        .map(|s| {
-            global.push_str(s);
-            global.len()
-        })
-        .observe();
-    let c = Computation {
-        incr: incr.clone(),
-        setter,
-        total_len,
-    };
-
-    c.incr.stabilise();
-    c.setter.set("ignored");
-    c.setter.set("bcde");
-    c.incr.stabilise();
-    assert_eq!(c.total_len.expect_value(), 5);
-}
+// fn map_mutable_inner(global: &mut String) {
+//     // this is just for fun
+//     struct Computation {
+//         incr: IncrState,
+//         setter: Var<&'static str>,
+//         #[allow(dead_code)]
+//         total_len: Observer<usize>,
+//     }
+//     let incr = IncrState::new();
+//     let setter = incr.var("a");
+//     let total_len = setter
+//         .map(|s| {
+//             global.push_str(s);
+//             global.len()
+//         })
+//         .observe();
+//     let c = Computation {
+//         incr: incr.clone(),
+//         setter,
+//         total_len,
+//     };
+//     c.incr.stabilise();
+//     c.setter.set("ignored");
+//     c.setter.set("bcde");
+//     c.incr.stabilise();
+//     assert_eq!(c.total_len.expect_value(), 5);
+// }
 
 #[test]
 fn mutable_string() {
@@ -452,8 +451,8 @@ struct CallCounter(&'static str, Cell<u32>);
 
 #[allow(dead_code)]
 impl CallCounter {
-    fn new(name: &'static str) -> Self {
-        Self(name, Cell::new(0))
+    fn new(name: &'static str) -> Rc<Self> {
+        Self(name, Cell::new(0)).into()
     }
     fn count(&self) -> u32 {
         self.1.get()
@@ -461,16 +460,16 @@ impl CallCounter {
     fn increment(&self) {
         self.1.set(self.1.get() + 1);
     }
-    fn wrap1<A, R>(&'a self, mut f: impl (FnMut(&A) -> R) + Clone) -> impl FnMut(&A) -> R + Clone {
+    fn wrap1<A, R>(self: Rc<Self>, mut f: impl (FnMut(&A) -> R) + Clone) -> impl FnMut(&A) -> R + Clone {
         move |a| {
             self.increment();
             f(a)
         }
     }
-    fn wrap_folder<B, R>(
+    fn wrap_folder<'a, B, R>(
         &'a self,
-        mut f: impl (FnMut(R, &B) -> R) + Clone,
-    ) -> impl FnMut(R, &B) -> R + Clone {
+        mut f: impl (FnMut(R, &B) -> R) + Clone + 'a,
+    ) -> impl FnMut(R, &B) -> R + Clone + 'a {
         move |a, b| {
             self.increment();
             f(a, b)
@@ -493,13 +492,23 @@ fn unordered_fold_inverse() {
     let v2 = incr.var(20);
     let v3 = incr.var(30);
     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
-    let sum = vars.binds(|incr, vars| {
+    let f_ = f.clone();
+    let finv_ = finv.clone();
+    let sum = vars.binds(move |incr, vars| {
+        let f_ = f_.clone();
+        let finv_ = finv_.clone();
         let watches: Vec<_> = vars.iter().map(Var::watch).collect();
         incr.unordered_fold_inverse(
             watches,
             0,
-            f.wrap_folder(|acc, x| acc + x),
-            finv.wrap_folder(|acc, x| acc - x), // this time our update function is
+            move |acc, x| {
+                f_.increment();
+                acc + x
+            },
+            move |acc, x| {
+                finv_.increment();
+                acc - x
+            }, // this time our update function is
             // constructed for us.
             None,
         )
@@ -507,23 +516,23 @@ fn unordered_fold_inverse() {
     let obs = sum.observe();
     incr.stabilise();
     assert_eq!(obs.value(), Ok(60));
-    assert_eq!(f, 3);
-    assert_eq!(finv, 0);
+    assert_eq!(*f, 3);
+    assert_eq!(*finv, 0);
 
     v1.set(40);
     incr.stabilise();
     assert_eq!(obs.value(), Ok(90));
-    assert_eq!(f, 4);
-    assert_eq!(finv, 1);
+    assert_eq!(*f, 4);
+    assert_eq!(*finv, 1);
 
     vars.set(vec![v1.clone()]);
     incr.stabilise();
     assert_eq!(obs.value(), Ok(40));
-    assert_eq!(f, 5);
+    assert_eq!(*f, 5);
     // we create a new UnorderedArrayFold in the bind.
     // Hence finv was not needed, fold_value was zero
     // and we just folded the array non-incrementally
-    assert_eq!(finv, 1);
+    assert_eq!(*finv, 1);
 }
 
 #[test]
@@ -588,7 +597,7 @@ fn incr_map_primes() {
     b.insert("ten", 10);
     let v = incr.var(b.clone());
     let filtered = v
-        .incr_filter_map(|&v| Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes))))
+        .incr_filter_map(move |&v| Some(v).filter(|x| dbg!(is_prime(*dbg!(x), &primes))))
         .observe();
 
     incr.stabilise();
@@ -750,7 +759,8 @@ fn two_worlds() {
 
 #[test]
 fn cutoff_rc_ptr_eq() {
-    let sum_counter = &CallCounter::new("map on rc");
+    let sum_counter = CallCounter::new("map on rc");
+    let sum_counter_ = sum_counter.clone();
     let incr = IncrState::new();
     let rc: Rc<Vec<i32>> = Rc::new(vec![1i32, 2, 3]);
     let var = incr.var(rc.clone());
@@ -767,8 +777,8 @@ fn cutoff_rc_ptr_eq() {
     // The default is of course PartialEq.
 
     let o = v
-        .map(|list| {
-            sum_counter.increment();
+        .map(move |list| {
+            sum_counter_.increment();
             list.iter().sum::<i32>()
         })
         .observe();
@@ -791,6 +801,7 @@ fn cutoff_rc_ptr_eq() {
 #[test]
 fn cutoff_sum() {
     let add10_counter = CallCounter::new("sum + 10");
+    let add10_counter_ = add10_counter.clone();
     let incr = IncrState::new();
     let vec = vec![1i32, 2, 3];
     let v = incr.var(vec);
@@ -798,21 +809,21 @@ fn cutoff_sum() {
         .map(|xs| xs.into_iter().fold(0i32, |acc, &x| acc + x))
         // because our first map node checks PartialEq before changing
         // its output value, the second map node will not have to run.
-        .map(add10_counter.wrap1(|&sum| sum + 10))
+        .map(add10_counter_.wrap1(|&sum| sum + 10))
         .observe();
 
     incr.stabilise();
-    assert_eq!(add10_counter, 1);
+    assert_eq!(*add10_counter, 1);
     assert_eq!(o.value(), Ok(16));
 
     v.set(vec![6]);
     incr.stabilise();
-    assert_eq!(add10_counter, 1); // the crux
+    assert_eq!(*add10_counter, 1); // the crux
     assert_eq!(o.value(), Ok(16));
 
     v.set(vec![9, 1]);
     incr.stabilise();
-    assert_eq!(add10_counter, 2); // the crux again
+    assert_eq!(*add10_counter, 2); // the crux again
     assert_eq!(o.value(), Ok(20));
 }
 
@@ -847,51 +858,53 @@ fn map_with_old_reuse() {
 #[test]
 fn observer_subscribe_drop() {
     let call_count = CallCounter::new("subscriber");
+    let call_count_ = call_count.clone();
     let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
     observer
-        .subscribe(|value| {
+        .subscribe(move |value| {
             tracing::info!("received update: {:?}", value);
-            call_count.increment();
+            call_count_.increment();
         })
         .unwrap();
     incr.stabilise();
-    assert_eq!(call_count, 1);
+    assert_eq!(*call_count, 1);
     incr.stabilise();
-    assert_eq!(call_count, 1);
+    assert_eq!(*call_count, 1);
     var.set(11);
     incr.stabilise();
-    assert_eq!(call_count, 2);
+    assert_eq!(*call_count, 2);
 
     drop(observer);
     var.set(12);
     incr.stabilise();
-    assert_eq!(call_count, 2);
+    assert_eq!(*call_count, 2);
 }
 
 #[test]
 fn observer_unsubscribe() {
     let call_count = CallCounter::new("subscriber");
+    let call_count_ = call_count.clone();
     let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
     let token = observer
-        .subscribe(|value| {
+        .subscribe(move |value| {
             tracing::debug!("received update: {:?}", value);
-            call_count.increment();
+            call_count_.increment();
         })
         .unwrap();
     incr.stabilise();
-    assert_eq!(call_count, 1);
+    assert_eq!(*call_count, 1);
     var.set(11);
     incr.stabilise();
-    assert_eq!(call_count, 2);
+    assert_eq!(*call_count, 2);
 
     observer.unsubscribe(token).unwrap();
     var.set(12);
     incr.stabilise();
-    assert_eq!(call_count, 2); // crux: still 2.
+    assert_eq!(*call_count, 2); // crux: still 2.
 }
 
 #[test]
@@ -925,27 +938,28 @@ fn state_unsubscribe_after_observer_dropped() {
 #[test]
 fn incr_map_rc() {
     let counter = CallCounter::new("mapper");
+    let counter_ = counter.clone();
     let incr = IncrState::new();
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
     let observer = var
-        .incr_mapi(|&_k, &v| {
-            counter.increment();
+        .incr_mapi(move |&_k, &v| {
+            counter_.increment();
             v.to_string() + ", world"
         })
         .observe();
     incr.stabilise();
-    assert_eq!(counter, 2);
+    assert_eq!(*counter, 2);
     let greetings = observer.expect_value();
     assert_eq!(greetings.get(&5), Some(&String::from("hello, world")));
     incr.stabilise();
-    assert_eq!(counter, 2);
+    assert_eq!(*counter, 2);
     let rc = Rc::new(BTreeMap::from([(10, "changed")]));
     // we've saved ourselves some clones already
     // (from the Var to its watch node, for example)
     var.set(rc);
     incr.stabilise();
-    assert_eq!(counter, 3);
+    assert_eq!(*counter, 3);
 }
 
 #[test]
@@ -954,9 +968,10 @@ fn incr_filter_mapi() {
     let incr = IncrState::new();
     let rc = Rc::new(BTreeMap::from([(5, "hello"), (10, "goodbye")]));
     let var = incr.var(rc);
+    let counter_ = counter.clone();
     let observer = var
-        .incr_filter_mapi(|&k, &v| {
-            counter.increment();
+        .incr_filter_mapi(move |&k, &v| {
+            counter_.increment();
             if k < 10 {
                 return None;
             }
@@ -964,19 +979,19 @@ fn incr_filter_mapi() {
         })
         .observe();
     incr.stabilise();
-    assert_eq!(counter, 2);
+    assert_eq!(*counter, 2);
     let greetings = observer.expect_value();
     tracing::debug!("greetings were: {greetings:?}");
     assert_eq!(greetings.get(&5), None);
     assert_eq!(greetings.get(&10), Some(&"goodbye, world".to_string()));
     incr.stabilise();
-    assert_eq!(counter, 2);
+    assert_eq!(*counter, 2);
     let rc = Rc::new(BTreeMap::from([(10, "changed")]));
     // we've saved ourselves some clones already
     // (from the Var to its watch node, for example)
     var.set(rc);
     incr.stabilise();
-    assert_eq!(counter, 3);
+    assert_eq!(*counter, 3);
 }
 
 fn stabilise_diff(incr: &incremental::IncrState, msg: &str) -> incremental::StatsDiff {
@@ -1090,4 +1105,16 @@ fn becomes_unnecessary() {
         }
     ));
     assert_eq!(incr.stats().necessary, 0);
+}
+
+#[test]
+fn test_map_ref() {
+    #[derive(PartialEq, Clone, Debug)]
+    struct Thing {
+        string: String,
+    }
+    let incr = IncrState::new();
+    let var = incr.var(Thing { string: "hello".into() });
+    let str = var
+        .map_ref(|thing| thing.string.as_str());
 }
