@@ -80,6 +80,22 @@ impl RecomputeHeap {
         self.length.set(self.length.get() - 1)
     }
 
+    pub fn min_height(&self) -> i32 {
+        if self.length.get() == 0 {
+            self.height_lower_bound.set(self.queues.len() as i32);
+        } else {
+            while {
+                let q = self
+                    .queues[self.height_lower_bound.get() as usize].borrow();
+                q.is_empty()
+            } {
+                self.height_lower_bound.set(self.height_lower_bound.get() + 1);
+            }
+        }
+        self.height_lower_bound.get()
+    }
+
+
     pub(crate) fn increase_height(&self, node: &NodeRef) {
         debug_assert!(node.height() > node.height_in_recompute_heap().get());
         debug_assert!(node.is_in_recompute_heap());

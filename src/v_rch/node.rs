@@ -385,6 +385,7 @@ pub(crate) trait ErasedNode: Debug {
     fn check_if_unnecessary(&self);
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
+    fn parent_iter_can_recompute_now(&self, child: &dyn ErasedNode);
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices>;
     fn swap_children_except_in_kind(&self, child1: &NodeRef, child_index: i32, child2: &NodeRef, child2_index: i32);
     fn remove_child(&self, child1: &NodeRef, child_index: i32);
@@ -833,49 +834,57 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
-    /* Note that the two following functions are not symmetric of one another: in [let y =
-    map x], [x] is always a child of [y] (assuming [x] doesn't become invalid) but [y] in
-    only a parent of [x] if y is necessary. */
-    // let assert_currently_running_node_is_child state node name =
-    //   let (T current) = currently_running_node_exn state name in
-    //   if not (Node.has_child node ~child:current)
-    //   then
-    //     raise_s
-    //       [%sexp
-    //         ("can only call " ^ name ^ " on parent nodes" : string)
-    //       , ~~(node.kind : _ Kind.t)
-    //       , ~~(current.kind : _ Kind.t)]
-    // ;;
-    //
-    // let assert_currently_running_node_is_parent state node name =
-    //   let (T current) = currently_running_node_exn state name in
-    //   if not (Node.has_parent ~parent:current node)
-    //   then
-    //     raise_s
-    //       [%sexp
-    //         ("can only call " ^ name ^ " on children nodes" : string)
-    //       , ~~(node.kind : _ Kind.t)
-    //       , ~~(current.kind : _ Kind.t)]
-    // ;;
-    #[cfg(debug_assertions)]
-    fn assert_currently_running_node_is_child(&self, name: &'static str) {
+
+    fn parent_iter_can_recompute_now(&self, child: &dyn ErasedNode) {
         let t = self.state();
-        let current = t.only_in_debug.currently_running_node_exn(name);
-        assert!(
-            self.has_child(&current),
-            "({name}) currently running node was not a child"
-        );
+        let parent = self;
+        let can_recompute_now = match &self.kind {
+            // these nodes aren't parents
+            Kind::Constant(_) | Kind::Var(_) => panic!(),
+            // These nodes have more than one child.
+            Kind::ArrayFold(_)
+            | Kind::Map2(..)
+            | Kind::Expert(..) => false,
+            /* We can immediately recompute [parent] if no other node needs to be stable
+               before computing it.  If [parent] has a single child (i.e. [node]), then
+               this amounts to checking that [parent] won't be invalidated, i.e. that
+               [parent]'s scope has already stabilized. */
+            Kind::BindLhsChange(..) => child.height() > parent.created_in.height(),
+            Kind::MapRef(_) | Kind::MapWithOld(_) | Kind::Map(_) => child.height() > parent.created_in.height(),
+            // | Freeze _ -> node.height > Scope.height parent.created_in
+            // | If_test_change _ -> node.height > Scope.height parent.created_in
+            // | Join_lhs_change _ -> node.height > Scope.height parent.created_in
+            // | Step_function _ -> node.height > Scope.height parent.created_in
+            //
+            /* For these, we need to check that the "_change" child has already been
+               evaluated (if needed).  If so, this also implies:
+
+               {[
+               node.height > Scope.height parent.created_in
+               ]} */
+            Kind::BindMain(_, _, lhs_change) => child.height() > lhs_change.height()
+            // | Kind::If_then_else i -> node.height > i.test_change.height
+            // | Join_main j -> node.height > j.lhs_change.height
+        };
+        if can_recompute_now || parent.height() <= t.recompute_heap.min_height() {
+            /* If [parent.height] is [<=] the height of all nodes in the recompute heap
+               (possibly because the recompute heap is empty), then we can recompute
+               [parent] immediately and save adding it to and then removing it from the
+               recompute heap. */
+            // t.num_nodes_recomputed_directly_because_one_child += 1;
+            parent.recompute();
+        } else {
+            // we already know that !parent.is_in_recompute_heap()
+            debug_assert!(parent.needs_to_be_computed());
+            debug_assert!(!parent.is_in_recompute_heap());
+            tracing::debug!(
+                "inserting parent into recompute heap at height {:?}",
+                parent.height()
+            );
+            t.recompute_heap.insert(parent.packed());
+        }
     }
-    #[cfg(debug_assertions)]
-    fn assert_currently_running_node_is_parent(&self, name: &'static str) {
-        let t = self.state();
-        let current = t.only_in_debug.currently_running_node_exn(name);
-        let Some(current) = current.upgrade() else { return };
-        assert!(
-            current.has_child(&self.weak()),
-            "({name}) currently running node was not a parent"
-        );
-    }
+
     fn has_child(&self, child: &WeakNode) -> bool {
         let Some(upgraded) = child.upgrade() else { return false };
         let mut any = false;
@@ -1114,6 +1123,28 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
 
     // Expert
 
+    /* Note that the two following functions are not symmetric of one another: in [let y =
+    map x], [x] is always a child of [y] (assuming [x] doesn't become invalid) but [y] in
+    only a parent of [x] if y is necessary. */
+    #[cfg(debug_assertions)]
+    fn assert_currently_running_node_is_child(&self, name: &'static str) {
+        let t = self.state();
+        let current = t.only_in_debug.currently_running_node_exn(name);
+        assert!(
+            self.has_child(&current),
+            "({name}) currently running node was not a child"
+        );
+    }
+    #[cfg(debug_assertions)]
+    fn assert_currently_running_node_is_parent(&self, name: &'static str) {
+        let t = self.state();
+        let current = t.only_in_debug.currently_running_node_exn(name);
+        let Some(current) = current.upgrade() else { return };
+        assert!(
+            current.has_child(&self.weak()),
+            "({name}) currently running node was not a parent"
+        );
+    }
     fn expert_make_stale(&self) {
         let Some(expert) = self.kind.expert() else { return };
         #[cfg(debug_assertions)]
@@ -1281,13 +1312,32 @@ impl<G: NodeGenerics> Node<G> {
             t.num_nodes_changed.set(t.num_nodes_changed.get() + 1);
             self.maybe_handle_after_stabilisation();
             let parents = self.parents.borrow();
-            for (parent_index, parent) in parents.iter().enumerate() {
+            let mut parents_iter = parents.iter().enumerate();
+            // steal the first parent
+            let first_parent = parents_iter.next();
+            for (parent_index, parent) in parents_iter {
                 let Some(p) = parent.upgrade_erased() else { continue };
                 let child_index = pci.my_child_index_in_parent_at_index[parent_index];
-                {
-                    parent.child_changed(&self.as_child(), child_index, old_value_opt);
-                }
+                parent.child_changed(&self.as_child(), child_index, old_value_opt);
                 debug_assert!(p.needs_to_be_computed());
+                /* We don't do the [can_recompute_now] optimization.  Since most nodes only have
+                   one parent, it is not probably not a big loss.  If we did it anyway, we'd
+                   have to be careful, because while we iterate over the list of parents, we
+                   would execute them, and in particular we can execute lhs-change nodes who can
+                   change the structure of the list of parents we iterate on.  Think about:
+
+                   {[
+                   lhs >>= fun b -> if b then lhs >>| Fn.id else const b
+                   aka
+                   lhs.binds(|incr, b| if b { lhs.map(id) } else { incr.constant(b) })
+                   ]}
+
+                   If the optimization kicks in when we propagate change to the parents of [lhs]
+                   (which changes from [true] to [false]), we could execute the [lhs-change]
+                   first, which would make disconnect the [map] node from [lhs].  And then we
+                   would execute the second child of the [lhs], which doesn't exist anymore and
+                   incremental would segfault (there may be a less naive way of making this work
+                   though). */
                 if !p.is_in_recompute_heap() {
                     tracing::debug!(
                         "inserting parent into recompute heap at height {:?}",
@@ -1296,6 +1346,15 @@ impl<G: NodeGenerics> Node<G> {
                     // TODO: can_recompute_now
                     let t = self.state();
                     t.recompute_heap.insert(p.packed());
+                }
+            }
+            if let Some((parent_index, parent)) = first_parent {
+                let child_index = pci.my_child_index_in_parent_at_index[parent_index];
+                parent.child_changed(&self.as_child(), child_index, old_value_opt);
+                let parent = parent.upgrade_erased().unwrap();
+                debug_assert!(parent.needs_to_be_computed());
+                if !parent.is_in_recompute_heap() {
+                    parent.parent_iter_can_recompute_now(self);
                 }
             }
         } else {
