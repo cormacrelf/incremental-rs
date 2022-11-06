@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::rc::{Rc, Weak};
 
-mod expert;
+pub(crate) mod expert;
 
 #[derive(Debug)]
 pub(crate) struct State {

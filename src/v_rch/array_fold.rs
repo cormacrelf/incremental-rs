@@ -42,7 +42,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, I, R> Debug for ArrayFold<F, I, R>

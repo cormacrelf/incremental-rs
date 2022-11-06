@@ -25,7 +25,7 @@ pub(crate) trait NodeGenerics: 'static {
     type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type Recompute: FnMut() -> Self::R;
-    type ObsChange: FnMut(&Self::R);
+    type ObsChange: FnMut(bool);
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
@@ -138,5 +138,5 @@ impl<T: Value> NodeGenerics for Constant<T> {
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }

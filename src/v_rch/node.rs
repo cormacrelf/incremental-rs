@@ -1,9 +1,10 @@
 use crate::v_rch::MapWithOld;
 use crate::Value;
+use crate::v_rch::expert::Edge;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
-use super::expert::{Invalid, MakeStale};
+use super::expert::{Invalid, MakeStale, PackedEdge};
 use super::internal_observer::{InternalObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
@@ -163,6 +164,10 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         if !was_necessary {
             self.became_necessary();
         }
+        match &self.kind {
+            Kind::Expert(expert) => expert.run_edge_callback(child_index),
+            _ => {}
+        }
     }
     fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let parent = parent_weak.upgrade_erased().unwrap();
@@ -191,6 +196,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             t.recompute_heap.insert(parent.packed());
         }
     }
+
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<G::R>) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
@@ -226,6 +232,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         // now do what we just did but super easily in the actual Vec
         child_parents.swap_remove(parent_index as usize);
     }
+
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.set(cutoff)
     }
@@ -250,7 +257,9 @@ pub(crate) trait ParentNode<I> {
 pub(crate) trait Parent1<I>: Debug + ErasedNode {
     fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<&I>);
 }
-pub(crate) trait Parent2<I>: Debug + ErasedNode {}
+pub(crate) trait Parent2<I>: Debug + ErasedNode {
+    fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<&I>);
+}
 pub(crate) trait ParentExpert<I>: Debug + ErasedNode {
     fn child_changed(&self, child: &Input<I>, child_index: i32);
 }
@@ -294,16 +303,25 @@ impl<T: Value> ParentNode<T> for ParentRef<T> {
                 let i1 = i1.upgrade().unwrap();
                 i1.child_changed(child, child_index, old_value_opt)
             }
-            // We don't need this for i2
+            Self::I2(i2) => {
+                let i2 = i2.upgrade().unwrap();
+                i2.child_changed(child, child_index, old_value_opt)
+            }
+        }
+    }
+}
+impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
+    fn child_changed(&self, child: &Input<G::I2>, child_index: i32, old_value_opt: Option<&G::I2>) {
+        match &self.kind {
+            Kind::Expert(expert) => expert.run_edge_callback(child_index),
             _ => {}
         }
     }
 }
-impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {}
 impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
     fn child_changed(&self, child: &Input<G::I1>, child_index: i32, old_value_opt: Option<&G::I1>) {
         match &self.kind {
-            // Kind::Expert => ...,
+            Kind::Expert(expert) => expert.run_edge_callback(child_index),
             Kind::MapRef(mapref) => {
                 let self_old = old_value_opt.map(|v| (mapref.mapper)(v));
                 let child_new = child.value_as_ref().unwrap();
@@ -360,6 +378,8 @@ pub(crate) trait ErasedNode: Debug {
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self);
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices>;
+    fn swap_children_except_in_kind(&self, child1: &NodeRef, child_index: i32, child2: &NodeRef, child2_index: i32);
+    fn remove_child(&self, child1: &NodeRef, child_index: i32);
     fn state_opt(&self) -> Option<Rc<State>>;
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
@@ -388,9 +408,8 @@ pub(crate) trait ErasedNode: Debug {
     fn node_update(&self) -> NodeUpdateDelayed;
 
     fn expert_make_stale(&self);
-    // fn expert_add_dependency(&self, child: &Input<R>) {
-    //     child.state_add_parent(child_index, parent_weak)
-    // }
+    fn expert_add_dependency(&self, packed_edge: PackedEdge);
+    fn expert_remove_dependency(&self, packed_edge: PackedEdge);
 }
 
 impl<G: NodeGenerics> Debug for Node<G> {
@@ -442,12 +461,17 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
             Kind::BindMain(_, _, lhs_change) => !lhs_change.is_valid(),
-            Kind::Expert(e) => todo!(),
+            /* This is similar to what we do for bind above, except that any invalid child can be
+               removed, so we can only tell if an expert node becomes invalid when all its
+               dependencies have fired (which in practice means when we are about to run it). */
+            Kind::Expert(e) => false,
         }
     }
     fn propagate_invalidity_helper(&self) {
         match &self.kind {
-            // Kind::Expert => ...
+            /* If multiple children are invalid, they will push us as many times on the
+               propagation stack, so we count them right. */
+            Kind::Expert(expert) => expert.incr_invalid_children(),
             kind => {
                 #[cfg(debug_assertions)]
                 match kind {
@@ -599,6 +623,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if self.is_stale() {
             t.recompute_heap.insert(self.packed());
         }
+        match &self.kind {
+            Kind::Expert(expert) => expert.observability_change(true),
+            _ => {}
+        }
     }
     fn check_if_unnecessary(&self) {
         if !self.is_necessary() {
@@ -612,6 +640,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.maybe_handle_after_stabilisation();
         t.set_height(self.packed(), -1);
         self.remove_children();
+        match &self.kind {
+            Kind::Expert(expert) => expert.observability_change(false),
+            _ => {}
+        }
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             let t = self.state();
@@ -1084,6 +1116,78 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
+
+    fn expert_add_dependency(&self, packed_edge: PackedEdge) {
+        let Some(expert) = self.kind.expert() else { return };
+        // if debug
+        // then
+        //   if am_stabilizing state
+        //   && not
+        //        (List.mem
+        //           ~equal:phys_equal
+        //           state.only_in_debug.expert_nodes_created_by_current_node
+        //           (T node))
+        let e = packed_edge.as_any();
+        let new_child_index = expert.add_child_edge(packed_edge.clone());
+        /* [node] is not guaranteed to be necessary, even if we are running in a child of
+           [node], because we could be running due to a parent other than [node] making us
+           necessary. */
+        if self.is_necessary() {
+            if let Some(i1) = packed_edge.as_any().downcast_ref::<Edge<G::I1>>() {
+                i1.child.state_add_parent(new_child_index, self.as_parent());
+            } else if let Some(i2) = packed_edge.as_any().downcast_ref::<Edge<G::I2>>() {
+                i2.child.state_add_parent(new_child_index, self.as_parent2());
+            }
+            debug_assert!(self.needs_to_be_computed());
+            if !self.is_in_recompute_heap() {
+                let state = self.state();
+                state.recompute_heap.insert(self.packed());
+            }
+        }
+    }
+
+    fn expert_remove_dependency(&self, packed_edge: PackedEdge) {
+        let Some(expert) = self.kind.expert() else { return };
+        #[cfg(debug_assertions)]
+        self.assert_currently_running_node_is_child("remove_dependency");
+        /* [node] is not guaranteed to be necessary, for the reason stated in
+           [add_dependency] */
+        let edge_index = packed_edge.index_cell().get().unwrap();
+        let edge_child = packed_edge.packed();
+        let last_edge = expert.last_child_edge_exn();
+        let last_edge_index = last_edge.index_cell().get().unwrap();
+        if edge_index != last_edge_index {
+            if self.is_necessary() {
+                self.swap_children_except_in_kind(
+                    &edge_child,
+                    edge_index,
+                    &last_edge.packed(),
+                    last_edge_index,
+                );
+            }
+            expert.swap_children(edge_index as usize, last_edge_index as usize);
+            // if debug then Node.invariant ignore node;
+        }
+        expert.remove_last_child_edge_exn();
+        debug_assert!(self.is_stale());
+        if self.is_necessary() {
+            self.remove_child(&edge_child, edge_index);
+            if !self.is_in_recompute_heap() {
+                let state = self.state();
+                state.recompute_heap.insert(self.packed());
+            }
+            if !edge_child.is_valid() {
+                expert.decr_invalid_children();
+            }
+        }
+    }
+
+    fn swap_children_except_in_kind(&self, child1: &NodeRef, child_index: i32, child2: &NodeRef, child2_index: i32) {
+        todo!()
+    }
+    fn remove_child(&self, child1: &NodeRef, child_index: i32) {
+        todo!()
+    }
 }
 
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode>) {
@@ -1173,6 +1277,7 @@ impl<G: NodeGenerics> Node<G> {
                         "inserting parent into recompute heap at height {:?}",
                         p.height()
                     );
+                    // TODO: can_recompute_now
                     let t = self.state();
                     t.recompute_heap.insert(p.packed());
                 }
@@ -1297,7 +1402,11 @@ impl<G: NodeGenerics> Node<G> {
             Kind::Var(var) => {}
             Kind::Expert(e) => {
                 for (ix, child) in e.children.borrow().iter().enumerate() {
-                    (f.i1)(ix as i32, child.as_input())
+                    if let Some(e1) = child.as_any().downcast_ref::<Edge<G::I1>>() {
+                        (f.i1)(ix as i32, e1.as_input())
+                    } else if let Some(e2) = child.as_any().downcast_ref::<Edge<G::I2>>() {
+                        (f.i2)(ix as i32, e2.as_input())
+                    }
                 }
             }
         }
@@ -1328,7 +1437,7 @@ fn test_node_size() {
     let state = State::new();
     let node =
         Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
-    assert_eq!(core::mem::size_of_val(&*node), 392);
+    assert_eq!(core::mem::size_of_val(&*node), 360);
 }
 
 pub struct GraphvizDot(NodeRef);

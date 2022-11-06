@@ -1,7 +1,7 @@
 use crate::v_rch::expert::*;
 use super::*;
 
-fn create<T, C, F, O>(
+pub(crate) fn create<T, C, F, O>(
     state: &Rc<State>,
     recompute: F, 
     on_observability_change: O,
@@ -10,7 +10,7 @@ where
     T: Value,
     C: Value,
     F: FnMut() -> T + 'static,
-    O: FnMut(&T) + 'static,
+    O: FnMut(bool) + 'static,
 {
     let rc = Rc::new(ExpertNode::new_obs(recompute, on_observability_change));
     let node = Node::<ExpertNode<T, C, F, O>>::create(
@@ -29,11 +29,11 @@ where
     Incr { node }
 }
 
-fn make_stale(node: &NodeRef) {
+pub(crate) fn make_stale(node: &NodeRef) {
     node.expert_make_stale();
 }
 
-fn invalidate(node: &NodeRef) {
+pub(crate) fn invalidate(node: &NodeRef) {
     let state = node.state();
     #[cfg(debug_assertions)]
     node.assert_currently_running_node_is_child("invalidate");
@@ -41,5 +41,10 @@ fn invalidate(node: &NodeRef) {
     state.propagate_invalidity();
 }
 
-fn add_dependency<C>(node: &NodeRef, edge: Edge<C>) {
+pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
+    node.expert_add_dependency(edge);
+}
+
+pub(crate) fn remove_dependency(node: &NodeRef, edge: PackedEdge) {
+    node.expert_remove_dependency(edge);
 }

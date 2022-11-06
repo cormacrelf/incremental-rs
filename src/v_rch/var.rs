@@ -27,7 +27,7 @@ impl<R: Value> NodeGenerics for VarGenerics<R> {
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 // For the delayed variable set list (set_during_stabilisation).

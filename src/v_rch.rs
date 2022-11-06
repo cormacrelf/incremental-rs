@@ -103,6 +103,10 @@ impl<T> Incr<T> {
         self.node.set_graphviz_user_data(Box::new(data));
         self
     }
+    pub fn state(&self) -> IncrState {
+        let state = self.node.state();
+        IncrState(state)
+    }
 }
 
 pub(crate) struct Map2Node<F, T1, T2, R>
@@ -134,7 +138,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, T1, T2, R> Debug for Map2Node<F, T1, T2, R>
@@ -174,7 +178,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, T, R> Debug for MapNode<F, T, R>
@@ -217,7 +221,7 @@ where
     type WithOld = F;
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, T, R> Debug for MapWithOld<F, T, R>
@@ -305,7 +309,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 struct BindNodeMainGenerics<F, T, R> {
@@ -334,7 +338,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, T, R> Debug for BindNode<F, T, R>
@@ -856,7 +860,7 @@ where
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = F;
     type Recompute = fn() -> Self::R;
-    type ObsChange = fn(&Self::R);
+    type ObsChange = fn(bool);
 }
 
 impl<F, T, R> Debug for MapRefNode<F, T, R>
