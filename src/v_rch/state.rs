@@ -1,7 +1,6 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
-use super::unordered_fold::UnorderedArrayFold;
 use super::{NodeRef, Value, WeakNode};
 use crate::SubscriptionToken;
 
@@ -145,40 +144,6 @@ impl State {
             }),
         );
         Incr { node }
-    }
-
-    pub(crate) fn unordered_fold_inverse<F, FInv, T: Value, R: Value>(
-        self: &Rc<Self>,
-        vec: Vec<Incr<T>>,
-        init: R,
-        f: F,
-        f_inverse: FInv,
-        full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<R>
-    where
-        F: FnMut(R, &T) -> R + Clone + 'static,
-        FInv: FnMut(R, &T) -> R + 'static,
-    {
-        let update = super::unordered_fold::make_update_fn_from_inverse(f.clone(), f_inverse);
-        UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
-    }
-
-    pub(crate) fn unordered_fold<F, U, T: Value, R: Value>(
-        self: &Rc<Self>,
-        vec: Vec<Incr<T>>,
-        init: R,
-        f: F,
-        update: U,
-        full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<R>
-    where
-        F: FnMut(R, &T) -> R + 'static,
-        U: FnMut(R, &T, &T) -> R + 'static,
-    {
-        if vec.is_empty() {
-            return self.constant(init);
-        }
-        UnorderedArrayFold::create_node(self, vec, init, f, update, full_compute_every_n_changes)
     }
 
     pub(crate) fn var_in_scope<T: Value>(

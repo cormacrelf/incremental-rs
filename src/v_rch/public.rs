@@ -10,6 +10,8 @@ pub use super::node_update::NodeUpdate;
 pub use super::Incr;
 pub use super::WeakIncr;
 pub use super::Value;
+pub use super::symmetric_fold::MergeElement;
+pub use super::symmetric_fold::DiffElement;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
@@ -200,38 +202,6 @@ impl IncrState {
         self.0.fold(vec, init, f)
     }
 
-    pub fn unordered_fold_inverse<F, FInv, T: Value, R: Value>(
-        &self,
-        vec: Vec<Incr<T>>,
-        init: R,
-        f: F,
-        f_inverse: FInv,
-        full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<R>
-    where
-        F: FnMut(R, &T) -> R + Clone + 'static,
-        FInv: FnMut(R, &T) -> R + 'static,
-    {
-        self.0
-            .unordered_fold_inverse(vec, init, f, f_inverse, full_compute_every_n_changes)
-    }
-
-    pub fn unordered_fold<F, U, T: Value, R: Value>(
-        &self,
-        vec: Vec<Incr<T>>,
-        init: R,
-        f: F,
-        update: U,
-        full_compute_every_n_changes: Option<u32>,
-    ) -> Incr<R>
-    where
-        F: FnMut(R, &T) -> R + 'static,
-        U: FnMut(R, &T, &T) -> R + 'static,
-    {
-        self.0
-            .unordered_fold(vec, init, f, update, full_compute_every_n_changes)
-    }
-
     pub fn var<T: Value>(&self, value: T) -> Var<T> {
         self.0.var_in_scope(value, Scope::Top)
     }
@@ -326,6 +296,38 @@ impl Sub for Stats {
     }
 }
 
+/// A helper trait for accepting either Incr or Var.
+/// We already do Deref coercion from Var to Incr (i.e. its watch node),
+/// so may as well accept Var anywhere we accept Incr.
+pub trait IntoIncr<T> {
+    fn into_incr(self) -> Incr<T>;
+}
 
+impl<T> IntoIncr<T> for Incr<T> {
+    #[inline]
+    fn into_incr(self) -> Incr<T> {
+        self
+    }
+}
 
+impl<T> IntoIncr<T> for &Incr<T> {
+    #[inline]
+    fn into_incr(self) -> Incr<T> {
+        self.clone()
+    }
+}
 
+impl<T: Value> IntoIncr<T> for Var<T> {
+    #[inline]
+    fn into_incr(self) -> Incr<T> {
+        self.watch()
+    }
+}
+
+/// And for var references. Because we don't need to consume self.
+impl<T: Value> IntoIncr<T> for &Var<T> {
+    #[inline]
+    fn into_incr(self) -> Incr<T> {
+        self.watch()
+    }
+}

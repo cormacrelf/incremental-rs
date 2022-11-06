@@ -84,7 +84,8 @@ pub(crate) struct Node<G: NodeGenerics> {
     pub created_in: Scope,
 
     pub parent_child_indices: RefCell<ParentChildIndices>,
-    pub old_value_opt: RefCell<Option<G::R>>,
+    // this was for node-level subscriptions
+    // pub old_value_opt: RefCell<Option<G::R>>,
     pub height: Cell<i32>,
     /// Set from RecomputeHeap, and AdjustHeightsHeap via increase_height
     pub height_in_recompute_heap: Cell<i32>,
@@ -98,6 +99,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<G::R>>>>,
+    pub graphviz_user_data: RefCell<Option<Box<dyn Debug>>>,
 }
 
 #[derive(Debug)]
@@ -110,14 +112,13 @@ pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
 
 pub(crate) trait Incremental<R>: ErasedNode + Debug {
     fn as_input(&self) -> Input<R>;
-    #[deprecated = "doesn't work with Kind::MapRef"]
     fn latest(&self) -> R;
-    #[deprecated = "doesn't work with Kind::MapRef"]
     fn value_opt(&self) -> Option<R>;
     fn add_parent_without_adjusting_heights(&self, child_index: i32, parent_weak: ParentRef<R>);
     fn state_add_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
     fn set_cutoff(&self, cutoff: Cutoff<R>);
+    fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
     fn remove_observer(&self, id: ObserverId);
@@ -128,7 +129,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.weak_self.upgrade().unwrap() as Input<G::R>
     }
     fn latest(&self) -> G::R {
-        self.value_opt.borrow().clone().unwrap()
+        self.value_opt().unwrap()
     }
     fn value_as_ref(&self) -> Option<Ref<G::R>> {
         match &self.kind {
@@ -144,7 +145,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         Ref::filter_map(v, |o| o.as_ref()).ok()
     }
     fn value_opt(&self) -> Option<G::R> {
-        self.value_opt.borrow().clone()
+        self.value_as_ref().map(|x| G::R::clone(&x))
     }
 
     // #[tracing::instrument]
@@ -235,6 +236,11 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         let mut os = self.observers.borrow_mut();
         os.remove(&id);
     }
+
+    fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>) {
+        let mut slot = self.graphviz_user_data.borrow_mut();
+        slot.replace(user_data);
+    }
 }
 
 pub(crate) trait ParentNode<I> {
@@ -253,7 +259,7 @@ pub(crate) trait Parent2<I>: Debug + ErasedNode {}
 /// type.
 ///
 /// Ultimately, we only need one type-aware method from these parent nodes. That's
-/// `child_changed`. And we only need for UnorderedArrayFold & eventually Expert. Lot of work
+/// `child_changed`. And we only need for eventually Expert. Lot of work
 /// for one method. But there you go.
 #[derive(Clone, Debug)]
 pub(crate) enum ParentRef<T> {
@@ -294,17 +300,13 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
     fn child_changed(&self, child: &Input<G::I1>, child_index: i32, old_value_opt: Option<&G::I1>) {
         match &self.kind {
             // Kind::Expert => ...,
-            Kind::UnorderedArrayFold(uaf) => {
-                let new_value = child.value_as_ref().unwrap();
-                uaf.child_changed(child, child_index, old_value_opt, &new_value)
-            }
             Kind::MapRef(mapref) => {
                 let self_old = old_value_opt.map(|v| (mapref.mapper)(v));
                 let child_new = child.value_as_ref().unwrap();
                 let self_new = (mapref.mapper)(&child_new);
 
                 let did_change =
-                    self_old.is_none() || self.cutoff.get().should_cutoff(self_old.unwrap(), self_new);
+                    self_old.is_none() || !self.cutoff.get().should_cutoff(self_old.unwrap(), self_new);
                 // now we propagate to parent
                 // we can do this because we know we don't have to wait for "all our children"
                 // i.e. we know there is only one that could have fired child_change on us in the
@@ -321,6 +323,7 @@ pub(crate) trait ErasedNode: Debug {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
+    fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result;
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
     fn should_be_invalidated(&self) -> bool;
@@ -418,7 +421,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         match &self.kind {
             Kind::Constant(_) | Kind::Var(_) => false,
             Kind::ArrayFold(..)
-            | Kind::UnorderedArrayFold(..)
             | Kind::Map(..)
             | Kind::MapWithOld(..)
             | Kind::MapRef(..)
@@ -495,7 +497,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
             Kind::Constant(v) => self.recomputed_at.get() == StabilisationNum(-1),
             Kind::ArrayFold(_)
-            | Kind::UnorderedArrayFold(_)
             | Kind::Map(_)
             // for MapRef, we never "recompute" ourselves. the action happens in
             // child_changed/value_as_ref
@@ -597,10 +598,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.maybe_handle_after_stabilisation();
         t.set_height(self.packed(), -1);
         self.remove_children();
-        match &self.kind {
-            Kind::UnorderedArrayFold(uaf) => uaf.force_full_compute(),
-            _ => {}
-        }
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             let t = self.state();
@@ -628,11 +625,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
             Kind::ArrayFold(af) => {
                 for (ix, child) in af.children.iter().enumerate() {
-                    f(ix as i32, child.node.packed())
-                }
-            }
-            Kind::UnorderedArrayFold(uaf) => {
-                for (ix, child) in uaf.children.iter().enumerate() {
                     f(ix as i32, child.node.packed())
                 }
             }
@@ -682,12 +674,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let map: &MapWithOld<G::WithOld, G::I1, G::R> = map;
                 let input = map.input.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let old_value = self.value_opt.take();
-                let old_value_is_none = old_value.is_none();
-                let (new_value, did_change) = f(old_value, &input);
-                tracing::debug!("<- {new_value:?}");
-                // WARN: None for old_value_opt is wrong
-                self.maybe_change_value_manual(None, Some(new_value), old_value_is_none || did_change);
+                // This is a double-buffering situation.
+                let (new_value, did_change) = {
+                    let mut current_value = self.value_opt.borrow_mut();
+                    tracing::warn!("<- old: {current_value:?}");
+                    f(current_value.take(), &input)
+                };
+                tracing::warn!("<- new: {new_value:?}");
+                self.maybe_change_value_manual(None, Some(new_value), did_change);
             }
             Kind::Map2(map2) => {
                 let map2: &Map2Node<G::F2, G::I1, G::I2, G::R> = map2;
@@ -759,10 +753,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.copy_child_bindrhs(&rhs.node, casts.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
-            Kind::UnorderedArrayFold(uaf) => {
-                tracing::debug!("-- recomputing UAF {uaf:?}");
-                self.maybe_change_value(uaf.compute())
-            }
         }
     }
     /* Note that the two following functions are not symmetric of one another: in [let y =
@@ -828,7 +818,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             let t = self.state();
             self.maybe_handle_after_stabilisation();
             *self.value_opt.borrow_mut() = None;
-            debug_assert!(self.old_value_opt.borrow().is_none());
+            // this was for node-level subscriptions. we don't have those
+            // debug_assert!(self.old_value_opt.borrow().is_none());
             self.changed_at.set(t.stabilisation_num.get());
             self.recomputed_at.set(t.stabilisation_num.get());
             t.num_nodes_invalidated
@@ -943,10 +934,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result {
         let id = self.id;
+        if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
+            writeln!(f, "{:?}", user)?;
+        }
         match &self.kind {
             Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?})"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
-            Kind::UnorderedArrayFold(_) => write!(f, "UnorderedArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
             Kind::Map(_) => write!(f, "Map"),
             Kind::MapRef(_) => write!(f, "MapRef"),
@@ -976,34 +969,55 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             _ => {}
         }
     }
+    fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
+        let node = self;
+        write!(f, "  {} [", name)?;
+        let t = node.state();
+        let r = t.stabilisation_num.get();
+        write!(f, "label=")?;
+        let mut buf = String::new();
+        node.dot_label(&mut buf)?;
+        write!(f, "{:?}", buf)?;
+        if node.recomputed_at().get().add1() < r {
+            write!(f, ", color=grey, fontcolor=grey")?;
+        } else {
+            write!(f, ", style=bold")?;
+        }
+        match node.kind {
+            Kind::Var(..) => {
+                write!(f, ", shape=note")?;
+            },
+            Kind::BindLhsChange(..) => {
+                write!(f, ", shape=box3d, bgcolor=grey")?;
+            },
+            _ => {}
+        }
+        writeln!(f, "]")?;
+        Ok(())
+    }
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result {
         fn node_name(node: &NodeRef) -> String {
             node.id().0.to_string()
         }
-        fn print_node(f: &mut dyn Write, node: &NodeRef, name: &str) -> fmt::Result {
-            write!(f, "  {} [", name)?;
-            write!(f, "label=")?;
-            let t = node.state();
-            let r = t.stabilisation_num.get();
-            let mut buf = String::new();
-            node.dot_label(&mut buf)?;
-            write!(f, "{:?}", buf)?;
-            if node.recomputed_at().get().add1() < r {
-                write!(f, ", color=grey, fontcolor=grey")?;
-            }
-            writeln!(f, "]")?;
-            Ok(())
-        }
         writeln!(f, "digraph G {{")?;
-        writeln!(f, "  rankdir = BT")?;
+        writeln!(f, r#"rankdir = BT
+                       graph [fontname = "Courier"];
+                       node [fontname = "Courier", shape=box];
+                       edge [fontname = "Courier"];"#)?;
         let mut bind_edges = vec![];
         let mut seen = HashSet::new();
+        let r = self.state().stabilisation_num.get();
         self.iter_descendants_internal(&mut seen, &mut |node| {
-            tracing::warn!("graphviz:doing a node {:?}", node);
             let name = node_name(node);
-            print_node(f, node, &name).unwrap();
+            node.dot_node(f, &name).unwrap();
             node.foreach_child(&mut |_, child| {
                 writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
+                if child.recomputed_at().get().add1() < r {
+                    write!(f, " [color=grey]").unwrap();
+                } else {
+                    write!(f, " [style=bold]").unwrap();
+                }
+                writeln!(f, "").unwrap();
             });
             node.dot_add_bind_edges(&mut bind_edges);
         });
@@ -1011,9 +1025,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             if seen.contains(&rhs.id()) {
                 writeln!(
                     f,
-                    "  {} -> {} [style=dashed]",
+                    "  {} -> {} [style=dashed{}]",
                     node_name(&bind),
-                    node_name(&rhs)
+                    node_name(&rhs),
+                    if bind.recomputed_at().get().add1() < r {
+                        ", color=grey"
+                    } else {
+                        ""
+                    }
                 )?;
             }
         }
@@ -1064,10 +1083,11 @@ impl<G: NodeGenerics> Node<G> {
             num_on_update_handlers: 0.into(),
             recomputed_at: Cell::new(StabilisationNum::init()),
             value_opt: RefCell::new(None),
-            old_value_opt: RefCell::new(None),
+            // old_value_opt: RefCell::new(None),
             kind,
             parents: smallvec::smallvec![].into(),
             observers: HashMap::new().into(),
+            graphviz_user_data: None.into(),
             cutoff: Cutoff::PartialEq.into(),
             is_valid: true.into(),
         }
@@ -1085,13 +1105,13 @@ impl<G: NodeGenerics> Node<G> {
     fn maybe_change_value_manual(
         &self,
         old_value_opt: Option<&G::R>,
-        value_opt: Option<G::R>,
-        should_change: bool,
+        new_value_opt: Option<G::R>,
+        did_change: bool,
     ) {
-        if should_change {
+        if did_change {
             let pci = self.parent_child_indices.borrow();
             let t = self.state();
-            self.value_opt.replace(value_opt);
+            self.value_opt.replace(new_value_opt);
             self.changed_at.set(t.stabilisation_num.get());
             t.num_nodes_changed.set(t.num_nodes_changed.get() + 1);
             self.maybe_handle_after_stabilisation();
@@ -1112,9 +1132,9 @@ impl<G: NodeGenerics> Node<G> {
                     t.recompute_heap.insert(p.packed());
                 }
             }
-        } else if old_value_opt.is_some() {
+        } else {
             tracing::info!("cutoff applied to value change");
-            self.value_opt.replace(old_value_opt.cloned());
+            self.value_opt.replace(new_value_opt);
         }
     }
 
@@ -1227,11 +1247,6 @@ impl<G: NodeGenerics> Node<G> {
             Kind::ArrayFold(af) => {
                 for (ix, child) in af.children.iter().enumerate() {
                     (f.i1)(ix as i32, child.node.as_input())
-                }
-            }
-            Kind::UnorderedArrayFold(uaf) => {
-                for (ix, child) in uaf.children.iter().enumerate() {
-                    (f.i1)(ix as i32, child.node.as_input());
                 }
             }
             Kind::Var(var) => {}

@@ -406,7 +406,7 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
 impl<K: Ord + Clone, V: PartialEq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
     type UnderlyingMap = Self;
     type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
-    fn make_mut(&mut self) -> &mut Self {
+    fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         self
     }
     fn filter_map_collect<V2: PartialEq + Clone>(
@@ -457,14 +457,15 @@ pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone
     );
     merge
         .fold(old_output, |output, merge_elem| {
-        let key = match merge_elem {
-            MergeElement::Left((key, _))| MergeElement::Right((key, _)) => key,
-            MergeElement::Both((left_key, _), (right_key, _)) => {
-                // comparisons can be expensive
-                // assert_eq!(left_key, right_key);
-                left_key
-            }
-        };
-        f(output, key, merge_elem)
-    })
+            let key = match merge_elem {
+                MergeElement::Left((key, _))| MergeElement::Right((key, _)) => key,
+                MergeElement::Both((left_key, _), (right_key, _)) => {
+                    // comparisons can be expensive
+                    // assert_eq!(left_key, right_key);
+                    left_key
+                }
+            };
+            f(output, key, merge_elem)
+        })
 }
+

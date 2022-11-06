@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use crate::{Incr, Value};
 
@@ -7,7 +7,6 @@ use refl::Id;
 
 use super::array_fold::ArrayFold;
 use super::node::{Input, Node};
-use super::unordered_fold::UnorderedArrayFold;
 use super::var::Var;
 use super::{BindNode, Map2Node, MapNode, MapWithOld, MapRefNode, BindLhsChangeNodeGenerics};
 
@@ -29,7 +28,6 @@ pub(crate) trait NodeGenerics: 'static {
 pub(crate) enum Kind<G: NodeGenerics> {
     Constant(G::R),
     ArrayFold(ArrayFold<G::Fold, G::I1, G::R>),
-    UnorderedArrayFold(UnorderedArrayFold<G::Fold, G::Update, G::I1, G::R>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
@@ -83,7 +81,6 @@ impl<G: NodeGenerics> Debug for Kind<G> {
         match self {
             Kind::Constant(v) => write!(f, "Constant({v:?})"),
             Kind::ArrayFold(af) => write!(f, "ArrayFold({af:?})"),
-            Kind::UnorderedArrayFold(uaf) => write!(f, "UnorderedArrayFold({uaf:?})"),
             Kind::Var(var) => write!(f, "Var({:?})", var),
             Kind::Map(map) => write!(f, "Map({:?})", map),
             Kind::MapWithOld(map) => write!(f, "MapWithOld({:?})", map),
@@ -106,7 +103,6 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,
-            Self::UnorderedArrayFold(uaf) => uaf.children.len(),
         }
     }
 }

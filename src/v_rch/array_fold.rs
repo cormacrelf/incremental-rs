@@ -18,7 +18,7 @@ where
     pub(crate) fn compute(&self) -> R {
         let acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
-        self.children.iter().fold(acc, |mut acc, x| {
+        self.children.iter().fold(acc, |acc, x| {
             let v = x.node.value_as_ref().unwrap();
             f(acc, &v)
         })

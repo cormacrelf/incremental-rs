@@ -13,7 +13,6 @@ mod stabilisation_num;
 mod state;
 mod symmetric_fold;
 mod syntax;
-mod unordered_fold;
 mod var;
 
 use crate::v_rch::kind::{BindMainId, BindLhsId};
@@ -45,10 +44,16 @@ impl<T> Value for T where T: Debug + Clone + PartialEq + 'static {}
 pub(crate) type NodeRef = Rc<dyn ErasedNode>;
 pub(crate) type WeakNode = Weak<dyn ErasedNode>;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
 pub struct Incr<T> {
     node: Input<T>,
+}
+
+impl<T> Clone for Incr<T> {
+    fn clone(&self) -> Self {
+        Self { node: self.node.clone() }
+    }
 }
 
 impl<T> From<Input<T>> for Incr<T> {
@@ -89,6 +94,13 @@ impl<T> Incr<T> {
     }
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
+    }
+    pub fn set_graphviz_user_data(&self, data: impl Debug + 'static) {
+        self.node.set_graphviz_user_data(Box::new(data))
+    }
+    pub fn with_graphviz_user_data(self, data: impl Debug + 'static) -> Self {
+        self.node.set_graphviz_user_data(Box::new(data));
+        self
     }
 }
 
@@ -184,6 +196,7 @@ impl<F, T, R> NodeGenerics for MapWithOld<F, T, R>
 where
     T: Value,
     R: Value,
+    // WARN: we ignore this boolean now
     F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
 {
     type R = R;
@@ -429,6 +442,7 @@ impl<T: Value> Incr<T> {
     pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
     where
         R: Value,
+        // WARN: we ignore this boolean now
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
     {
         let state = self.node.state();
@@ -602,7 +616,9 @@ impl<T: Value> Incr<T> {
         F: FnMut(&V) -> V2 + 'static,
         T::OutputMap<V2>: Value,
     {
-        self.incr_filter_mapi(move |_k, v| Some(f(v)))
+        let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
+        i.node.set_graphviz_user_data(Box::new(format!("incr_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i
     }
 
     #[inline]
@@ -615,7 +631,9 @@ impl<T: Value> Incr<T> {
         F: FnMut(&V) -> Option<V2> + 'static,
         T::OutputMap<V2>: Value,
     {
-        self.incr_filter_mapi(move |_k, v| f(v))
+        let i = self.incr_filter_mapi(move |_k, v| f(v));
+        i.node.set_graphviz_user_data(Box::new(format!("incr_filter_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i
     }
 
     #[inline]
@@ -628,7 +646,9 @@ impl<T: Value> Incr<T> {
         F: FnMut(&K, &V) -> V2 + 'static,
         T::OutputMap<V2>: Value,
     {
-        self.incr_filter_mapi(move |k, v| Some(f(k, v)))
+        let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
+        i.node.set_graphviz_user_data(Box::new(format!("incr_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i
     }
 
     pub fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
@@ -640,7 +660,7 @@ impl<T: Value> Incr<T> {
         F: FnMut(&K, &V) -> Option<V2> + 'static,
         T::OutputMap<V2>: Value,
     {
-        self.with_old_input_output(move |old, input| match (old, input.len()) {
+        let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
             (o @ _, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
@@ -671,7 +691,9 @@ impl<T: Value> Incr<T> {
                     });
                 (old_out, did_change)
             }
-        })
+        });
+        i.node.set_graphviz_user_data(Box::new(format!("incr_filter_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i
     }
 
     pub fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
@@ -689,7 +711,7 @@ impl<T: Value> Incr<T> {
         FAdd: FnMut(R, &K, &V) -> R + 'static,
         FRemove: FnMut(R, &K, &V) -> R + 'static,
     {
-        self.with_old_input_output(move |old, new_in| match old {
+        let i = self.with_old_input_output(move |old, new_in| match old {
             None => {
                 let newmap = new_in.nonincremental_fold(init.clone(), |acc, (k, v)| add(acc, k, v));
                 (newmap, true)
@@ -712,7 +734,9 @@ impl<T: Value> Incr<T> {
                 });
                 (folded, did_change)
             }
-        })
+        });
+        i.node.set_graphviz_user_data(Box::new(format!("incr_unordered_fold -> {}", std::any::type_name::<R>())));
+        i
     }
 }
 
@@ -732,7 +756,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         R: Value,
         F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static,
     {
-        self.with_old_input_output2(other, move |old, new_left_map, new_right_map| {
+        let i = self.with_old_input_output2(other, move |old, new_left_map, new_right_map| {
             let mut did_change = false;
             let output = merge_shared_impl(
                 old,
@@ -765,14 +789,15 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                     acc_output
                 }
             );
-            // WARN: should analyse when it has changed!!!
             (output, did_change)
-        })
+        });
+        i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<BTreeMap<K, R>>())));
+        i
     }
 }
 
 impl<T: Value> Incr<T> {
-    fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
+    pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
     where
         F: for<'a> Fn(&'a T) -> &'a R + 'static
     {
@@ -786,6 +811,7 @@ impl<T: Value> Incr<T> {
                 mapper: f,
             }),
         );
+        node.set_graphviz_user_data(Box::new(format!("map_ref -> {}", std::any::type_name::<R>())));
         Incr { node }
     }
 }
