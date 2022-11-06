@@ -21,7 +21,7 @@ fn join<T: Value>(incr: Incr<Incr<T>>) -> Incr<T> {
         }
         prev_rhs_.replace(rhs_dep);
     });
-    join.add_dependency(Dependency::new(&lhs_change));
+    join.add_dependency_unit(Dependency::new(&lhs_change));
     join.watch()
 }
 
