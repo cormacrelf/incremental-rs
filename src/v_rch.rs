@@ -79,7 +79,7 @@ impl<T> Hash for Incr<T> {
 
 /// Type for use in weak hash maps of incrementals
 #[derive(Debug, Clone)]
-pub struct WeakIncr<T>(Weak<dyn Incremental<T>>);
+pub struct WeakIncr<T>(pub(crate) Weak<dyn Incremental<T>>);
 impl<T> WeakIncr<T> {
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.0.ptr_eq(&other.0)
@@ -434,13 +434,40 @@ impl<T: Value> Incr<T> {
             mapper: f.into(),
         };
         let state = self.node.state();
-        let node = Node::<MapNode<F, T, R>>::create(
+        let node = Node::<MapNode<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope.borrow().clone(),
             Kind::Map(mapper),
         );
         let map = Incr { node };
         map
+    }
+
+    pub fn map_cyclic<R: Value>(&self, mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static) -> Incr<R>
+    {
+        let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
+            let f = {
+                let weak = WeakIncr(node_weak.clone());
+                move |t: &T| {
+                    cyclic(weak.clone(), t)
+                }
+            };
+            let mapper = MapNode {
+                input: self.clone().node,
+                mapper: f.into(),
+            };
+            let state = self.node.state();
+            let mut node = Node::<MapNode<_, T, R>>::create(
+                state.weak(),
+                state.current_scope.borrow().clone(),
+                Kind::Map(mapper),
+            );
+            node.weak_self = node_weak.clone();
+            node
+        });
+        node.created_in.add_node(node.clone());
+
+        Incr { node }
     }
 
     /// A version of `Incr::map` that allows reuse of the old
@@ -461,7 +488,7 @@ impl<T: Value> Incr<T> {
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
     {
         let state = self.node.state();
-        let node = Node::<MapWithOld<F, T, R>>::create(
+        let node = Node::<MapWithOld<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::MapWithOld(MapWithOld {
@@ -485,7 +512,7 @@ impl<T: Value> Incr<T> {
             mapper: f.into(),
         };
         let state = self.node.state();
-        let node = Node::<Map2Node<F, T, T2, R>>::create(
+        let node = Node::<Map2Node<F, T, T2, R>>::create_rc(
             state.weak(),
             state.current_scope.borrow().clone(),
             Kind::Map2(mapper),
@@ -520,7 +547,7 @@ impl<T: Value> Incr<T> {
             lhs_change: Weak::new().into(),
             main: Weak::new().into(),
         });
-        let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create(
+        let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindLhsChange(
@@ -531,7 +558,7 @@ impl<T: Value> Incr<T> {
                 bind.clone()
             ),
         );
-        let main = Node::<BindNodeMainGenerics<F, T, R>>::create(
+        let main = Node::<BindNodeMainGenerics<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindMain(
@@ -809,6 +836,102 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<BTreeMap<K, R>>())));
         i
     }
+
+    pub fn incr_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    where
+        V2: Value,
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
+    {
+        self.incr_filter_mapi_(move |k, incr_v| {
+            f(k, incr_v).map(|x| Some(x.clone()))
+        }, cutoff)
+    }
+    pub fn incr_filter_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    where
+        V2: Value,
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+    {
+        use expert::public::{Node, Dependency};
+        let state = self.state();
+        let lhs = self;
+        let incremental_state = lhs.state();
+        let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
+        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (Node<_, _>, Dependency<_>)>::new()));
+        let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
+        let result = Node::<BTreeMap<K, V2>, Option<V2>>::new(&state, {
+            let acc_ = acc.clone();
+            move || {
+                acc_.borrow().clone()
+            }
+        });
+        let on_inner_change = {
+            let acc_ = acc.clone();
+            move |key: &K, opt: Option<&V2>| {
+                let mut acc = acc_.borrow_mut();
+                match opt {
+                    None => { acc.remove(key); }
+                    Some(x) => { acc.insert(key.clone(), x.clone()); }
+                }
+                drop(acc);
+            }
+        };
+        let lhs_change = lhs.map_cyclic({
+            let prev_map_ = prev_map.clone();
+            let prev_nodes_ = prev_nodes.clone();
+            let acc_ = acc.clone();
+            let result = result.clone();
+            move |lhs_change, map| {
+                let mut prev_map = prev_map_.borrow_mut();
+                let mut prev_nodes = prev_nodes_.borrow_mut();
+                let new_nodes = prev_map.symmetric_fold(map, &mut *prev_nodes, |nodes, (key, diff)| {
+                    match diff {
+                        DiffElement::Unequal(_, _) => {
+                            let (node, dep) = nodes.get(key).unwrap();
+                            node.make_stale();
+                            nodes
+                        }
+                        DiffElement::Left(_) => {
+                            let (node, dep) = nodes.remove(key).unwrap();
+                            result.remove_dependency(dep);
+                            let mut acc = acc_.borrow_mut();
+                            acc.remove(key);
+                            node.invalidate();
+                            nodes
+                        }
+                        DiffElement::Right(_) => {
+                            let key = key.clone();
+                            let node = Node::<V>::new(&state, {
+                                let key_ = key.clone();
+                                let prev_map_ = prev_map_.clone();
+                                move || {
+                                    let prev_map = prev_map_.borrow();
+                                    prev_map.get(&key_).unwrap().clone()
+                                }
+                            });
+                            if let Some(cutoff) = cutoff {
+                                node.watch().set_cutoff(cutoff);
+                            }
+                            let lhs_change = lhs_change.upgrade().unwrap();
+                            node.add_dependency_unit(Dependency::new(&lhs_change));
+                            let mapped = f(&key, node.watch());
+                            let user_function_dep = Dependency::new_on_change(&mapped, {
+                                let key = key.clone();
+                                let on_inner_change = on_inner_change.clone();
+                                move |v| on_inner_change(&key, v.as_ref())
+                            });
+                            result.add_dependency(user_function_dep.clone());
+                            nodes.insert(key, (node, user_function_dep));
+                            nodes
+                        }
+                    }
+                });
+                *prev_map = map.clone();
+            }
+        });
+        result.add_dependency_unit(Dependency::new(&lhs_change));
+        result.watch()
+    }
+
 }
 
 impl<T: Value> Incr<T> {
@@ -817,7 +940,7 @@ impl<T: Value> Incr<T> {
         F: for<'a> Fn(&'a T) -> &'a R + 'static
     {
         let state = self.node.state();
-        let node = Node::<MapRefNode<F, T, R>>::create(
+        let node = Node::<MapRefNode<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::MapRef(MapRefNode {
@@ -826,7 +949,6 @@ impl<T: Value> Incr<T> {
                 mapper: f,
             }),
         );
-        node.set_graphviz_user_data(Box::new(format!("map_ref -> {}", std::any::type_name::<R>())));
         Incr { node }
     }
 }
@@ -872,3 +994,4 @@ where
         f.debug_struct("MapNode").finish()
     }
 }
+

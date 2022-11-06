@@ -55,7 +55,7 @@ pub(crate) struct State {
 #[cfg(debug_assertions)]
 #[derive(Debug, Default)]
 pub(crate) struct OnlyInDebug {
-    currently_running_node: RefCell<Option<WeakNode>>,
+    pub currently_running_node: RefCell<Option<WeakNode>>,
 }
 
 #[cfg(debug_assertions)]
@@ -119,7 +119,7 @@ impl State {
     }
 
     pub(crate) fn constant<T: Value>(self: &Rc<Self>, value: T) -> Incr<T> {
-        let node = Node::<Constant<T>>::create(
+        let node = Node::<Constant<T>>::create_rc(
             self.weak(),
             self.current_scope(),
             Kind::Constant(value),
@@ -136,7 +136,7 @@ impl State {
     where
         F: FnMut(R, &T) -> R + 'static,
     {
-        let node = Node::<ArrayFold<F, T, R>>::create(
+        let node = Node::<ArrayFold<F, T, R>>::create_rc(
             self.weak(),
             self.current_scope(),
             Kind::ArrayFold(ArrayFold {
@@ -162,7 +162,7 @@ impl State {
             value_set_during_stabilisation: RefCell::new(None),
         });
         let node =
-            Node::<super::var::VarGenerics<T>>::create(self.weak(), scope, Kind::Var(var.clone()));
+            Node::<super::var::VarGenerics<T>>::create_rc(self.weak(), scope, Kind::Var(var.clone()));
         {
             let mut slot = var.node.borrow_mut();
             var.node_id.set(node.id);
@@ -239,6 +239,10 @@ impl State {
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
+        #[cfg(debug_assertions)] {
+            self.only_in_debug.currently_running_node.take();
+            // t.only_in_debug.expert_nodes_created_by_current_node <- []);
+        }
         tracing::info_span!("set_during_stabilisation").in_scope(|| {
             let mut stack = self.set_during_stabilisation.borrow_mut();
             while let Some(var) = stack.pop() {

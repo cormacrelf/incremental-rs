@@ -1,4 +1,4 @@
-use crate::v_rch::expert::*;
+use crate::{v_rch::expert::*, WeakIncr};
 use super::*;
 
 pub(crate) fn create<T, C, F, O>(
@@ -13,7 +13,7 @@ where
     O: FnMut(bool) + 'static,
 {
     let rc = Rc::new(ExpertNode::new_obs(recompute, on_observability_change));
-    let node = Node::<ExpertNode<T, C, F, O>>::create(
+    let node = Node::<ExpertNode<T, C, F, O>>::create_rc(
         state.weak(),
         state.current_scope(),
         Kind::Expert(rc),
@@ -27,6 +27,35 @@ where
     //             <- T node :: state.only_in_debug.expert_nodes_created_by_current_node;
 
     Incr { node }
+}
+
+pub(crate) fn create_cyclic<T, C, Cyclic, F, O>(
+    state: &Rc<State>,
+    cyclic: Cyclic,
+    on_observability_change: O,
+) -> Incr<T>
+where
+    T: Value,
+    C: Value,
+    Cyclic: FnOnce(WeakIncr<T>) -> F,
+    F: FnMut() -> T + 'static,
+    O: FnMut(bool) + 'static,
+{
+    let node = Rc::<Node<_>>::new_cyclic(|weak| {
+        let weak_incr = WeakIncr(weak.clone());
+        let recompute = cyclic(weak_incr);
+        let rc = Rc::new(ExpertNode::new_obs(recompute, on_observability_change));
+        let mut node = Node::<ExpertNode<T, C, F, O>>::create(
+            state.weak(),
+            state.current_scope(),
+            Kind::Expert(rc),
+        );
+        node.weak_self = weak.clone();
+        node
+    });
+    node.created_in.add_node(node.clone());
+    Incr{node}
+    
 }
 
 pub(crate) fn make_stale(node: &NodeRef) {

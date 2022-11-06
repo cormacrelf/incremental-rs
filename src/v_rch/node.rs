@@ -51,7 +51,7 @@ pub(crate) struct Node<G: NodeGenerics> {
 
     /// A handy reference to ourself, which we can use to generate Weak<dyn Trait> versions of our
     /// node's reference-counted pointer at any time.
-    weak_self: Weak<Self>,
+    pub weak_self: Weak<Self>,
 
     /// A reference to the incremental State we're part of.
     pub state: Weak<State>,
@@ -274,10 +274,18 @@ pub(crate) trait ParentExpert<I>: Debug + ErasedNode {
 /// Ultimately, we only need one type-aware method from these parent nodes. That's
 /// `child_changed`. And we only need for eventually Expert. Lot of work
 /// for one method. But there you go.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum ParentRef<T> {
     I1(Weak<dyn Parent1<T>>),
     I2(Weak<dyn Parent2<T>>),
+}
+impl<T> Clone for ParentRef<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::I1(i1) => Self::I1(i1.clone()),
+            Self::I2(i2) => Self::I2(i2.clone()),
+        }
+    }
 }
 
 impl<T: Value> ParentRef<T> {
@@ -692,6 +700,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     #[tracing::instrument]
     fn recompute(&self) {
         let t = self.state();
+        #[cfg(debug_assertions)] {
+            t.only_in_debug.currently_running_node.replace(Some(self.weak()));
+            // t.only_in_debug.expert_nodes_created_by_current_node <- []);
+        }
         t.num_nodes_recomputed.set(t.num_nodes_recomputed.get() + 1);
         self.recomputed_at.set(t.stabilisation_num.get());
         let id = self.id;
@@ -1137,6 +1149,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 i1.child.state_add_parent(new_child_index, self.as_parent());
             } else if let Some(i2) = packed_edge.as_any().downcast_ref::<Edge<G::I2>>() {
                 i2.child.state_add_parent(new_child_index, self.as_parent2());
+            } else {
+                panic!("expert_add_dependency: could not figure out child type");
             }
             debug_assert!(self.needs_to_be_computed());
             if !self.is_in_recompute_heap() {
@@ -1209,7 +1223,7 @@ impl<G: NodeGenerics> Node<G> {
         rc
     }
 
-    pub fn create(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Rc<Self> {
+    pub fn create(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Self {
         let t = state.upgrade().unwrap();
         t.num_nodes_created.set(t.num_nodes_created.get() + 1);
         Node {
@@ -1240,7 +1254,9 @@ impl<G: NodeGenerics> Node<G> {
             cutoff: Cutoff::PartialEq.into(),
             is_valid: true.into(),
         }
-        .into_rc()
+    }
+    pub fn create_rc(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Rc<Self> {
+        Node::create(state, created_in, kind).into_rc()
     }
 
     fn maybe_change_value(&self, value: G::R) {
@@ -1406,6 +1422,8 @@ impl<G: NodeGenerics> Node<G> {
                         (f.i1)(ix as i32, e1.as_input())
                     } else if let Some(e2) = child.as_any().downcast_ref::<Edge<G::I2>>() {
                         (f.i2)(ix as i32, e2.as_input())
+                    } else {
+                        panic!("foreach_child_typed: could not figure out child type");
                     }
                 }
             }
@@ -1424,6 +1442,7 @@ impl<G: NodeGenerics> Node<G> {
             },
         })
     }
+
 }
 
 struct ForeachChild<'a, G: NodeGenerics> {
@@ -1436,7 +1455,7 @@ fn test_node_size() {
     use super::kind::Constant;
     let state = State::new();
     let node =
-        Node::<Constant<i32>>::create(state.weak(), state.current_scope(), Kind::Constant(5i32));
+        Node::<Constant<i32>>::create_rc(state.weak(), state.current_scope(), Kind::Constant(5i32));
     assert_eq!(core::mem::size_of_val(&*node), 360);
 }
 

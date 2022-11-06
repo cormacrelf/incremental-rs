@@ -30,16 +30,6 @@ pub(crate) struct Edge<T> {
     pub index: Cell<Option<i32>>,
 }
 
-pub(crate) fn expect_edge_downcast<'a, T: 'static>(packed_edge: &'a PackedEdge, name: &'static str) -> &'a Edge<T> {
-    match packed_edge.as_any().downcast_ref() {
-        None => panic!(
-            "add_dependency called with wrong child type: should be {}",
-            std::any::type_name::<Edge<T>>()
-        ),
-        Some(edge) => edge,
-    }
-}
-
 impl<T> Edge<T> {
     fn new(child: Input<T>, on_change: Option<Box<dyn FnMut(&T)>>) -> Self {
         Self {
@@ -226,7 +216,7 @@ where
 pub mod public {
     use std::{rc::Rc, marker::PhantomData};
 
-    use crate::{Incr, IncrState, Value};
+    use crate::{Incr, IncrState, Value, WeakIncr};
 
     use super::Edge;
 
@@ -257,7 +247,7 @@ pub mod public {
             let edge = Edge::new(on.node.clone(), None).into();
             Dependency { edge }
         }
-        pub fn new_on_change(on: Incr<T>, on_change: impl FnMut(&T) + 'static) -> Self {
+        pub fn new_on_change(on: &Incr<T>, on_change: impl FnMut(&T) + 'static) -> Self {
             let edge = Edge::new(on.node.clone(), Some(Box::new(on_change))).into();
             Dependency { edge }
         }
@@ -269,7 +259,7 @@ pub mod public {
         }
     }
 
-    pub struct Node<T, C> {
+    pub struct Node<T, C = ()> {
         incr: Incr<T>,
         _p: PhantomData<C>,
     }
@@ -290,6 +280,18 @@ pub mod public {
             let incr = expert::create::<T, C, _, _>(&state.0, f, obs_change);
             Self { incr, _p: PhantomData }
         }
+        pub fn new_cyclic<F>(state: &IncrState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T, C>
+            where F: FnMut() -> T + 'static,
+        {
+            fn ignore(_: bool) {}
+            Node::new_cyclic_(state, f, ignore)
+        }
+        pub fn new_cyclic_<F>(state: &IncrState, f: impl FnOnce(WeakIncr<T>) -> F, obs_change: impl FnMut(bool) + 'static) -> Node<T, C>
+            where F: FnMut() -> T + 'static,
+        {
+            let incr = expert::create_cyclic::<T, C, _, _, _>(&state.0, f, obs_change);
+            Self { incr, _p: PhantomData }
+        }
         pub fn watch(&self) -> Incr<T> {
             self.incr.clone()
         }
@@ -299,7 +301,11 @@ pub mod public {
         pub fn invalidate(&self) {
             expert::invalidate(&self.incr.node.packed())
         }
-        pub fn add_dependency<D: Value>(&self, dep: Dependency<D>) {
+        pub fn add_dependency(&self, dep: Dependency<C>) {
+            let edge = dep.edge;
+            expert::add_dependency(&self.incr.node.packed(), edge)
+        }
+        pub fn add_dependency_unit(&self, dep: Dependency<()>) {
             let edge = dep.edge;
             expert::add_dependency(&self.incr.node.packed(), edge)
         }
