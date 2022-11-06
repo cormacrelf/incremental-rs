@@ -3,6 +3,7 @@ use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
+use super::expert::{Invalid, MakeStale};
 use super::internal_observer::{InternalObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
@@ -250,6 +251,9 @@ pub(crate) trait Parent1<I>: Debug + ErasedNode {
     fn child_changed(&self, child: &Input<I>, child_index: i32, old_value_opt: Option<&I>);
 }
 pub(crate) trait Parent2<I>: Debug + ErasedNode {}
+pub(crate) trait ParentExpert<I>: Debug + ErasedNode {
+    fn child_changed(&self, child: &Input<I>, child_index: i32);
+}
 
 /// Each node can be a parent for up to a dozen or so (map12) different types.
 /// ParentRef is an enum that knows, by the tag, which kind of parent this node is behaving as,
@@ -364,7 +368,6 @@ pub(crate) trait ErasedNode: Debug {
     fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef));
     fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef));
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
-    fn invalidate(&self);
     fn invalidate_node(&self);
     #[cfg(debug_assertions)]
     fn assert_currently_running_node_is_child(&self, name: &'static str);
@@ -383,6 +386,11 @@ pub(crate) trait ErasedNode: Debug {
     fn handle_after_stabilisation(&self);
     fn num_on_update_handlers(&self) -> &Cell<i32>;
     fn node_update(&self) -> NodeUpdateDelayed;
+
+    fn expert_make_stale(&self);
+    // fn expert_add_dependency(&self, child: &Input<R>) {
+    //     child.state_add_parent(child_index, parent_weak)
+    // }
 }
 
 impl<G: NodeGenerics> Debug for Node<G> {
@@ -434,6 +442,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
             Kind::BindMain(_, _, lhs_change) => !lhs_change.is_valid(),
+            Kind::Expert(e) => todo!(),
         }
     }
     fn propagate_invalidity_helper(&self) {
@@ -508,6 +517,11 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 // i.e. never recomputed, or a child has changed more recently than we have been
                 // recomputed
                 self.recomputed_at.get() == StabilisationNum(-1)
+                    || self.is_stale_with_respect_to_a_child()
+            }
+            Kind::Expert(e) => {
+                e.force_stale.get()
+                    || self.recomputed_at.get().is_never()
                     || self.is_stale_with_respect_to_a_child()
             }
         }
@@ -629,6 +643,11 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 }
             }
             Kind::Var(var) => {}
+            Kind::Expert(e) => {
+                for (ix, child) in e.children.borrow().iter().enumerate() {
+                    f(ix as i32, child.packed())
+                }
+            }
         }
     }
     fn is_in_recompute_heap(&self) -> bool {
@@ -753,6 +772,21 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.copy_child_bindrhs(&rhs.node, casts.rhs_r);
             }
             Kind::ArrayFold(af) => self.maybe_change_value(af.compute()),
+            Kind::Expert(e) => {
+                match e.before_main_computation() {
+                    Err(Invalid) => {
+                        self.invalidate_node();
+                        t.propagate_invalidity();
+                    }
+                    Ok(()) => { 
+                        let value = {
+                            let mut recomputer = e.recompute.borrow_mut();
+                            recomputer()
+                        };
+                        self.maybe_change_value(value);
+                    }
+                }
+            }
         }
     }
     /* Note that the two following functions are not symmetric of one another: in [let y =
@@ -805,13 +839,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             any = any || Rc::ptr_eq(&child, &upgraded);
         });
         any
-    }
-    fn invalidate(&self) {
-        let state = self.state();
-        #[cfg(debug_assertions)]
-        self.assert_currently_running_node_is_child("invalidate");
-        self.invalidate_node();
-        state.propagate_invalidity();
     }
     fn invalidate_node(&self) {
         if self.is_valid() {
@@ -947,6 +974,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::Map2(_) => write!(f, "Map2"),
             Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange"),
             Kind::BindMain(..) => write!(f, "BindMain"),
+            Kind::Expert(..) => write!(f, "Expert"),
         }?;
         write!(f, "({id:?})")?;
         if let Some(val) =  self.value_as_ref() {
@@ -1038,6 +1066,23 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
         writeln!(f, "}}")?;
         Ok(())
+    }
+
+    // Expert
+
+    fn expert_make_stale(&self) {
+        let Some(expert) = self.kind.expert() else { return };
+        #[cfg(debug_assertions)]
+        self.assert_currently_running_node_is_child("make_stale");
+        match expert.make_stale() {
+            MakeStale::AlreadyStale => {}
+            MakeStale::Ok => {
+                if self.is_necessary() && !self.is_in_recompute_heap() {
+                    let t = self.state();
+                    t.recompute_heap.insert(self.packed());
+                }
+            }
+        }
     }
 }
 
@@ -1184,7 +1229,7 @@ impl<G: NodeGenerics> Node<G> {
             let latest = child.latest();
             self.maybe_change_value(token.cast(latest));
         } else {
-            self.invalidate();
+            self.invalidate_node();
             self.state().propagate_invalidity();
         }
     }
@@ -1250,6 +1295,11 @@ impl<G: NodeGenerics> Node<G> {
                 }
             }
             Kind::Var(var) => {}
+            Kind::Expert(e) => {
+                for (ix, child) in e.children.borrow().iter().enumerate() {
+                    (f.i1)(ix as i32, child.as_input())
+                }
+            }
         }
     }
 

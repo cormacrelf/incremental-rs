@@ -3,6 +3,7 @@
 mod adjust_heights_heap;
 mod array_fold;
 mod cutoff;
+mod expert;
 mod internal_observer;
 mod kind;
 mod node;
@@ -132,6 +133,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 impl<F, T1, T2, R> Debug for Map2Node<F, T1, T2, R>
@@ -170,6 +173,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 impl<F, T, R> Debug for MapNode<F, T, R>
@@ -211,6 +216,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = F;
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 impl<F, T, R> Debug for MapWithOld<F, T, R>
@@ -297,6 +304,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 struct BindNodeMainGenerics<F, T, R> {
@@ -324,6 +333,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 impl<F, T, R> Debug for BindNode<F, T, R>
@@ -844,6 +855,8 @@ where
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = F;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 impl<F, T, R> Debug for MapRefNode<F, T, R>

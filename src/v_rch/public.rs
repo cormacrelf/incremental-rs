@@ -12,6 +12,7 @@ pub use super::WeakIncr;
 pub use super::Value;
 pub use super::symmetric_fold::MergeElement;
 pub use super::symmetric_fold::DiffElement;
+pub use super::expert::public as expert;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;

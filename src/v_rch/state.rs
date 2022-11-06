@@ -20,6 +20,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::rc::{Rc, Weak};
 
+mod expert;
+
 #[derive(Debug)]
 pub(crate) struct State {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,

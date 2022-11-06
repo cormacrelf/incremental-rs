@@ -19,13 +19,15 @@ impl<R: Value> NodeGenerics for VarGenerics<R> {
     type BindRhs = ();
     type I1 = ();
     type I2 = ();
-    type F1 = fn(&Self::I1) -> R;
-    type F2 = fn(&Self::I1, &Self::I2) -> R;
+    type F1 = fn(&Self::I1) -> Self::R;
+    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
     type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold = fn(Self::R, &Self::I1) -> Self::R;
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &R;
+    type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
 
 // For the delayed variable set list (set_during_stabilisation).

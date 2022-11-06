@@ -6,6 +6,7 @@ use crate::{Incr, Value};
 use refl::Id;
 
 use super::array_fold::ArrayFold;
+use super::expert::ExpertNode;
 use super::node::{Input, Node};
 use super::var::Var;
 use super::{BindNode, Map2Node, MapNode, MapWithOld, MapRefNode, BindLhsChangeNodeGenerics};
@@ -23,6 +24,8 @@ pub(crate) trait NodeGenerics: 'static {
     type Fold: FnMut(Self::R, &Self::I1) -> Self::R;
     type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool);
+    type Recompute: FnMut() -> Self::R;
+    type ObsChange: FnMut(&Self::R);
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
@@ -48,6 +51,16 @@ pub(crate) enum Kind<G: NodeGenerics> {
         Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
         Rc<Node<BindLhsChangeNodeGenerics<G::B1, G::BindLhs, G::BindRhs>>>,
     ),
+    Expert(Rc<ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>>),
+}
+
+impl<G: NodeGenerics> Kind<G> {
+    pub(crate) fn expert(&self) -> Option<&Rc<ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>>> {
+        match self {
+            Kind::Expert(e) => Some(e),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) struct BindLhsId<G: NodeGenerics> {
@@ -88,6 +101,7 @@ impl<G: NodeGenerics> Debug for Kind<G> {
             Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
             Kind::BindMain(_, bind, _) => write!(f, "BindMain({:?})", bind),
             Kind::MapRef(mapref) => write!(f, "MapRef({:?})", mapref),
+            Kind::Expert(expert) => write!(f, "Expert({:?})", expert),
         }
     }
 }
@@ -103,6 +117,7 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,
+            Self::Expert(e) => 0,
         }
     }
 }
@@ -122,4 +137,6 @@ impl<T: Value> NodeGenerics for Constant<T> {
     type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
     type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
     type FRef = fn(&Self::I1) -> &Self::R;
+    type Recompute = fn() -> Self::R;
+    type ObsChange = fn(&Self::R);
 }
