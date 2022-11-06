@@ -2,7 +2,7 @@ use test_log::test;
 
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use incremental::{Cutoff, Incr, IncrState, Observer, ObserverError, StatsDiff, Var};
+use incremental::{Cutoff, IncrState, ObserverError, StatsDiff, Var};
 
 #[test]
 fn testit() {
@@ -405,46 +405,46 @@ fn bind_fold() {
     assert_eq!(obs.value(), Ok(40));
 }
 
-#[test]
-fn unordered_fold() {
-    let incr = IncrState::new();
-
-    let v1 = incr.var(10i32);
-    let v2 = incr.var(20);
-    let v3 = incr.var(30);
-
-    let vars = incr.var(vec![v1.clone(), v2, v3]);
-
-    let sum = vars.binds(|incr, vars| {
-        let watches = vars.iter().map(Var::watch).collect();
-        incr.unordered_fold(
-            watches,
-            0,
-            |acc, x| acc + x,
-            |acc, old, new| acc + new - old,
-            None,
-        )
-    });
-
-    let obs = sum.observe();
-    incr.stabilise();
-    obs.save_dot_to_file("unordered_fold-1.dot");
-    assert_eq!(obs.value(), Ok(60));
-
-    v1.set(40);
-    incr.stabilise();
-    obs.save_dot_to_file("unordered_fold-2.dot");
-
-    assert_eq!(obs.value(), Ok(90));
-    vars.set(vec![v1.clone()]);
-    incr.stabilise();
-    obs.save_dot_to_file("unordered_fold-3.dot");
-    assert_eq!(obs.value(), Ok(40));
-
-    vars.set(vec![]);
-    incr.stabilise();
-    obs.save_dot_to_file("unordered_fold-4.dot");
-}
+// #[test]
+// fn unordered_fold() {
+//     let incr = IncrState::new();
+//
+//     let v1 = incr.var(10i32);
+//     let v2 = incr.var(20);
+//     let v3 = incr.var(30);
+//
+//     let vars = incr.var(vec![v1.clone(), v2, v3]);
+//
+//     let sum = vars.binds(|incr, vars| {
+//         let watches = vars.iter().map(Var::watch).collect();
+//         incr.unordered_fold(
+//             watches,
+//             0,
+//             |acc, x| acc + x,
+//             |acc, old, new| acc + new - old,
+//             None,
+//         )
+//     });
+//
+//     let obs = sum.observe();
+//     incr.stabilise();
+//     obs.save_dot_to_file("unordered_fold-1.dot");
+//     assert_eq!(obs.value(), Ok(60));
+//
+//     v1.set(40);
+//     incr.stabilise();
+//     obs.save_dot_to_file("unordered_fold-2.dot");
+//
+//     assert_eq!(obs.value(), Ok(90));
+//     vars.set(vec![v1.clone()]);
+//     incr.stabilise();
+//     obs.save_dot_to_file("unordered_fold-3.dot");
+//     assert_eq!(obs.value(), Ok(40));
+//
+//     vars.set(vec![]);
+//     incr.stabilise();
+//     obs.save_dot_to_file("unordered_fold-4.dot");
+// }
 
 #[derive(Debug)]
 struct CallCounter(&'static str, Cell<u32>);
@@ -460,7 +460,10 @@ impl CallCounter {
     fn increment(&self) {
         self.1.set(self.1.get() + 1);
     }
-    fn wrap1<A, R>(self: Rc<Self>, mut f: impl (FnMut(&A) -> R) + Clone) -> impl FnMut(&A) -> R + Clone {
+    fn wrap1<A, R>(
+        self: Rc<Self>,
+        mut f: impl (FnMut(&A) -> R) + Clone,
+    ) -> impl FnMut(&A) -> R + Clone {
         move |a| {
             self.increment();
             f(a)
@@ -483,57 +486,57 @@ impl PartialEq<u32> for CallCounter {
     }
 }
 
-#[test]
-fn unordered_fold_inverse() {
-    let f = CallCounter::new("f");
-    let finv = CallCounter::new("finv");
-    let incr = IncrState::new();
-    let v1 = incr.var(10i32);
-    let v2 = incr.var(20);
-    let v3 = incr.var(30);
-    let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
-    let f_ = f.clone();
-    let finv_ = finv.clone();
-    let sum = vars.binds(move |incr, vars| {
-        let f_ = f_.clone();
-        let finv_ = finv_.clone();
-        let watches: Vec<_> = vars.iter().map(Var::watch).collect();
-        incr.unordered_fold_inverse(
-            watches,
-            0,
-            move |acc, x| {
-                f_.increment();
-                acc + x
-            },
-            move |acc, x| {
-                finv_.increment();
-                acc - x
-            }, // this time our update function is
-            // constructed for us.
-            None,
-        )
-    });
-    let obs = sum.observe();
-    incr.stabilise();
-    assert_eq!(obs.value(), Ok(60));
-    assert_eq!(*f, 3);
-    assert_eq!(*finv, 0);
-
-    v1.set(40);
-    incr.stabilise();
-    assert_eq!(obs.value(), Ok(90));
-    assert_eq!(*f, 4);
-    assert_eq!(*finv, 1);
-
-    vars.set(vec![v1.clone()]);
-    incr.stabilise();
-    assert_eq!(obs.value(), Ok(40));
-    assert_eq!(*f, 5);
-    // we create a new UnorderedArrayFold in the bind.
-    // Hence finv was not needed, fold_value was zero
-    // and we just folded the array non-incrementally
-    assert_eq!(*finv, 1);
-}
+// #[test]
+// fn unordered_fold_inverse() {
+//     let f = CallCounter::new("f");
+//     let finv = CallCounter::new("finv");
+//     let incr = IncrState::new();
+//     let v1 = incr.var(10i32);
+//     let v2 = incr.var(20);
+//     let v3 = incr.var(30);
+//     let vars = incr.var(vec![v1.clone(), v2.clone(), v3.clone()]);
+//     let f_ = f.clone();
+//     let finv_ = finv.clone();
+//     let sum = vars.binds(move |incr, vars| {
+//         let f_ = f_.clone();
+//         let finv_ = finv_.clone();
+//         let watches: Vec<_> = vars.iter().map(Var::watch).collect();
+//         incr.unordered_fold_inverse(
+//             watches,
+//             0,
+//             move |acc, x| {
+//                 f_.increment();
+//                 acc + x
+//             },
+//             move |acc, x| {
+//                 finv_.increment();
+//                 acc - x
+//             }, // this time our update function is
+//             // constructed for us.
+//             None,
+//         )
+//     });
+//     let obs = sum.observe();
+//     incr.stabilise();
+//     assert_eq!(obs.value(), Ok(60));
+//     assert_eq!(*f, 3);
+//     assert_eq!(*finv, 0);
+//
+//     v1.set(40);
+//     incr.stabilise();
+//     assert_eq!(obs.value(), Ok(90));
+//     assert_eq!(*f, 4);
+//     assert_eq!(*finv, 1);
+//
+//     vars.set(vec![v1.clone()]);
+//     incr.stabilise();
+//     assert_eq!(obs.value(), Ok(40));
+//     assert_eq!(*f, 5);
+//     // we create a new UnorderedArrayFold in the bind.
+//     // Hence finv was not needed, fold_value was zero
+//     // and we just folded the array non-incrementally
+//     assert_eq!(*finv, 1);
+// }
 
 #[test]
 fn incr_map_uf() {
@@ -1107,14 +1110,147 @@ fn becomes_unnecessary() {
     assert_eq!(incr.stats().necessary, 0);
 }
 
+#[derive(PartialEq, Clone, Debug)]
+struct MapRefTest {
+    other: i32,
+    string: String,
+}
+
 #[test]
 fn test_map_ref() {
-    #[derive(PartialEq, Clone, Debug)]
-    struct Thing {
-        string: String,
-    }
     let incr = IncrState::new();
-    let var = incr.var(Thing { string: "hello".into() });
-    let str = var
-        .map_ref(|thing| thing.string.as_str());
+    let var = incr.var(MapRefTest {
+        other: 5,
+        string: "hello".into(),
+    });
+    let string = var.map_ref(|thing| &thing.string).observe();
+
+    string
+        .subscribe(|change| {
+            println!("changed: {change:?}");
+        })
+        .unwrap();
+
+    incr.stabilise();
+
+    var.update(|v| v.other = 10);
+    incr.stabilise();
+    var.update(|v| v.other = 20);
+    incr.stabilise();
+    var.update(|v| v.string += ", world");
+    incr.stabilise();
+    assert!(false);
+}
+
+// #[test]
+// fn map_ref_into_unordered_fold() {
+//     let incr = IncrState::new();
+//     let v = incr.var(MapRefTest {
+//         other: 5,
+//         string: "hello".into(),
+//     });
+//     let mapped = v.map_ref(|m| &m.other);
+//     let vars = vec![mapped];
+//     let sum = incr.unordered_fold(
+//         vars,
+//         0,
+//         |acc, x| acc + x,
+//         |acc, old, new| acc - old + new,
+//         None,
+//     );
+//     let o = sum.observe();
+//     incr.stabilise();
+//     assert_eq!(o.expect_value(), 5);
+//     v.update(|m| m.other = 10);
+//     incr.stabilise();
+//     assert_eq!(o.expect_value(), 10);
+// }
+
+// #[test]
+// fn map_with_old_into_unordered_fold() {
+//     let incr = IncrState::new();
+//     let v = incr.var(MapRefTest {
+//         other: 5,
+//         string: "hello".into(),
+//     });
+//     // The problem here is that unordered_fold needs child_changed to be called with both the old
+//     // and new values. But map_with_old doesn't have an old value. In this sense I think we need to
+//     // limit unordered_fold to add/remove instead of add/update. That way child_changed can be
+//     // split into child_outgoing/child_incoming, allowing the old & new values NOT to coexist.
+//     let mapped = v.map_with_old(|_old_out, input| (input.other, true));
+//     let vars = vec![mapped];
+//     let sum = incr.unordered_fold(
+//         vars,
+//         0,
+//         |acc, x| acc + x,
+//         |acc, old, new| acc - old + new,
+//         None,
+//     );
+//     let o = sum.observe();
+//     incr.stabilise();
+//     assert_eq!(o.expect_value(), 5);
+//     v.update(|m| m.other = 10);
+//     incr.stabilise();
+//     assert_eq!(o.expect_value(), 10);
+// }
+
+#[test]
+fn map_with_old() {
+    let incr = IncrState::new();
+    let v = incr.var(10);
+    let m = v
+        .map_with_old(|old, input| {
+            tracing::warn!("old {old:?} <- input {input:?}");
+            (input + 1, false)
+        })
+        .observe();
+    incr.stabilise();
+    v.set(20);
+    incr.stabilise();
+    v.set(30);
+    incr.stabilise();
+    assert!(false);
+}
+
+#[test]
+#[ignore = "we're ok with map_ref behaving like this, given it saves a clone"]
+fn map_with_old_map_ref() {
+    let counter = CallCounter::new("map_ref");
+    let incr = IncrState::new();
+    let v = incr.var((10, 20));
+    let m = v
+
+        .map_with_old(|old, input| {
+            // Does nothing.
+            let v = *input;
+            (v, old.map_or(true, |o| o != v))
+        })
+
+        // problem: map_with_old doesn't keep its old value.
+        // so how are we supposed to compare them in
+        // child_changed on map_ref?
+        //
+        // this node is meant to Cutoff::PartialEq. But it can't. So it's equivalent
+        // to using Cutoff::Never.
+        .map_ref(|x| &x.1)
+        .map({
+            let counter_ = counter.clone();
+            move |x| {
+                counter_.increment();
+                tracing::warn!("map_ref said it changed, so map ran for {x}");
+                5
+            }
+        })
+        .observe();
+    incr.stabilise();
+    assert_eq!(*counter, 1);
+    v.set((10, 30));
+    incr.stabilise();
+    assert_eq!(*counter, 2);
+    v.update(|_| {});
+    incr.stabilise();
+    assert_eq!(*counter, 2, "as long as map_with_old doesn't actually change, it cuts off right");
+    v.set((20, 30));
+    incr.stabilise();
+    assert_eq!(*counter, 2, "should not execute map_ref, since the original map node was cut off.");
 }
