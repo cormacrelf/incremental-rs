@@ -1139,7 +1139,6 @@ fn test_map_ref() {
     incr.stabilise();
     var.update(|v| v.string += ", world");
     incr.stabilise();
-    assert!(false);
 }
 
 // #[test]
@@ -1209,7 +1208,6 @@ fn map_with_old() {
     incr.stabilise();
     v.set(30);
     incr.stabilise();
-    assert!(false);
 }
 
 #[test]
@@ -1253,4 +1251,33 @@ fn map_with_old_map_ref() {
     v.set((20, 30));
     incr.stabilise();
     assert_eq!(*counter, 2, "should not execute map_ref, since the original map node was cut off.");
+}
+
+#[test]
+fn weak_memoize_fn() {
+    let incr = IncrState::new();
+    let counter = CallCounter::new("memoized function");
+    let function = {
+        let counter = counter.clone();
+        let incr = incr.clone();
+        move |x: i32| {
+            counter.increment();
+            incr.constant(x)
+        }
+    };
+    let memoized = incr.weak_memoize_fn(function);
+    let five = memoized(5);
+    let another_five = memoized(5);
+    assert_eq!(counter.count(), 1);
+    assert_eq!(five, another_five);
+
+    drop(five);
+    drop(another_five);
+    // garbage collets any registered weak hashmaps
+    incr.stabilise();
+    assert_eq!(counter.count(), 1);
+    let _new_five = memoized(5);
+    assert_eq!(counter.count(), 2);
+    let _six = memoized(6);
+    assert_eq!(counter.count(), 3);
 }

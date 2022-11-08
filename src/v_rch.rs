@@ -99,9 +99,6 @@ impl<T> Incr<T> {
     pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
         Rc::ptr_eq(&self.node, &other.node)
     }
-    pub fn as_ptr(&self) -> *const () {
-        Rc::as_ptr(&self.node) as *const ()
-    }
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
     }
