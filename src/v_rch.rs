@@ -24,9 +24,11 @@ use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
+use self::stabilisation_num::StabilisationNum;
 use self::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap, merge_shared_impl, MergeElement};
 use fmt::Debug;
 use refl::refl;
+use std::any::Any;
 use std::cell::{RefCell, Cell};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -87,11 +89,20 @@ impl<T> WeakIncr<T> {
     pub fn upgrade(&self) -> Option<Incr<T>> {
         self.0.upgrade().map(Incr::from)
     }
+    pub fn strong_count(&self) -> usize {
+        self.0.strong_count()
+    }
+    pub fn weak_count(&self) -> usize {
+        self.0.weak_count()
+    }
 }
 
 impl<T> Incr<T> {
     pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
         Rc::ptr_eq(&self.node, &other.node)
+    }
+    pub fn as_ptr(&self) -> *const () {
+        Rc::as_ptr(&self.node) as *const ()
     }
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
@@ -104,8 +115,8 @@ impl<T> Incr<T> {
         self
     }
     pub fn state(&self) -> IncrState {
-        let state = self.node.state();
-        IncrState(state)
+        let inner = self.node.state();
+        IncrState { inner }
     }
 }
 
@@ -959,7 +970,6 @@ where
 {
     input: Input<T>,
     mapper: F,
-    /// initial value true.
     did_change: Cell<bool>,
 }
 
@@ -991,7 +1001,10 @@ where
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("MapNode").finish()
+        f
+            .debug_struct("MapRefNode")
+            .field("did_change", &self.did_change.get())
+            .finish()
     }
 }
 

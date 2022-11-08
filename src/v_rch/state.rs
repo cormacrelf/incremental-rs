@@ -2,7 +2,7 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
 use super::{NodeRef, Value, WeakNode};
-use crate::SubscriptionToken;
+use crate::{SubscriptionToken, WeakIncr, WeakMap};
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
@@ -22,7 +22,6 @@ use std::rc::{Rc, Weak};
 
 pub(crate) mod expert;
 
-#[derive(Debug)]
 pub(crate) struct State {
     pub(crate) stabilisation_num: Cell<StabilisationNum>,
     pub(crate) adjust_heights_heap: RefCell<AdjustHeightsHeap>,
@@ -48,8 +47,16 @@ pub(crate) struct State {
     pub(crate) set_during_stabilisation: RefCell<Vec<WeakVar>>,
     pub(crate) dead_vars: RefCell<Vec<WeakVar>>,
 
+    pub(crate) weak_maps: RefCell<Vec<Rc<RefCell<dyn WeakMap>>>>,
+
     #[cfg(debug_assertions)]
     pub(crate) only_in_debug: OnlyInDebug,
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State").finish()
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -81,7 +88,9 @@ pub enum IncrStatus {
 
 impl State {
     pub(crate) fn public(self: &Rc<Self>) -> public::IncrState {
-        public::IncrState(self.clone())
+        public::IncrState {
+            inner: self.clone()
+        }
     }
     pub(crate) fn weak(self: &Rc<Self>) -> Weak<Self> {
         Rc::downgrade(self)
@@ -113,9 +122,15 @@ impl State {
             dead_vars: RefCell::new(vec![]),
             handle_after_stabilisation: RefCell::new(vec![]),
             run_on_update_handlers: RefCell::new(vec![]),
+            weak_maps: RefCell::new(vec![]),
             #[cfg(debug_assertions)]
             only_in_debug: OnlyInDebug::default(),
         })
+    }
+
+    pub(crate) fn add_weak_map(&self, weak_map: Rc<RefCell<dyn WeakMap>>) {
+        let mut wm = self.weak_maps.borrow_mut();
+        wm.push(weak_map);
     }
 
     pub(crate) fn constant<T: Value>(self: &Rc<Self>, value: T) -> Incr<T> {
@@ -289,6 +304,10 @@ impl State {
                 node.run_on_update_handlers(node_update, now)
             }
         });
+        for wm in self.weak_maps.borrow().iter() {
+            let mut w = wm.borrow_mut();
+            w.garbage_collect();
+        }
         self.status.set(IncrStatus::NotStabilising);
     }
 

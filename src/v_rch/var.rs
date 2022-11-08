@@ -87,7 +87,7 @@ impl<T: Value> Var<T> {
         self.value.borrow().clone()
     }
 
-    pub(crate) fn update(self: &Rc<Self>, mut f: impl FnMut(&mut T)) {
+    pub(crate) fn update(self: &Rc<Self>, f: impl FnOnce(&mut T)) {
         let t = self.state.upgrade().unwrap();
         match t.status.get() {
             IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {

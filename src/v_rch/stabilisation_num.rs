@@ -6,7 +6,7 @@ pub struct StabilisationNum(pub i32);
 
 impl StabilisationNum {
     pub fn init() -> Self {
-        Self(-1_i32)
+        Self(-1)
     }
     pub fn add1(self) -> Self {
         Self(self.0 + 1)

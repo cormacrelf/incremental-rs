@@ -1,7 +1,12 @@
 use core::fmt::Debug;
+use std::cell::{RefMut, RefCell};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::fmt;
 use std::ops::{Deref, Sub};
 use std::rc::Rc;
+
+use slotmap::HopSlotMap;
 
 pub use super::cutoff::Cutoff;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
@@ -137,7 +142,7 @@ impl<T: Value> Var<T> {
         self.internal.set(value)
     }
     #[inline]
-    pub fn update(&self, f: impl FnMut(&mut T) + 'static) {
+    pub fn update(&self, f: impl FnOnce(&mut T)) {
         self.internal.update(f)
     }
     #[inline]
@@ -180,55 +185,96 @@ impl<T: Value> Drop for Var<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct IncrState(pub(crate) Rc<State>);
+pub struct IncrState {
+    pub(crate) inner: Rc<State>,
+}
 
 impl IncrState {
     pub fn new() -> Self {
-        Self(State::new())
+        Self { inner: State::new() }
+    }
+
+    pub(crate) fn inner(&self) -> &Rc<State> {
+        &self.inner
+    }
+
+    pub fn add_weak_map<S: WeakMap + 'static>(&self, weak_map: Rc<RefCell<S>>) {
+        self.inner.add_weak_map(weak_map)
+    }
+
+    pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static, T: Value>(
+        &self,
+        f: impl Fn(I) -> Incr<T>
+    ) -> impl Fn(I) -> Incr<T> {
+
+        // // we define this inside the generic function.
+        // // so it's a new type for every T!
+        // slotmap::new_key_type! { struct TKey; }
+
+        let storage: WeakHashMap<I, T> = WeakHashMap::default();
+        let storage: Rc<RefCell<WeakHashMap<I, T>>> = Rc::new(RefCell::new(storage));
+        self.add_weak_map(storage.clone());
+
+        move |i| {
+            let storage_ = storage.borrow();
+            if storage_.contains_key(&i) {
+                let occ = storage_.get(&i).unwrap();
+                let incr = occ.upgrade();
+                if let Some(found_strong) = incr {
+                    return found_strong
+                }
+            }
+            // don't want f to get a BorrowMutError if it's recursive
+            drop(storage_);
+            let val = f(i.clone());
+            let mut storage_ = storage.borrow_mut();
+            storage_.insert(i, val.weak());
+            return val
+        }
     }
 
     pub fn stabilise(&self) {
-        self.0.stabilise();
+        self.inner.stabilise();
     }
 
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
-        self.0.constant(value)
+        self.inner.constant(value)
     }
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
     where
         F: FnMut(R, &T) -> R + 'static,
     {
-        self.0.fold(vec, init, f)
+        self.inner.fold(vec, init, f)
     }
 
     pub fn var<T: Value>(&self, value: T) -> Var<T> {
-        self.0.var_in_scope(value, Scope::Top)
+        self.inner.var_in_scope(value, Scope::Top)
     }
 
     pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
-        self.0.var_in_scope(value, self.0.current_scope())
+        self.inner.var_in_scope(value, self.inner.current_scope())
     }
 
     pub fn unsubscribe(&self, token: SubscriptionToken) {
-        self.0.unsubscribe(token)
+        self.inner.unsubscribe(token)
     }
 
     pub fn set_max_height_allowed(&self, new_max_height: usize) {
-        self.0.set_max_height_allowed(new_max_height)
+        self.inner.set_max_height_allowed(new_max_height)
     }
 
     pub fn stats(&self) -> Stats {
         Stats {
-            created: self.0.num_nodes_created.get(),
-            changed: self.0.num_nodes_changed.get(),
-            recomputed: self.0.num_nodes_recomputed.get(),
-            invalidated: self.0.num_nodes_invalidated.get(),
-            became_necessary: self.0.num_nodes_became_necessary.get(),
-            became_unnecessary: self.0.num_nodes_became_unnecessary.get(),
-            necessary: self.0.num_nodes_became_necessary.get()
-                - self.0.num_nodes_became_unnecessary.get(),
+            created: self.inner.num_nodes_created.get(),
+            changed: self.inner.num_nodes_changed.get(),
+            recomputed: self.inner.num_nodes_recomputed.get(),
+            invalidated: self.inner.num_nodes_invalidated.get(),
+            became_necessary: self.inner.num_nodes_became_necessary.get(),
+            became_unnecessary: self.inner.num_nodes_became_unnecessary.get(),
+            necessary: self.inner.num_nodes_became_necessary.get()
+                - self.inner.num_nodes_became_unnecessary.get(),
         }
     }
 }
@@ -332,3 +378,38 @@ impl<T: Value> IntoIncr<T> for &Var<T> {
         self.watch()
     }
 }
+
+pub trait WeakMap {
+    fn len(&self) -> usize;
+    fn capacity(&self) -> usize;
+    fn garbage_collect(&mut self);
+}
+
+pub type WeakHashMap<K, V> = HashMap<K, WeakIncr<V>>;
+
+impl<K: Hash, V> WeakMap for WeakHashMap<K, V> {
+    fn garbage_collect(&mut self) {
+        self.retain(|_k, v| v.strong_count() != 0);
+    }
+    fn len(&self) -> usize {
+        HashMap::len(self)
+    }
+    fn capacity(&self) -> usize {
+        HashMap::capacity(self)
+    }
+}
+
+pub type WeakSlotMap<K, V> = slotmap::HopSlotMap<K, WeakIncr<V>>;
+
+impl<K: slotmap::Key, V> WeakMap for WeakSlotMap<K, V> {
+    fn garbage_collect(&mut self) {
+        self.retain(|_k, v| v.strong_count() != 0);
+    }
+    fn len(&self) -> usize {
+        HopSlotMap::len(self)
+    }
+    fn capacity(&self) -> usize {
+        HopSlotMap::capacity(self)
+    }
+}
+
