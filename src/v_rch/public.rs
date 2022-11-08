@@ -6,8 +6,6 @@ use std::fmt;
 use std::ops::{Deref, Sub};
 use std::rc::Rc;
 
-use slotmap::HopSlotMap;
-
 pub use super::cutoff::Cutoff;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
 pub use super::node::GraphvizDot;
@@ -399,17 +397,19 @@ impl<K: Hash, V> WeakMap for WeakHashMap<K, V> {
     }
 }
 
+#[cfg(feature = "slotmap")]
 pub type WeakSlotMap<K, V> = slotmap::HopSlotMap<K, WeakIncr<V>>;
 
+#[cfg(feature = "slotmap")]
 impl<K: slotmap::Key, V> WeakMap for WeakSlotMap<K, V> {
     fn garbage_collect(&mut self) {
         self.retain(|_k, v| v.strong_count() != 0);
     }
     fn len(&self) -> usize {
-        HopSlotMap::len(self)
+        slotmap::HopSlotMap::len(self)
     }
     fn capacity(&self) -> usize {
-        HopSlotMap::capacity(self)
+        slotmap::HopSlotMap::capacity(self)
     }
 }
 
