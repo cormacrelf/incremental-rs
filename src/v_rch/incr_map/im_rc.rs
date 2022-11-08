@@ -1,8 +1,10 @@
+use std::{rc::Rc, cell::RefCell};
+
 use im_rc::{OrdMap, ordmap::DiffItem, ordmap};
 
-use crate::{Value, Incr};
+use crate::{Value, Incr, Cutoff};
 
-use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap};
+use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap, SymmetricMapMap, GenericMap};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -79,6 +81,38 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for OrdMap<K, V> {
     }
 }
 
+impl<K: Ord + Clone, V: Clone> GenericMap<K, V> for OrdMap<K, V> {
+    #[inline]
+    fn remove(&mut self, key: &K) -> Option<V> {
+        OrdMap::remove(self, key)
+    }
+
+    #[inline]
+    fn insert(&mut self, key: K, value: V) -> Option<V> {
+        OrdMap::insert(self, key, value)
+    }
+}
+
+impl<K: Ord + Clone, V: Clone> SymmetricMapMap<K, V> for OrdMap<K, V> {
+    type UnderlyingMap = Self;
+
+    type OutputMap<V2: PartialEq + Clone> = OrdMap<K, V2>;
+
+    #[inline]
+    fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
+        self
+    }
+
+    fn filter_map_collect<V2: PartialEq + Clone>(
+        &self,
+        f: &mut impl FnMut(&K, &V) -> Option<V2>,
+    ) -> Self::OutputMap<V2> {
+        self.iter()
+            .filter_map(|(k, v)| f(k, v).map(|v2| (k.clone(), v2)))
+            .collect()
+    }
+}
+
 #[test]
 fn test_merge() {
     use crate::IncrState;
@@ -108,7 +142,31 @@ fn test_merge() {
         4 => Left("added")
     }));
     obs.save_dot_to_file("im_incr_merge.dot");
-    assert!(false);
+}
+
+#[test]
+fn test_ptr_eq() {
+    #[derive(PartialEq, Clone)]
+    enum NotEq { A, B }
+    let o1 = ordmap! { 1 => NotEq::A, 2 => NotEq::B };
+    let o2 = o1.clone();
+    assert!(o1.ptr_eq(&o2));
+}
+
+/// On nightly rust, im will specialize the PartialEq impl to use `ptr_eq() || diff().next().is_none()`.
+/// (When K, V : Eq.) We can use cutoff functions to do that ourselves.
+fn ordmap_fast_eq<K: Ord + Eq, V: Eq>(a: &OrdMap<K, V>, b: &OrdMap<K, V>) -> bool {
+    a.ptr_eq(b) || a.eq(b)
+}
+use std::hash::Hash;
+fn hashmap_fast_eq<K: Hash + Eq, V: Eq>(a: &im_rc::HashMap<K, V>, b: &im_rc::HashMap<K, V>) -> bool {
+    a.ptr_eq(b) || a.eq(b)
+}
+pub fn im_ordmap_cutoff<K: Ord + Eq, V: Eq>() -> Cutoff<OrdMap<K, V>> {
+    Cutoff::Custom(ordmap_fast_eq)
+}
+pub fn im_hashmap_cutoff<K: Hash + Eq, V: Eq>() -> Cutoff<im_rc::HashMap<K, V>> {
+    Cutoff::Custom(hashmap_fast_eq)
 }
 
 pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
@@ -188,5 +246,102 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<OrdMap<K, R>>())));
         i
     }
+
+    pub fn incr_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    where
+        V2: Value,
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
+    {
+        self.incr_filter_mapi_(move |k, incr_v| {
+            f(k, incr_v).map(|x| Some(x.clone()))
+        }, cutoff)
+    }
+
+    pub fn incr_filter_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    where
+        V2: Value,
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+    {
+        use crate::expert::{Node, Dependency};
+        let state = self.state();
+        let lhs = self;
+        let incremental_state = lhs.state();
+        let acc = Rc::new(RefCell::new(OrdMap::new()));
+        let result = Node::<OrdMap<K, V2>, Option<V2>>::new(&state, {
+            let acc_ = acc.clone();
+            move || {
+                OrdMap::clone(&acc_.borrow())
+            }
+        });
+        let on_inner_change = {
+            let acc_ = acc.clone();
+            move |key: &K, opt: Option<&V2>| {
+                let mut acc = acc_.borrow_mut();
+                match opt {
+                    None => { acc.remove(key); }
+                    Some(x) => { acc.insert(key.clone(), x.clone()); }
+                }
+                drop(acc);
+            }
+        };
+        let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
+        // this one is just moved into the closure
+        let mut prev_nodes = OrdMap::<K, (Node<_,_>, Dependency<_>)>::new();
+        let lhs_change = lhs.map_cyclic({
+            let prev_map_ = prev_map.clone();
+            let acc_ = acc.clone();
+            let result = result.clone();
+            move |lhs_change, map| {
+                let mut prev_map = prev_map_.borrow_mut();
+                let new_nodes = prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
+                    match diff {
+                        DiffElement::Unequal(_, _) => {
+                            let (node, dep) = nodes.get(key).unwrap();
+                            node.make_stale();
+                            nodes
+                        }
+                        DiffElement::Left(_) => {
+                            let (node, dep) = nodes.remove(key).unwrap();
+                            result.remove_dependency(dep);
+                            let mut acc = acc_.borrow_mut();
+                            acc.remove(key);
+                            node.invalidate();
+                            nodes
+                        }
+                        DiffElement::Right(_) => {
+                            let key = key.clone();
+                            let node = Node::<V>::new(&state, {
+                                let key_ = key.clone();
+                                let prev_map_ = prev_map_.clone();
+                                move || {
+                                    let prev_map = prev_map_.borrow();
+                                    prev_map.get(&key_).unwrap().clone()
+                                }
+                            });
+                            if let Some(cutoff) = cutoff {
+                                node.watch().set_cutoff(cutoff);
+                            }
+                            let lhs_change = lhs_change.upgrade().unwrap();
+                            node.add_dependency_unit(Dependency::new(&lhs_change));
+                            let mapped = f(&key, node.watch());
+                            let user_function_dep = Dependency::new_on_change(&mapped, {
+                                let key = key.clone();
+                                let on_inner_change = on_inner_change.clone();
+                                move |v| on_inner_change(&key, v.as_ref())
+                            });
+                            result.add_dependency(user_function_dep.clone());
+                            nodes.insert(key, (node, user_function_dep));
+                            nodes
+                        }
+                    }
+                });
+                *prev_map = map.clone();
+            }
+        });
+        result.add_dependency_unit(Dependency::new(&lhs_change));
+        result.watch()
+    }
+
 }
+
 
