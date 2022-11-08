@@ -1,2 +1,5 @@
 /target
+/incremental-macros/target
 Cargo.lock
+*.png
+*.dot

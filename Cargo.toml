@@ -6,6 +6,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = ["incremental-macros"]
+
 [features]
 # default = ["tracing/max_level_error"]
 rust-analyzer = []
