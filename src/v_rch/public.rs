@@ -13,8 +13,8 @@ pub use super::node_update::NodeUpdate;
 pub use super::Incr;
 pub use super::WeakIncr;
 pub use super::Value;
-pub use super::symmetric_fold::MergeElement;
-pub use super::symmetric_fold::DiffElement;
+pub use super::incr_map::symmetric_fold::MergeElement;
+pub use super::incr_map::symmetric_fold::DiffElement;
 pub use super::expert::public as expert;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};

@@ -76,7 +76,7 @@ where
 }
 
 // Same but with a custom comparator
-struct MergeOnceWith<I, J, F>
+pub(crate) struct MergeOnceWith<I, J, F>
 where
     I: Iterator,
     J: Iterator,
@@ -91,7 +91,7 @@ where
 impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering>
 MergeOnceWith<I, J, F>
 {
-    fn new(a: I, b: J, f: F) -> Self {
+    pub(crate) fn new(a: I, b: J, f: F) -> Self {
         Self { a: a.peekable(), b: b.peekable(), f, fused: None }
     }
 }
@@ -223,12 +223,27 @@ where
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum MergeElement<L, R> {
     Left(L),
     Right(R),
     Both(L, R),
 }
 
+impl<L, R> MergeElement<&L, &R>
+where L: Clone,
+      R: Clone,
+{
+    pub fn cloned(&self) -> MergeElement<L, R> {
+        match *self {
+            MergeElement::Both(a, b) => MergeElement::Both(a.clone(), b.clone()),
+            MergeElement::Left(a) => MergeElement::Left(a.clone()),
+            MergeElement::Right(b) => MergeElement::Right(b.clone()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum DiffElement<V> {
     Unequal(V, V),
     Left(V),
@@ -435,37 +450,5 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R {
         self.into_iter().fold(init, f)
     }
-}
-
-pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
-    old: Option<(BTreeMap<K, V1>, BTreeMap<K, V2>, BTreeMap<K, R>)>,
-    new_left_map: &BTreeMap<K, V1>,
-    new_right_map: &BTreeMap<K, V2>,
-    mut f: impl FnMut(BTreeMap<K, R>, &K, MergeElement<(&K, DiffElement<&V1>), (&K, DiffElement<&V2>)>) -> BTreeMap<K, R>,
-) -> BTreeMap<K, R> {
-    let (old_left_map, old_right_map, old_output) = match old {
-        None => (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
-        Some(x) => x,
-    };
-    let left_diff = old_left_map.symmetric_diff(new_left_map);
-    let right_diff = old_right_map.symmetric_diff(new_right_map);
-    // relies on the key iteration being sorted, as in BTreeMap.
-    let merge = MergeOnceWith::new(
-        left_diff,
-        right_diff,
-        |(k, _), (k2, _)| k.cmp(k2)
-    );
-    merge
-        .fold(old_output, |output, merge_elem| {
-            let key = match merge_elem {
-                MergeElement::Left((key, _))| MergeElement::Right((key, _)) => key,
-                MergeElement::Both((left_key, _), (right_key, _)) => {
-                    // comparisons can be expensive
-                    // assert_eq!(left_key, right_key);
-                    left_key
-                }
-            };
-            f(output, key, merge_elem)
-        })
 }
 

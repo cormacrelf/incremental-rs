@@ -4,6 +4,8 @@ mod adjust_heights_heap;
 mod array_fold;
 mod cutoff;
 mod expert;
+
+mod incr_map;
 mod internal_observer;
 mod kind;
 mod node;
@@ -12,7 +14,6 @@ mod recompute_heap;
 mod scope;
 mod stabilisation_num;
 mod state;
-mod symmetric_fold;
 mod syntax;
 mod var;
 
@@ -24,13 +25,10 @@ use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
-use self::stabilisation_num::StabilisationNum;
-use self::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap, merge_shared_impl, MergeElement};
+use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap, MergeElement};
 use fmt::Debug;
 use refl::refl;
-use std::any::Any;
 use std::cell::{RefCell, Cell};
-use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::Hash;
 use std::rc::{Rc, Weak};
@@ -428,15 +426,15 @@ impl<T: Value> Incr<T> {
         // TODO: too much cloning
         self.map2(other, |a, b| (a.clone(), b.clone()))
             .map_with_old(move |old_opt, (a, b)| {
-            let mut oi = old_input.borrow_mut();
-            let (r, didchange) = f(
-                old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
-                a,
-                b
-            );
-            *oi = Some((a.clone(), b.clone()));
-            (r, didchange)
-        })
+                let mut oi = old_input.borrow_mut();
+                let (r, didchange) = f(
+                    old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
+                    a,
+                    b
+                );
+                *oi = Some((a.clone(), b.clone()));
+                (r, didchange)
+            })
     }
 
     pub fn map<R: Value, F: FnMut(&T) -> R + 'static>(&self, f: F) -> Incr<R> {
@@ -801,150 +799,6 @@ impl<T> DiffElement<T> {
         }
     }
 }
-
-impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
-    pub fn incr_merge<F, V2, R>(&self, other: &Incr<BTreeMap<K, V2>>, mut f: F) -> Incr<BTreeMap<K, R>>
-    where
-        V2: Value,
-        R: Value,
-        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static,
-    {
-        let i = self.with_old_input_output2(other, move |old, new_left_map, new_right_map| {
-            let mut did_change = false;
-            let output = merge_shared_impl(
-                old,
-                new_left_map,
-                new_right_map,
-                |mut acc_output, key, merge_elem| {
-                    use MergeElement::*;
-                    did_change = true;
-                    let data = match merge_elem {
-                        Both((_, left_diff), (_, right_diff)) => {
-                            (left_diff.new_data(), right_diff.new_data())
-                        }
-                        Left((_, left_diff)) => {
-                            (left_diff.new_data(), new_right_map.get(key))
-                        }
-                        Right((_, right_diff)) => {
-                            (new_left_map.get(key), right_diff.new_data())
-                        }
-                    };
-                    let output_data_opt = match data {
-                        (None, None) => None,
-                        (Some(x), None) => f(key, MergeElement::Left(x)),
-                        (None, Some(x)) => f(key, MergeElement::Right(x)),
-                        (Some(a), Some(b)) => f(key, MergeElement::Both(a, b)),
-                    };
-                    match output_data_opt {
-                        None => acc_output.remove(key),
-                        Some(r) => acc_output.insert(key.clone(), r),
-                    };
-                    acc_output
-                }
-            );
-            (output, did_change)
-        });
-        i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<BTreeMap<K, R>>())));
-        i
-    }
-
-    pub fn incr_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
-    where
-        V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
-    {
-        self.incr_filter_mapi_(move |k, incr_v| {
-            f(k, incr_v).map(|x| Some(x.clone()))
-        }, cutoff)
-    }
-    pub fn incr_filter_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
-    where
-        V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
-    {
-        use expert::public::{Node, Dependency};
-        let state = self.state();
-        let lhs = self;
-        let incremental_state = lhs.state();
-        let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
-        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (Node<_, _>, Dependency<_>)>::new()));
-        let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
-        let result = Node::<BTreeMap<K, V2>, Option<V2>>::new(&state, {
-            let acc_ = acc.clone();
-            move || {
-                acc_.borrow().clone()
-            }
-        });
-        let on_inner_change = {
-            let acc_ = acc.clone();
-            move |key: &K, opt: Option<&V2>| {
-                let mut acc = acc_.borrow_mut();
-                match opt {
-                    None => { acc.remove(key); }
-                    Some(x) => { acc.insert(key.clone(), x.clone()); }
-                }
-                drop(acc);
-            }
-        };
-        let lhs_change = lhs.map_cyclic({
-            let prev_map_ = prev_map.clone();
-            let prev_nodes_ = prev_nodes.clone();
-            let acc_ = acc.clone();
-            let result = result.clone();
-            move |lhs_change, map| {
-                let mut prev_map = prev_map_.borrow_mut();
-                let mut prev_nodes = prev_nodes_.borrow_mut();
-                let new_nodes = prev_map.symmetric_fold(map, &mut *prev_nodes, |nodes, (key, diff)| {
-                    match diff {
-                        DiffElement::Unequal(_, _) => {
-                            let (node, dep) = nodes.get(key).unwrap();
-                            node.make_stale();
-                            nodes
-                        }
-                        DiffElement::Left(_) => {
-                            let (node, dep) = nodes.remove(key).unwrap();
-                            result.remove_dependency(dep);
-                            let mut acc = acc_.borrow_mut();
-                            acc.remove(key);
-                            node.invalidate();
-                            nodes
-                        }
-                        DiffElement::Right(_) => {
-                            let key = key.clone();
-                            let node = Node::<V>::new(&state, {
-                                let key_ = key.clone();
-                                let prev_map_ = prev_map_.clone();
-                                move || {
-                                    let prev_map = prev_map_.borrow();
-                                    prev_map.get(&key_).unwrap().clone()
-                                }
-                            });
-                            if let Some(cutoff) = cutoff {
-                                node.watch().set_cutoff(cutoff);
-                            }
-                            let lhs_change = lhs_change.upgrade().unwrap();
-                            node.add_dependency_unit(Dependency::new(&lhs_change));
-                            let mapped = f(&key, node.watch());
-                            let user_function_dep = Dependency::new_on_change(&mapped, {
-                                let key = key.clone();
-                                let on_inner_change = on_inner_change.clone();
-                                move |v| on_inner_change(&key, v.as_ref())
-                            });
-                            result.add_dependency(user_function_dep.clone());
-                            nodes.insert(key, (node, user_function_dep));
-                            nodes
-                        }
-                    }
-                });
-                *prev_map = map.clone();
-            }
-        });
-        result.add_dependency_unit(Dependency::new(&lhs_change));
-        result.watch()
-    }
-
-}
-
 impl<T: Value> Incr<T> {
     pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
     where
