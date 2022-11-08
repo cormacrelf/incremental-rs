@@ -81,17 +81,22 @@ impl RecomputeHeap {
     }
 
     pub fn min_height(&self) -> i32 {
-        if self.length.get() == 0 {
-            self.height_lower_bound.set(self.queues.len() as i32);
-        } else {
-            while {
-                let q = self
-                    .queues[self.height_lower_bound.get() as usize].borrow();
-                q.is_empty()
-            } {
-                self.height_lower_bound.set(self.height_lower_bound.get() + 1);
-            }
-        }
+        // using remove_min, this code would work.
+        // but for us, we remove a whole layer at a time, and those nodes are gone.
+        // so doing this will cause min_height to skip forward, and to
+        // recompute_now some nodes that shouldn't be.
+        //
+        // if self.length.get() == 0 {
+        //     self.height_lower_bound.set(self.queues.len() as i32);
+        // } else {
+        //     while {
+        //         let q = self
+        //             .queues[self.height_lower_bound.get() as usize].borrow();
+        //         q.is_empty()
+        //     } {
+        //         self.height_lower_bound.set(self.height_lower_bound.get() + 1);
+        //     }
+        // }
         self.height_lower_bound.get()
     }
 
