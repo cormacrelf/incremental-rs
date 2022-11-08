@@ -21,7 +21,7 @@ impl<T> IsEdge for T where T: ExpertEdge + Any {}
 pub(crate) type PackedEdge = Rc<dyn IsEdge>;
 
 pub(crate) struct Edge<T> {
-    pub child: Input<T>,
+    pub child: Incr<T>,
     pub on_change: RefCell<Option<Box<dyn FnMut(&T)>>>,
     /* [index] is defined whenever the [edge] is in the [children] of some [t]. Then it is
     the index of this [edge] in that [children] array. It might seem redundant with all
@@ -31,7 +31,7 @@ pub(crate) struct Edge<T> {
 }
 
 impl<T> Edge<T> {
-    fn new(child: Input<T>, on_change: Option<Box<dyn FnMut(&T)>>) -> Self {
+    fn new(child: Incr<T>, on_change: Option<Box<dyn FnMut(&T)>>) -> Self {
         Self {
             child,
             on_change: on_change.into(),
@@ -39,7 +39,7 @@ impl<T> Edge<T> {
         }
     }
     pub(crate) fn as_input(&self) -> Input<T> {
-        self.child.clone()
+        self.child.node.as_input()
     }
 }
 
@@ -47,12 +47,12 @@ impl<T: Value> ExpertEdge for Edge<T> {
     fn on_change(&self) {
         let mut handler = self.on_change.borrow_mut();
         if let Some(h) = &mut *handler {
-            let v = self.child.value_as_ref();
+            let v = self.child.node.value_as_ref();
             h(v.as_ref().unwrap());
         }
     }
     fn packed(&self) -> NodeRef {
-        self.child.packed()
+        self.child.node.packed()
     }
     fn as_any(&self) -> &dyn Any {
         self as &dyn Any
@@ -244,18 +244,21 @@ pub mod public {
     impl<T> Dependency<T> {
         #[inline]
         pub fn new(on: &Incr<T>) -> Self {
-            let edge = Edge::new(on.node.clone(), None).into();
+            let edge = Edge::new(on.clone(), None).into();
             Dependency { edge }
         }
         pub fn new_on_change(on: &Incr<T>, on_change: impl FnMut(&T) + 'static) -> Self {
-            let edge = Edge::new(on.node.clone(), Some(Box::new(on_change))).into();
+            let edge = Edge::new(on.clone(), Some(Box::new(on_change))).into();
             Dependency { edge }
+        }
+        pub fn node(&self) -> &Incr<T> {
+            &self.edge.child
         }
     }
 
     impl<T: Clone> Dependency<T> {
         pub fn value_cloned(&self) -> T {
-            self.edge.child.latest()
+            self.edge.child.node.latest()
         }
     }
 

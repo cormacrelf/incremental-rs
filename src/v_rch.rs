@@ -452,6 +452,11 @@ impl<T: Value> Incr<T> {
         map
     }
 
+    /// A version of map that gives you a (weak) reference to the map node you're making, in the
+    /// closure.
+    ///
+    /// Useful for advanced usage where you want to add manual dependencies with the
+    /// `incremental::expert` constructs.
     pub fn map_cyclic<R: Value>(&self, mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static) -> Incr<R>
     {
         let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {

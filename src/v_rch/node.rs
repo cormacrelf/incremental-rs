@@ -1181,9 +1181,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
            necessary. */
         if self.is_necessary() {
             if let Some(i1) = packed_edge.as_any().downcast_ref::<Edge<G::I1>>() {
-                i1.child.state_add_parent(new_child_index, self.as_parent());
+                i1.child.node.state_add_parent(new_child_index, self.as_parent());
             } else if let Some(i2) = packed_edge.as_any().downcast_ref::<Edge<G::I2>>() {
-                i2.child.state_add_parent(new_child_index, self.as_parent2());
+                i2.child.node.state_add_parent(new_child_index, self.as_parent2());
             } else {
                 panic!("expert_add_dependency: could not figure out child type");
             }

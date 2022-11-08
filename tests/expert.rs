@@ -38,3 +38,32 @@ fn test_join() {
     incr.stabilise();
     assert_eq!(o.value(), Ok(20));
 }
+
+#[allow(dead_code)]
+fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 'static) -> Incr<R> {
+    let prev_rhs: Rc<RefCell<Option<Dependency<R>>>> = Rc::new(None.into());
+    let state = incr.state();
+    let join = Node::<R, R>::new(&state, {
+        let prev_rhs_ = prev_rhs.clone();
+        move || {
+            prev_rhs_.borrow().clone().unwrap().value_cloned()
+        }
+    });
+    let join_ = join.clone();
+    let lhs_change = incr.map(move |input| {
+        let rhs = f(input);
+        let mut prev_rhs_ = prev_rhs.borrow_mut();
+        if prev_rhs_.as_ref().map_or(false, |prev| *prev.node() == rhs) {
+            return;
+        }
+        let rhs_dep = Dependency::new(&rhs);
+        join_.add_dependency(rhs_dep.clone());
+        if let Some(prev) = prev_rhs_.take() {
+            join_.remove_dependency(prev);
+        }
+        prev_rhs_.replace(rhs_dep);
+    });
+    join.add_dependency_unit(Dependency::new(&lhs_change));
+    join.watch()
+}
+
