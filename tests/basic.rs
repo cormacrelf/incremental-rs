@@ -121,9 +121,8 @@ fn test_bind_existing() {
 fn create_var_in_bind() {
     let incr = IncrState::new();
     let lhs = incr.var(true);
-    let state = incr.clone();
     let o = lhs
-        .bind(move |_| {
+        .binds(move |state, _| {
             // the difference between creating the variable beforehand
             // and doing it inside the bind is that during the bind, new nodes
             // have a scope. so the new variable is created with a height of -1,
@@ -211,7 +210,7 @@ fn bind_changing_heights_outside() {
 fn bind_changing_heights_inside() {
     let incr = IncrState::new();
     let is_short = incr.var(true);
-    let i2 = incr.clone();
+    let i2 = incr.weak();
     let obs = is_short
         .bind(move |&s| {
             if s {
@@ -244,7 +243,7 @@ fn observer_ugly() {
     let lhs = incr.var(true);
     let unused = incr.var(2);
     let unused_w = unused.watch();
-    let state = incr.clone();
+    let state = incr.weak();
     let v9 = state.var(9);
     let bound = lhs.bind(move |&l| if l { v9.watch() } else { unused_w.clone() });
     let o = bound.observe();
@@ -277,67 +276,32 @@ fn observer_ugly() {
 
 #[test]
 fn enumerate() {
-    let g = CallCounter::new("g");
+    let g = Rc::new(Cell::new(0));
     let g_ = g.clone();
     let incr = IncrState::new();
     let v = incr.var("first");
     let m = v.enumerate(move |i, &x| {
-        g_.increment();
+        g_.set(i + 1);
         x
     });
     let o = m.observe();
-    assert_eq!(*g, 0);
+    assert_eq!(g.get(), 0);
     incr.stabilise();
-    assert_eq!(*g, 1);
+    assert_eq!(g.get(), 1);
 
     v.set("second");
     v.set("second again");
-    assert_eq!(*g, 1);
+    assert_eq!(g.get(), 1);
     incr.stabilise();
-    assert_eq!(*g, 2);
+    assert_eq!(g.get(), 2);
 
     v.set("third");
-    assert_eq!(*g, 2);
+    assert_eq!(g.get(), 2);
     incr.stabilise();
-    assert_eq!(*g, 3);
+    assert_eq!(g.get(), 3);
     // ensure observer is alive to keep the map function running
     drop(o);
 }
-
-// #[test]
-// fn map_mutable() {
-//     let mut global = String::new();
-//     map_mutable_inner(&mut global);
-//     assert_eq!(global, "abcde");
-// }
-
-// fn map_mutable_inner(global: &mut String) {
-//     // this is just for fun
-//     struct Computation {
-//         incr: IncrState,
-//         setter: Var<&'static str>,
-//         #[allow(dead_code)]
-//         total_len: Observer<usize>,
-//     }
-//     let incr = IncrState::new();
-//     let setter = incr.var("a");
-//     let total_len = setter
-//         .map(|s| {
-//             global.push_str(s);
-//             global.len()
-//         })
-//         .observe();
-//     let c = Computation {
-//         incr: incr.clone(),
-//         setter,
-//         total_len,
-//     };
-//     c.incr.stabilise();
-//     c.setter.set("ignored");
-//     c.setter.set("bcde");
-//     c.incr.stabilise();
-//     assert_eq!(c.total_len.expect_value(), 5);
-// }
 
 #[test]
 fn mutable_string() {
@@ -748,7 +712,7 @@ fn test_constant() {
 }
 
 #[test]
-#[should_panic = "assertion failed: Rc::ptr_eq"]
+#[should_panic = "assertion failed: Weak::ptr_eq"]
 fn two_worlds() {
     let one = IncrState::new();
     let two = IncrState::new();
@@ -1141,58 +1105,6 @@ fn test_map_ref() {
     incr.stabilise();
 }
 
-// #[test]
-// fn map_ref_into_unordered_fold() {
-//     let incr = IncrState::new();
-//     let v = incr.var(MapRefTest {
-//         other: 5,
-//         string: "hello".into(),
-//     });
-//     let mapped = v.map_ref(|m| &m.other);
-//     let vars = vec![mapped];
-//     let sum = incr.unordered_fold(
-//         vars,
-//         0,
-//         |acc, x| acc + x,
-//         |acc, old, new| acc - old + new,
-//         None,
-//     );
-//     let o = sum.observe();
-//     incr.stabilise();
-//     assert_eq!(o.expect_value(), 5);
-//     v.update(|m| m.other = 10);
-//     incr.stabilise();
-//     assert_eq!(o.expect_value(), 10);
-// }
-
-// #[test]
-// fn map_with_old_into_unordered_fold() {
-//     let incr = IncrState::new();
-//     let v = incr.var(MapRefTest {
-//         other: 5,
-//         string: "hello".into(),
-//     });
-//     // The problem here is that unordered_fold needs child_changed to be called with both the old
-//     // and new values. But map_with_old doesn't have an old value. In this sense I think we need to
-//     // limit unordered_fold to add/remove instead of add/update. That way child_changed can be
-//     // split into child_outgoing/child_incoming, allowing the old & new values NOT to coexist.
-//     let mapped = v.map_with_old(|_old_out, input| (input.other, true));
-//     let vars = vec![mapped];
-//     let sum = incr.unordered_fold(
-//         vars,
-//         0,
-//         |acc, x| acc + x,
-//         |acc, old, new| acc - old + new,
-//         None,
-//     );
-//     let o = sum.observe();
-//     incr.stabilise();
-//     assert_eq!(o.expect_value(), 5);
-//     v.update(|m| m.other = 10);
-//     incr.stabilise();
-//     assert_eq!(o.expect_value(), 10);
-// }
-
 #[test]
 fn map_with_old() {
     let incr = IncrState::new();
@@ -1216,8 +1128,7 @@ fn map_with_old_map_ref() {
     let counter = CallCounter::new("map_ref");
     let incr = IncrState::new();
     let v = incr.var((10, 20));
-    let m = v
-
+    let _m = v
         .map_with_old(|old, input| {
             // Does nothing.
             let v = *input;
@@ -1259,7 +1170,7 @@ fn weak_memoize_fn() {
     let counter = CallCounter::new("memoized function");
     let function = {
         let counter = counter.clone();
-        let incr = incr.clone();
+        let incr = incr.weak();
         move |x: i32| {
             counter.increment();
             incr.constant(x)

@@ -1,3 +1,5 @@
+use crate::v_rch::CellIncrement;
+
 use super::NodeRef;
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::VecDeque;
@@ -21,10 +23,19 @@ impl RecomputeHeap {
         }
         Self {
             queues,
-            height_lower_bound: 0.into(),
+            height_lower_bound: (max_height_allowed as i32 + 1).into(),
             length: 0.into(),
             swap: Default::default(),
         }
+    }
+
+    pub fn clear(&self) {
+        for q in self.queues.iter() {
+            q.borrow_mut().clear();
+        }
+        self.swap.borrow_mut().clear();
+        self.length.set(0);
+        self.height_lower_bound.set(i32::MAX);
     }
 
     pub fn get_queue(&self, height: i32) -> Option<&Queue> {
@@ -67,7 +78,7 @@ impl RecomputeHeap {
             self.height_lower_bound.set(node.height());
         }
         self.link(node);
-        self.length.set(self.length.get() + 1)
+        self.length.increment();
     }
 
     pub fn remove(&self, node: NodeRef) {
@@ -77,7 +88,7 @@ impl RecomputeHeap {
         );
         self.unlink(&node);
         node.height_in_recompute_heap().set(-1);
-        self.length.set(self.length.get() - 1)
+        self.length.decrement();
     }
 
     pub fn min_height(&self) -> i32 {
@@ -126,13 +137,12 @@ impl RecomputeHeap {
             queue = self.queues.get(self.height_lower_bound.get() as usize)?;
             queue.borrow().is_empty()
         } {
-            self.height_lower_bound
-                .set(self.height_lower_bound.get() + 1);
+            self.height_lower_bound.increment();
             debug_assert!(self.height_lower_bound.get() as usize <= len);
         }
         let mut q = queue.borrow_mut();
         let removed = q.pop_front()?;
-        self.length.set(self.length.get() - 1);
+        self.length.decrement();
         removed.height_in_recompute_heap().set(-1);
         Some(removed)
     }
@@ -148,8 +158,7 @@ impl RecomputeHeap {
             queue = self.queues.get(self.height_lower_bound.get() as usize)?;
             queue.borrow().is_empty()
         } {
-            self.height_lower_bound
-                .set(self.height_lower_bound.get() + 1);
+            self.height_lower_bound.increment();
             debug_assert!(self.height_lower_bound.get() as usize <= len);
         }
         let mut swap = self.swap.borrow_mut();

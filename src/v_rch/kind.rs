@@ -51,11 +51,11 @@ pub(crate) enum Kind<G: NodeGenerics> {
         Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
         Rc<Node<BindLhsChangeNodeGenerics<G::B1, G::BindLhs, G::BindRhs>>>,
     ),
-    Expert(Rc<ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>>),
+    Expert(ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
 }
 
 impl<G: NodeGenerics> Kind<G> {
-    pub(crate) fn expert(&self) -> Option<&Rc<ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>>> {
+    pub(crate) fn expert(&self) -> Option<&ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>> {
         match self {
             Kind::Expert(e) => Some(e),
             _ => None,

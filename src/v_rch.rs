@@ -19,13 +19,13 @@ mod var;
 
 use crate::v_rch::kind::{BindMainId, BindLhsId};
 use crate::v_rch::node::Incremental;
-use crate::{GraphvizDot, IncrState};
+use crate::{GraphvizDot, WeakState};
 
 use self::cutoff::Cutoff;
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
-use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap, MergeElement};
+use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use fmt::Debug;
 use refl::refl;
 use std::cell::{RefCell, Cell};
@@ -44,6 +44,37 @@ pub trait Value: Debug + Clone + PartialEq + 'static {}
 impl<T> Value for T where T: Debug + Clone + PartialEq + 'static {}
 pub(crate) type NodeRef = Rc<dyn ErasedNode>;
 pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+
+/// Little helper trait for bumping a statistic.
+pub(crate) trait CellIncrement {
+    type Num;
+    fn increment(&self);
+    fn decrement(&self);
+    // std is going to add Cell:update... someday...
+    fn update_val(&self, f: impl FnOnce(Self::Num) -> Self::Num);
+}
+
+macro_rules! impl_cell_increment {
+    ($num_ty:ty) => {
+        impl CellIncrement for Cell<$num_ty> {
+            type Num = $num_ty;
+            #[inline]
+            fn update_val(&self, f: impl FnOnce(Self::Num) -> Self::Num) {
+                self.set(f(self.get()));
+            }
+            #[inline(always)]
+            fn increment(&self) {
+                self.update_val(|x| x + 1)
+            }
+            #[inline(always)]
+            fn decrement(&self) {
+                self.update_val(|x| x - 1)
+            }
+        }
+    }
+}
+impl_cell_increment!(i32);
+impl_cell_increment!(usize);
 
 #[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
@@ -78,7 +109,7 @@ impl<T> Hash for Incr<T> {
 }
 
 /// Type for use in weak hash maps of incrementals
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WeakIncr<T>(pub(crate) Weak<dyn Incremental<T>>);
 impl<T> WeakIncr<T> {
     pub fn ptr_eq(&self, other: &Self) -> bool {
@@ -92,6 +123,12 @@ impl<T> WeakIncr<T> {
     }
     pub fn weak_count(&self) -> usize {
         self.0.weak_count()
+    }
+}
+
+impl<T> Clone for WeakIncr<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
@@ -109,9 +146,8 @@ impl<T> Incr<T> {
         self.node.set_graphviz_user_data(Box::new(data));
         self
     }
-    pub fn state(&self) -> IncrState {
-        let inner = self.node.state();
-        IncrState { inner }
+    pub fn state(&self) -> WeakState {
+        self.node.state().public_weak()
     }
 }
 
@@ -495,7 +531,6 @@ impl<T: Value> Incr<T> {
     pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
     where
         R: Value,
-        // WARN: we ignore this boolean now
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
     {
         let state = self.node.state();
@@ -537,9 +572,9 @@ impl<T: Value> Incr<T> {
     pub fn binds<F, R>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(&IncrState, &T) -> Incr<R> + 'static,
+        F: FnMut(&WeakState, &T) -> Incr<R> + 'static,
     {
-        let cloned = self.node.state().public();
+        let cloned = self.node.state().public_weak();
         self.bind(move |value: &T| f(&cloned, value))
     }
 
@@ -670,6 +705,7 @@ impl<T: Value> Incr<T> {
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
         i
     }
@@ -685,6 +721,7 @@ impl<T: Value> Incr<T> {
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_filter_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
         i
     }
@@ -700,6 +737,7 @@ impl<T: Value> Incr<T> {
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
         i
     }
@@ -745,6 +783,7 @@ impl<T: Value> Incr<T> {
                 (old_out, did_change)
             }
         });
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_filter_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
         i
     }
@@ -788,6 +827,7 @@ impl<T: Value> Incr<T> {
                 (folded, did_change)
             }
         });
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_unordered_fold -> {}", std::any::type_name::<R>())));
         i
     }

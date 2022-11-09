@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::fmt;
 use std::ops::{Deref, Sub};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub use super::cutoff::Cutoff;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
@@ -183,9 +183,19 @@ impl<T: Value> Drop for Var<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct IncrState {
     pub(crate) inner: Rc<State>,
+}
+
+impl Drop for IncrState {
+    fn drop(&mut self) {
+        self.inner.destroy();
+        let strong_count = Rc::strong_count(&self.inner);
+        if strong_count > 1 {
+            tracing::error!("dropping IncrState; strong_count = {}", strong_count);
+        }
+    }
 }
 
 impl IncrState {
@@ -196,8 +206,8 @@ impl IncrState {
         Self { inner: State::new_with_height(max_height) }
     }
 
-    pub(crate) fn inner(&self) -> &Rc<State> {
-        &self.inner
+    pub fn weak(&self) -> WeakState {
+        WeakState { inner: Rc::downgrade(&self.inner) }
     }
 
     pub fn add_weak_map<S: WeakMap + 'static>(&self, weak_map: Rc<RefCell<S>>) {
@@ -279,6 +289,51 @@ impl IncrState {
                 - self.inner.num_nodes_became_unnecessary.get(),
         }
     }
+}
+
+/// Type to avoid Rc cyles on IncrState
+#[derive(Debug, Clone)]
+pub struct WeakState {
+    pub(crate) inner: Weak<State>
+}
+impl WeakState {
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        self.inner.ptr_eq(&other.inner)
+    }
+    pub fn strong_count(&self) -> usize {
+        self.inner.strong_count()
+    }
+    pub fn weak_count(&self) -> usize {
+        self.inner.weak_count()
+    }
+    pub(crate) fn upgrade(&self) -> Option<Rc<State>> {
+        self.inner.upgrade()
+    }
+
+    #[inline]
+    pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
+        self.inner.upgrade().unwrap().constant(value)
+    }
+
+    pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
+        where
+        F: FnMut(R, &T) -> R + 'static,
+    {
+        self.inner.upgrade().unwrap().fold(vec, init, f)
+    }
+
+    pub fn var<T: Value>(&self, value: T) -> Var<T> {
+        self.inner.upgrade().unwrap().var_in_scope(value, Scope::Top)
+    }
+
+    pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
+        self.inner.upgrade().unwrap().var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
+    }
+
+    // pub fn unsubscribe(&self, token: SubscriptionToken) {
+    //     self.inner.upgrade().unwrap().unsubscribe(token)
+    // }
+
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

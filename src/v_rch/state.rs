@@ -1,7 +1,7 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
-use super::{NodeRef, Value, WeakNode};
+use super::{NodeRef, Value, WeakNode, CellIncrement};
 use crate::{SubscriptionToken, WeakIncr, WeakMap};
 
 use super::internal_observer::{
@@ -39,8 +39,6 @@ pub(crate) struct State {
     pub(crate) run_on_update_handlers: RefCell<Vec<(WeakNode, NodeUpdateDelayed)>>,
     pub(crate) handle_after_stabilisation: RefCell<Vec<WeakNode>>,
     pub(crate) new_observers: RefCell<Vec<WeakObserver>>,
-    // use a strong reference, because the InternalObserver for a dropped public::Observer
-    // should stay alive until we've cleaned up after it.
     pub(crate) all_observers: RefCell<HashMap<ObserverId, StrongObserver>>,
     pub(crate) disallowed_observers: RefCell<Vec<WeakObserver>>,
     pub(crate) current_scope: RefCell<Scope>,
@@ -88,9 +86,9 @@ pub enum IncrStatus {
 }
 
 impl State {
-    pub(crate) fn public(self: &Rc<Self>) -> public::IncrState {
-        public::IncrState {
-            inner: self.clone()
+    pub(crate) fn public_weak(self: &Rc<Self>) -> public::WeakState {
+        public::WeakState {
+            inner: Rc::downgrade(self)
         }
     }
     pub(crate) fn weak(self: &Self) -> Weak<Self> {
@@ -193,8 +191,7 @@ impl State {
 
     pub(crate) fn observe<T: Value>(&self, incr: Incr<T>) -> Rc<InternalObserver<T>> {
         let internal_observer = InternalObserver::new(incr);
-        self.num_active_observers
-            .set(self.num_active_observers.get() + 1);
+        self.num_active_observers.increment();
         let mut no = self.new_observers.borrow_mut();
         no.push(Rc::downgrade(&internal_observer) as Weak<dyn ErasedObserver>);
         internal_observer
@@ -394,13 +391,24 @@ impl State {
         let mut ah_heap = self.adjust_heights_heap.borrow_mut();
         ah_heap.set_height(&node, height);
     }
+
+    #[tracing::instrument]
+    pub(crate) fn destroy(&self) {
+        tracing::warn!("destroying State");
+        let mut dead_vars = self.dead_vars.take();
+        for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {
+            var.break_rc_cycle();
+        }
+        self.all_observers.take().clear();
+        self.disallowed_observers.take().clear();
+        self.weak_maps.take().clear();
+        self.recompute_heap.clear();
+        self.adjust_heights_heap.borrow_mut().clear();
+    }
 }
 
 impl Drop for State {
     fn drop(&mut self) {
-        let dead_vars = self.dead_vars.get_mut();
-        for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {
-            var.break_rc_cycle();
-        }
+        self.destroy();
     }
 }

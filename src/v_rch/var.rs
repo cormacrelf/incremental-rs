@@ -7,7 +7,7 @@ use super::node::{ErasedNode, Incremental, Node, NodeId};
 use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
 use super::state::State;
-use super::Incr;
+use super::{Incr, CellIncrement};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -140,7 +140,7 @@ impl<T: Value> Var<T> {
             panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
         };
         let t = self.state.upgrade().unwrap();
-        t.num_var_sets.set(t.num_var_sets.get() + 1);
+        t.num_var_sets.increment();
         if self.set_at.get() < t.stabilisation_num.get() {
             tracing::info!(
                 "variable set at t={:?}, current revision is t={:?}",

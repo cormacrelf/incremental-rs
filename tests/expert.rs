@@ -11,17 +11,16 @@ fn join<T: Value>(incr: Incr<Incr<T>>) -> Incr<T> {
             prev_rhs_.borrow().clone().unwrap().value_cloned()
         }
     });
-    let join_ = join.clone();
+    let join_ = join.weak();
     let lhs_change = incr.map(move |rhs| {
-        let rhs_dep = Dependency::new(rhs);
-        join_.add_dependency(rhs_dep.clone());
+        let dep = join_.add_dependency(&rhs);
         let mut prev_rhs_ = prev_rhs.borrow_mut();
         if let Some(prev) = prev_rhs_.take() {
             join_.remove_dependency(prev);
         }
-        prev_rhs_.replace(rhs_dep);
+        prev_rhs_.replace(dep);
     });
-    join.add_dependency_unit(Dependency::new(&lhs_change));
+    join.add_dependency_unit(&lhs_change);
     join.watch()
 }
 
@@ -49,21 +48,20 @@ fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 's
             prev_rhs_.borrow().clone().unwrap().value_cloned()
         }
     });
-    let join_ = join.clone();
+    let join_ = join.weak();
     let lhs_change = incr.map(move |input| {
         let rhs = f(input);
         let mut prev_rhs_ = prev_rhs.borrow_mut();
-        if prev_rhs_.as_ref().map_or(false, |prev| *prev.node() == rhs) {
+        if prev_rhs_.as_ref().map_or(false, |prev| prev.node() == rhs) {
             return;
         }
-        let rhs_dep = Dependency::new(&rhs);
-        join_.add_dependency(rhs_dep.clone());
+        let dep = join_.add_dependency(&rhs);
         if let Some(prev) = prev_rhs_.take() {
             join_.remove_dependency(prev);
         }
-        prev_rhs_.replace(rhs_dep);
+        prev_rhs_.replace(dep);
     });
-    join.add_dependency_unit(Dependency::new(&lhs_change));
+    join.add_dependency_unit(&lhs_change);
     join.watch()
 }
 

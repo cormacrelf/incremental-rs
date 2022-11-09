@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, cell::RefCell, rc::Rc};
 
 use crate::{Value, Incr, Cutoff, v_rch::incr_map::symmetric_fold::SymmetricFoldMap};
+use crate::expert::WeakNode;
 use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap};
 
 pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
@@ -78,6 +79,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
             );
             (output, did_change)
         });
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<BTreeMap<K, R>>())));
         i
     }
@@ -101,7 +103,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         let lhs = self;
         let incremental_state = lhs.state();
         let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
-        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (Node<_, _>, Dependency<_>)>::new()));
+        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (WeakNode<_, _>, Dependency<_>)>::new()));
         let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
         let result = Node::<BTreeMap<K, V2>, Option<V2>>::new(&state, {
             let acc_ = acc.clone();
@@ -124,7 +126,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
             let prev_map_ = prev_map.clone();
             let prev_nodes_ = prev_nodes.clone();
             let acc_ = acc.clone();
-            let result = result.clone();
+            let result = result.weak();
             move |lhs_change, map| {
                 let mut prev_map = prev_map_.borrow_mut();
                 let mut prev_nodes = prev_nodes_.borrow_mut();
@@ -157,15 +159,14 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                                 node.watch().set_cutoff(cutoff);
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();
-                            node.add_dependency_unit(Dependency::new(&lhs_change));
+                            node.add_dependency_unit(&lhs_change);
                             let mapped = f(&key, node.watch());
-                            let user_function_dep = Dependency::new_on_change(&mapped, {
+                            let user_function_dep = result.add_dependency_with(&mapped, {
                                 let key = key.clone();
                                 let on_inner_change = on_inner_change.clone();
                                 move |v| on_inner_change(&key, v.as_ref())
                             });
-                            result.add_dependency(user_function_dep.clone());
-                            nodes.insert(key, (node, user_function_dep));
+                            nodes.insert(key, (node.weak(), user_function_dep));
                             nodes
                         }
                     }
@@ -173,7 +174,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                 *prev_map = map.clone();
             }
         });
-        result.add_dependency_unit(Dependency::new(&lhs_change));
+        result.add_dependency_unit(&lhs_change);
         result.watch()
     }
 

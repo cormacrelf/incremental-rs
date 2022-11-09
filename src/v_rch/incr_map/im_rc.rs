@@ -243,6 +243,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
             );
             (output, did_change)
         });
+        #[cfg(debug_assertions)]
         i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<OrdMap<K, R>>())));
         i
     }
@@ -262,10 +263,9 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
     {
-        use crate::expert::{Node, Dependency};
+        use crate::expert::{Node, WeakNode, Dependency};
         let state = self.state();
         let lhs = self;
-        let incremental_state = lhs.state();
         let acc = Rc::new(RefCell::new(OrdMap::new()));
         let result = Node::<OrdMap<K, V2>, Option<V2>>::new(&state, {
             let acc_ = acc.clone();
@@ -286,17 +286,17 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         };
         let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
         // this one is just moved into the closure
-        let mut prev_nodes = OrdMap::<K, (Node<_,_>, Dependency<_>)>::new();
+        let mut prev_nodes = OrdMap::<K, (WeakNode<_,_>, Dependency<_>)>::new();
         let lhs_change = lhs.map_cyclic({
             let prev_map_ = prev_map.clone();
             let acc_ = acc.clone();
-            let result = result.clone();
+            let result = result.weak();
             move |lhs_change, map| {
                 let mut prev_map = prev_map_.borrow_mut();
                 let new_nodes = prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
                     match diff {
                         DiffElement::Unequal(_, _) => {
-                            let (node, dep) = nodes.get(key).unwrap();
+                            let (node, _dep) = nodes.get(key).unwrap();
                             node.make_stale();
                             nodes
                         }
@@ -322,15 +322,14 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                 node.watch().set_cutoff(cutoff);
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();
-                            node.add_dependency_unit(Dependency::new(&lhs_change));
+                            node.add_dependency_unit(&lhs_change);
                             let mapped = f(&key, node.watch());
-                            let user_function_dep = Dependency::new_on_change(&mapped, {
+                            let user_function_dep = result.add_dependency_with(&mapped, {
                                 let key = key.clone();
                                 let on_inner_change = on_inner_change.clone();
                                 move |v| on_inner_change(&key, v.as_ref())
                             });
-                            result.add_dependency(user_function_dep.clone());
-                            nodes.insert(key, (node, user_function_dep));
+                            nodes.insert(key, (node.weak(), user_function_dep));
                             nodes
                         }
                     }
@@ -338,7 +337,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                 *prev_map = map.clone();
             }
         });
-        result.add_dependency_unit(Dependency::new(&lhs_change));
+        result.add_dependency_unit(&lhs_change);
         result.watch()
     }
 

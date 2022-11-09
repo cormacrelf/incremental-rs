@@ -30,6 +30,15 @@ impl AdjustHeightsHeap {
             queues: vec![Default::default(); max_height_allowed + 1],
         }
     }
+
+    pub fn clear(&mut self) {
+        for q in self.queues.iter_mut() {
+            q.clear();
+        }
+        self.length = 0;
+        self.height_lower_bound = self.max_height_allowed() + 1;
+    }
+
     pub(crate) fn set_max_height_allowed(&mut self, new_mha: usize) {
         if (new_mha as i32) < self.max_height_seen {
             panic!("cannot set max_height_allowed less than max height already seen");

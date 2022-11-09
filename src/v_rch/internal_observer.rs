@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::{cell::Cell, rc::Weak};
 
-use super::Incr;
+use super::{Incr, CellIncrement};
 use super::{NodeRef, Value};
 
 use self::ObserverState::*;
@@ -131,7 +131,7 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
                     InUse => {
                         let observing = self.observing();
                         let num = observing.num_on_update_handlers();
-                        num.set(num.get() + 1);
+                        num.increment();
                         Ok(())
                     }
                     _ => unreachable!(),
@@ -283,7 +283,8 @@ impl std::error::Error for ObserverError {}
 #[cfg(debug_assertions)]
 impl<T> Drop for InternalObserver<T> {
     fn drop(&mut self) {
-        tracing::trace!("dropping InternalObserver with id {:?}", self.id);
+        let count = Rc::strong_count(&self.observing.node);
+        tracing::warn!("dropping InternalObserver with id {:?}, observing node with strong_count {count}", self.id);
         debug_assert!(matches!(self.state.get(), Disallowed | Unlinked));
     }
 }
