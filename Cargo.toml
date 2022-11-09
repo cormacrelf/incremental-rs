@@ -35,5 +35,5 @@ name = "linear"
 harness = false
 
 [[bench]]
-name = "map"
+name = "shares_per_symbol"
 harness = false
