@@ -75,7 +75,6 @@ pub(crate) struct ExpertNode<T, C, F, ObsChange> {
 
 impl<T, C, F, O> Drop for ExpertNode<T, C, F, O> {
     fn drop(&mut self) {
-        tracing::warn!("dropping ExpertNode");
         self.children.take();
         self.recompute.take();
         self.on_observability_change.take();
@@ -322,6 +321,9 @@ pub mod public {
             expert::add_dependency(&self.incr.node.packed(), edge);
             dep
         }
+        /// Caution: if the Dependency is on an expert::Node, then running this may cause
+        /// a related WeakNode to be deallocated. If you wish to use the related node after
+        /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             let edge = dep.edge.upgrade().unwrap();
             expert::remove_dependency(&*self.incr.node, &*edge, &edge)
@@ -346,32 +348,33 @@ pub mod public {
         pub fn watch(&self) -> WeakIncr<T> {
             self.incr.clone()
         }
-        pub(self) fn upgrade(&self) -> Node<T, C> {
-            Node {
-                incr: self.incr.upgrade().unwrap(),
-                _p: PhantomData,
-            }
+        pub fn upgrade(&self) -> Option<Node<T, C>> {
+            let incr = self.incr.upgrade();
+            incr.map(|incr| Node { incr, _p: PhantomData })
         }
         pub fn make_stale(&self) {
-            self.upgrade().make_stale()
+            self.upgrade().unwrap().make_stale();
         }
         pub fn invalidate(&self) {
-            self.upgrade().invalidate()
+            self.upgrade().unwrap().invalidate();
         }
         pub fn add_dependency(&self, on: &Incr<C>) -> Dependency<C> {
-            self.upgrade().add_dependency(on)
+            self.upgrade().unwrap().add_dependency(on)
         }
         pub fn add_dependency_with(&self, on: &Incr<C>, on_change: impl FnMut(&C) + 'static) -> Dependency<C> {
-            self.upgrade().add_dependency_with(on, on_change)
+            self.upgrade().unwrap().add_dependency_with(on, on_change)
         }
         pub fn add_dependency_unit(&self, on: &Incr<()>) ->  Dependency<()> {
-            self.upgrade().add_dependency_unit(on)
+            self.upgrade().unwrap().add_dependency_unit(on)
         }
         pub fn add_dependency_unit_with(&self, on: &Incr<()>, on_change: impl FnMut(&()) + 'static) ->  Dependency<()> {
-            self.upgrade().add_dependency_unit_with(on, on_change)
+            self.upgrade().unwrap().add_dependency_unit_with(on, on_change)
         }
+        /// Caution: if the Dependency is on an expert::Node, then running this may cause
+        /// a related WeakNode to be deallocated. If you wish to use the related node after
+        /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
-            self.upgrade().remove_dependency(dep)
+            self.upgrade().unwrap().remove_dependency(dep)
         }
     }
 }

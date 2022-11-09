@@ -1,10 +1,12 @@
-use std::{rc::Rc, cell::RefCell};
+use std::{rc::Rc, cell::RefCell, marker::PhantomData};
 
 use im_rc::{OrdMap, ordmap::DiffItem, ordmap};
 
 use crate::{Value, Incr, Cutoff};
 
 use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap, SymmetricMapMap, GenericMap};
+
+use super::{MapOperator, FilterMapOperator, Operator};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -247,27 +249,42 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<OrdMap<K, R>>())));
         i
     }
+}
 
-    pub fn incr_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
+    pub fn incr_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
     {
-        self.incr_filter_mapi_(move |k, incr_v| {
-            f(k, incr_v).map(|x| Some(x.clone()))
-        }, cutoff)
+        self.incr_filter_mapi_ordmap::<MapOperator<K, V, V2, F>, V2>(
+            MapOperator(f, PhantomData),
+            cutoff,
+        )
     }
 
-    pub fn incr_filter_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    pub fn incr_filter_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+    {
+        self.incr_filter_mapi_ordmap::<FilterMapOperator<K, V, V2, F>, V2>(
+            FilterMapOperator(f, PhantomData),
+            cutoff,
+        )
+    }
+
+    fn incr_filter_mapi_ordmap<O, V2>(&self, mut f: O, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    where
+        O: Operator<K, V, V2> + 'static,
+        O::Output: Value,
+        V2: Value,
     {
         use crate::expert::{Node, WeakNode, Dependency};
         let state = self.state();
         let lhs = self;
         let acc = Rc::new(RefCell::new(OrdMap::new()));
-        let result = Node::<OrdMap<K, V2>, Option<V2>>::new(&state, {
+        let result = Node::<OrdMap<K, V2>, O::Output>::new(&state, {
             let acc_ = acc.clone();
             move || {
                 OrdMap::clone(&acc_.borrow())
@@ -275,8 +292,9 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         });
         let on_inner_change = {
             let acc_ = acc.clone();
-            move |key: &K, opt: Option<&V2>| {
+            move |key: &K, output: &O::Output| {
                 let mut acc = acc_.borrow_mut();
+                let opt = O::as_opt(output);
                 match opt {
                     None => { acc.remove(key); }
                     Some(x) => { acc.insert(key.clone(), x.clone()); }
@@ -302,9 +320,13 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                         }
                         DiffElement::Left(_) => {
                             let (node, dep) = nodes.remove(key).unwrap();
+                            // remove_dependency will cause node's weak ref to die.
+                            // so we upgrade it first.
+                            let node = node.upgrade().unwrap();
                             result.remove_dependency(dep);
                             let mut acc = acc_.borrow_mut();
                             acc.remove(key);
+                            // Invalidate does have to happen after remove_dependency.
                             node.invalidate();
                             nodes
                         }
@@ -323,11 +345,11 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();
                             node.add_dependency_unit(&lhs_change);
-                            let mapped = f(&key, node.watch());
-                            let user_function_dep = result.add_dependency_with(&mapped, {
+                            let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
+                            let user_function_dep: Dependency<O::Output> = result.add_dependency_with(&mapped, {
                                 let key = key.clone();
                                 let on_inner_change = on_inner_change.clone();
-                                move |v| on_inner_change(&key, v.as_ref())
+                                move |v| on_inner_change(&key, v)
                             });
                             nodes.insert(key, (node.weak(), user_function_dep));
                             nodes

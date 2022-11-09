@@ -2,6 +2,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use im_rc::{OrdMap, ordmap::Entry};
 use incremental::{Incr, Value, IncrState};
+use tracing::Level;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Dir {
@@ -189,9 +191,16 @@ fn setup(n: u32, sps_fn: fn(Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32
 
 #[tracing::instrument(skip_all)]
 fn bench_update(c: &mut Criterion) {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .with_span_events(FmtSpan::ENTER)
+        .init();
 
     let size = 1_000_000;
+    c.bench_with_input(BenchmarkId::new("nested", 20), &20, |b, &size| {
+        let iter_fn = setup(size, shares_per_symbol);
+        b.iter(iter_fn)
+    });
     c.bench_with_input(BenchmarkId::new("nested", size), &size, |b, &size| {
         let iter_fn = setup(size, shares_per_symbol);
         b.iter(iter_fn)

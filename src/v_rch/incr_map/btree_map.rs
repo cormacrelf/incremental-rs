@@ -1,7 +1,9 @@
+use std::marker::PhantomData;
 use std::{collections::BTreeMap, cell::RefCell, rc::Rc};
 
 use crate::{Value, Incr, Cutoff, v_rch::incr_map::symmetric_fold::SymmetricFoldMap};
 use crate::expert::WeakNode;
+use super::{Operator, FilterMapOperator, MapOperator};
 use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap};
 
 pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
@@ -84,28 +86,42 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         i
     }
 
-    pub fn incr_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    pub fn incr_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
     {
-        self.incr_filter_mapi_(move |k, incr_v| {
-            f(k, incr_v).map(|x| Some(x.clone()))
-        }, cutoff)
+        self.incr_filter_mapi_generic_btree_map::<MapOperator<K, V, V2, F>, V2>(
+            MapOperator(f, PhantomData),
+            cutoff,
+        )
     }
-    pub fn incr_filter_mapi_<F, V2>(&self, mut f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+
+    pub fn incr_filter_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+    {
+        self.incr_filter_mapi_generic_btree_map::<FilterMapOperator<K, V, V2, F>, V2>(
+            FilterMapOperator(f, PhantomData),
+            cutoff,
+        )
+    }
+
+    fn incr_filter_mapi_generic_btree_map<O, V2>(&self, mut f: O, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    where
+        O: Operator<K, V, V2> + 'static,
+        O::Output: Value,
+        V2: Value,
     {
         use crate::expert::{Node, Dependency};
         let state = self.state();
         let lhs = self;
         let incremental_state = lhs.state();
         let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
-        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (WeakNode<_, _>, Dependency<_>)>::new()));
+        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new()));
         let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
-        let result = Node::<BTreeMap<K, V2>, Option<V2>>::new(&state, {
+        let result = Node::<BTreeMap<K, V2>, O::Output>::new(&state, {
             let acc_ = acc.clone();
             move || {
                 acc_.borrow().clone()
@@ -113,8 +129,9 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         });
         let on_inner_change = {
             let acc_ = acc.clone();
-            move |key: &K, opt: Option<&V2>| {
+            move |key: &K, opt: &O::Output| {
                 let mut acc = acc_.borrow_mut();
+                let opt = O::as_opt(opt);
                 match opt {
                     None => { acc.remove(key); }
                     Some(x) => { acc.insert(key.clone(), x.clone()); }
@@ -139,9 +156,13 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                         }
                         DiffElement::Left(_) => {
                             let (node, dep) = nodes.remove(key).unwrap();
+                            // running remove_dependency will cause node's weak ref to die.
+                            // so we upgrade it first.
+                            let node = node.upgrade().unwrap();
                             result.remove_dependency(dep);
                             let mut acc = acc_.borrow_mut();
                             acc.remove(key);
+                            // Invalidate does have to happen after remove_dependency.
                             node.invalidate();
                             nodes
                         }
@@ -160,11 +181,11 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();
                             node.add_dependency_unit(&lhs_change);
-                            let mapped = f(&key, node.watch());
+                            let mapped = f.call_fn(&key, node.watch());
                             let user_function_dep = result.add_dependency_with(&mapped, {
                                 let key = key.clone();
                                 let on_inner_change = on_inner_change.clone();
-                                move |v| on_inner_change(&key, v.as_ref())
+                                move |v| on_inner_change(&key, v)
                             });
                             nodes.insert(key, (node.weak(), user_function_dep));
                             nodes
