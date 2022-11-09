@@ -119,7 +119,6 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         let lhs = self;
         let incremental_state = lhs.state();
         let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
-        let prev_nodes = Rc::new(RefCell::new(BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new()));
         let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
         let result = Node::<BTreeMap<K, V2>, O::Output>::new(&state, {
             let acc_ = acc.clone();
@@ -141,13 +140,12 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         };
         let lhs_change = lhs.map_cyclic({
             let prev_map_ = prev_map.clone();
-            let prev_nodes_ = prev_nodes.clone();
             let acc_ = acc.clone();
             let result = result.weak();
+            let mut prev_nodes = BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new();
             move |lhs_change, map| {
                 let mut prev_map = prev_map_.borrow_mut();
-                let mut prev_nodes = prev_nodes_.borrow_mut();
-                let new_nodes = prev_map.symmetric_fold(map, &mut *prev_nodes, |nodes, (key, diff)| {
+                let new_nodes = prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
                     match diff {
                         DiffElement::Unequal(_, _) => {
                             let (node, dep) = nodes.get(key).unwrap();
