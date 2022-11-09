@@ -48,6 +48,7 @@ pub(crate) struct State {
     pub(crate) dead_vars: RefCell<Vec<WeakVar>>,
 
     pub(crate) weak_maps: RefCell<Vec<Rc<RefCell<dyn WeakMap>>>>,
+    pub(crate) weak_self: Weak<Self>,
 
     #[cfg(debug_assertions)]
     pub(crate) only_in_debug: OnlyInDebug,
@@ -92,17 +93,21 @@ impl State {
             inner: self.clone()
         }
     }
-    pub(crate) fn weak(self: &Rc<Self>) -> Weak<Self> {
-        Rc::downgrade(self)
+    pub(crate) fn weak(self: &Self) -> Weak<Self> {
+        self.weak_self.clone()
     }
     pub(crate) fn current_scope(&self) -> Scope {
         self.current_scope.borrow().clone()
     }
     pub(crate) fn new() -> Rc<Self> {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
-        Rc::new(State {
-            recompute_heap: RecomputeHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED),
-            adjust_heights_heap: RefCell::new(AdjustHeightsHeap::new(DEFAULT_MAX_HEIGHT_ALLOWED)),
+        Self::new_with_height(DEFAULT_MAX_HEIGHT_ALLOWED)
+    }
+    pub(crate) fn new_with_height(max_height: usize) -> Rc<Self> {
+        Rc::new_cyclic(|weak| State {
+            weak_self: weak.clone(),
+            recompute_heap: RecomputeHeap::new(max_height),
+            adjust_heights_heap: RefCell::new(AdjustHeightsHeap::new(max_height)),
             stabilisation_num: Cell::new(StabilisationNum(0)),
             num_var_sets: Cell::new(0),
             num_nodes_recomputed: Cell::new(0),
@@ -214,10 +219,10 @@ impl State {
                     /* By adding [internal_observer] to [observing.observers], we may have added
                     on-update handlers to [observing].  We need to handle [observing] after this
                     stabilization to give those handlers a chance to run. */
-                    node.handle_after_stabilisation();
+                    node.handle_after_stabilisation(self);
                     debug_assert!(node.is_necessary());
                     if !was_necessary {
-                        node.became_necessary_propagate();
+                        node.became_necessary_propagate(self);
                     }
                 }
             }
@@ -241,7 +246,7 @@ impl State {
                 let mut ao = self.all_observers.borrow_mut();
                 ao.remove(&obs.id());
             }
-            observing.check_if_unnecessary();
+            observing.check_if_unnecessary(self);
         }
     }
 
@@ -320,7 +325,7 @@ impl State {
             self.stabilise_start();
             while let Some(mut min_layer) = self.recompute_heap.remove_min_layer() {
                 for node in min_layer.drain(..) {
-                    node.recompute();
+                    node.recompute(self);
                     node.height_in_recompute_heap().set(-1);
                 }
             }
@@ -335,7 +340,7 @@ impl State {
             let Some(node) = node.upgrade() else { continue };
             if node.is_valid() {
                 if node.should_be_invalidated() {
-                    node.invalidate_node();
+                    node.invalidate_node(self);
                 } else {
                     /* [Node.needs_to_be_computed node] is true because
                     - node is necessary. This is because children can only point to necessary parents

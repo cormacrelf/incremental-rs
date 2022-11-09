@@ -60,7 +60,8 @@ impl<T: Value> Observer<T> {
         let handler = OnUpdateHandler::new(now, handler_fn);
         let token = self.internal.subscribe(handler)?;
         let node = self.internal.observing();
-        node.handle_after_stabilisation();
+        let state = node.state();
+        node.handle_after_stabilisation(&state);
         Ok(token)
     }
 
@@ -191,6 +192,9 @@ impl IncrState {
     pub fn new() -> Self {
         Self { inner: State::new() }
     }
+    pub fn new_with_height(max_height: usize) -> Self {
+        Self { inner: State::new_with_height(max_height) }
+    }
 
     pub(crate) fn inner(&self) -> &Rc<State> {
         &self.inner
@@ -202,8 +206,8 @@ impl IncrState {
 
     pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static, T: Value>(
         &self,
-        f: impl Fn(I) -> Incr<T>
-    ) -> impl Fn(I) -> Incr<T> {
+        f: impl Fn(I) -> Incr<T> + Clone
+    ) -> impl Fn(I) -> Incr<T> + Clone {
 
         // // we define this inside the generic function.
         // // so it's a new type for every T!

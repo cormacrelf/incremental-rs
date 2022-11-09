@@ -66,7 +66,7 @@ pub(crate) fn invalidate(node: &NodeRef) {
     let state = node.state();
     #[cfg(debug_assertions)]
     node.assert_currently_running_node_is_child("invalidate");
-    node.invalidate_node();
+    node.invalidate_node(&state);
     state.propagate_invalidity();
 }
 
