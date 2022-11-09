@@ -1270,7 +1270,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         debug_assert!(self.is_stale());
         if self.is_necessary() {
             let state = self.state();
-            self.expert_remove_child(packed_edge.as_any(), edge_index, &state);
+            self.expert_remove_child(packed_edge.as_any(), last_edge_index, &state);
             if !self.is_in_recompute_heap() {
                 state.recompute_heap.insert(self.packed());
             }
@@ -1287,7 +1287,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
 
         let parent_pci_ = parent.parent_child_indices();
         let child1_pci_ = child1.parent_child_indices();
-        let child2_pci_ = child1.parent_child_indices();
+        let child2_pci_ = child2.parent_child_indices();
         let mut parent_pci = parent_pci_.borrow_mut();
         let mut child1_pci = child1_pci_.borrow_mut();
         let mut child2_pci = child2_pci_.borrow_mut();
