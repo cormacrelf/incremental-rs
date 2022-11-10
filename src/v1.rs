@@ -436,7 +436,7 @@ pub struct Incr<T> {
 
 impl<T: Clone + 'static + Debug> Incr<T> {
     pub fn ptr_eq(&self, other: &Incr<T>) -> bool {
-        Rc::ptr_eq(&self.thunk, &other.thunk)
+        crate::rc_fat_ptr_eq(&self.thunk, &other.thunk)
     }
     pub fn new(value: T) -> Self {
         let raw = Rc::new(RawValue {

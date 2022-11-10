@@ -3,7 +3,6 @@ use crate::v_rch::CellIncrement;
 use super::NodeRef;
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::VecDeque;
-use std::rc::Rc;
 
 type Queue = RefCell<VecDeque<NodeRef>>;
 
@@ -60,7 +59,7 @@ impl RecomputeHeap {
         // if this is slow, we should use a hash set or something instead with a fast "remove_any"
         // method
         let mut q = queue.borrow_mut();
-        let Some(indexof) = q.iter().position(|x| Rc::ptr_eq(x, &node)) else { return };
+        let Some(indexof) = q.iter().position(|x| crate::rc_fat_ptr_eq(x, &node)) else { return };
         // order within a particular queue does not matter at all.
         // they're all the same height so they cannot have any dependencies
         // so we can use swap_remove
