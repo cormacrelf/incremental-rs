@@ -147,7 +147,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             Kind::MapRef(mapref) => {
                 let mapper = &mapref.mapper;
                 let input = mapref.input.value_as_ref()?;
-                let mapped = Ref::filter_map(input, |iref| Some(mapper(&iref))).ok();
+                let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
                 return mapped;
             }
             _ => {}
@@ -488,7 +488,7 @@ pub(crate) trait ErasedNode: Debug {
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
     fn packed(&self) -> NodeRef;
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef) -> ());
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
     fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef));
     fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef));
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
@@ -618,12 +618,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let ps = self.parents.borrow();
         for parent in ps.iter() {
             let parent = parent.upgrade_erased().unwrap().packed();
-            ahh.ensure_height_requirement(
-                &original_child,
-                &original_parent,
-                &self.packed(),
-                &parent,
-            );
+            ahh.ensure_height_requirement(original_child, original_parent, &self.packed(), &parent);
         }
     }
     fn set_height(&self, height: i32) {
@@ -740,7 +735,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn became_unnecessary(&self, state: &State) {
         state.num_nodes_became_unnecessary.increment();
-        self.maybe_handle_after_stabilisation(&state);
+        self.maybe_handle_after_stabilisation(state);
         state.set_height(self.packed(), -1);
         self.remove_children(state);
         match &self.kind {
@@ -752,7 +747,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             state.recompute_heap.remove(self.packed());
         }
     }
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef) -> ()) {
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef)) {
         match &self.kind {
             Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. })
@@ -821,25 +816,19 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let input = map.input.value_as_ref().unwrap();
                     f(&input)
                 };
-                return self.maybe_change_value(new_value, &state);
+                self.maybe_change_value(new_value, state)
             }
             Kind::Var(var) => {
                 let new_value = {
                     let value = var.value.borrow();
                     value.clone()
                 };
-                return self.maybe_change_value(new_value, &state);
+                self.maybe_change_value(new_value, state)
             }
-            Kind::Constant(v) => return self.maybe_change_value(v.clone(), &state),
+            Kind::Constant(v) => self.maybe_change_value(v.clone(), state),
             Kind::MapRef(mapref) => {
                 // don't run child_changed on our parents, because we already did that in OUR child_changed.
-                return self.maybe_change_value_manual(
-                    None,
-                    None,
-                    mapref.did_change.get(),
-                    false,
-                    &state,
-                );
+                self.maybe_change_value_manual(None, None, mapref.did_change.get(), false, state)
             }
             Kind::MapWithOld(map) => {
                 let input = map.input.value_as_ref().unwrap();
@@ -849,20 +838,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     tracing::trace!("<- old: {current_value:?}");
                     f(current_value.take(), &input)
                 };
-                return self.maybe_change_value_manual(
-                    None,
-                    Some(new_value),
-                    did_change,
-                    true,
-                    &state,
-                );
+                self.maybe_change_value_manual(None, Some(new_value), did_change, true, state)
             }
             Kind::Map2(map2) => {
                 let i1 = map2.one.value_as_ref().unwrap();
                 let i2 = map2.two.value_as_ref().unwrap();
                 let mut f = map2.mapper.borrow_mut();
                 let new_value = f(&i1, &i2);
-                return self.maybe_change_value(new_value, &state);
+                self.maybe_change_value(new_value, state)
             }
             Kind::BindLhsChange(casts, bind) => {
                 // leaves an empty vec for next time
@@ -876,7 +859,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let rhs = f(&lhs);
                     *state.current_scope.borrow_mut() = old_scope;
                     // Check that the returned RHS node is from the same world.
-                    assert!(Weak::ptr_eq(&rhs.node.weak_state(), &state.weak_self));
+                    assert!(Weak::ptr_eq(rhs.node.weak_state(), &state.weak_self));
                     rhs
                 };
 
@@ -918,18 +901,18 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 debug_assert!(self.is_valid());
-                return self.maybe_change_value(casts.r_unit.cast(()), &state);
+                self.maybe_change_value(casts.r_unit.cast(()), state)
             }
             Kind::BindMain(casts, bind, _) => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
-                return self.copy_child_bindrhs(&rhs.node, casts.rhs_r, &state);
+                self.copy_child_bindrhs(&rhs.node, casts.rhs_r, state)
             }
-            Kind::ArrayFold(af) => return self.maybe_change_value(af.compute(), &state),
+            Kind::ArrayFold(af) => self.maybe_change_value(af.compute(), state),
             Kind::Expert(e) => match e.before_main_computation() {
                 Err(Invalid) => {
-                    self.invalidate_node(&state);
+                    self.invalidate_node(state);
                     state.propagate_invalidity();
-                    return None;
+                    None
                 }
                 Ok(()) => {
                     let value = {
@@ -939,7 +922,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                             panic!()
                         }
                     };
-                    return self.maybe_change_value(value, &state);
+                    self.maybe_change_value(value, state)
                 }
             },
         }
@@ -986,7 +969,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 "can_recompute_now {:?}, proceeding to recompute",
                 can_recompute_now
             );
-            return true;
+            true
         } else {
             // we already know that !parent.is_in_recompute_heap()
             debug_assert!(parent.needs_to_be_computed());
@@ -996,7 +979,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 parent.height()
             );
             state.recompute_heap.insert(parent.packed());
-            return false;
+            false
         }
     }
 
@@ -1010,7 +993,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn invalidate_node(&self, state: &State) {
         if self.is_valid() {
-            self.maybe_handle_after_stabilisation(&state);
+            self.maybe_handle_after_stabilisation(state);
             *self.value_opt.borrow_mut() = None;
             // this was for node-level subscriptions. we don't have those
             // debug_assert!(self.old_value_opt.borrow().is_none());
@@ -1018,7 +1001,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             self.recomputed_at.set(state.stabilisation_num.get());
             state.num_nodes_invalidated.increment();
             if self.is_necessary() {
-                self.remove_children(&state);
+                self.remove_children(state);
                 /* The self doesn't have children anymore, so we can lower its height as much as
                 possible, to one greater than the scope it was created in.  Also, because we
                 are lowering the height, we don't need to adjust any of its ancestors' heights.
@@ -1212,7 +1195,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 } else {
                     write!(f, " [style=bold]").unwrap();
                 }
-                writeln!(f, "").unwrap();
+                writeln!(f).unwrap();
             });
             node.dot_add_bind_edges(&mut bind_edges);
         });
@@ -1486,7 +1469,7 @@ impl<G: NodeGenerics> Node<G> {
             self.value_opt.replace(new_value_opt);
             self.changed_at.set(state.stabilisation_num.get());
             state.num_nodes_changed.increment();
-            self.maybe_handle_after_stabilisation(&state);
+            self.maybe_handle_after_stabilisation(state);
             let parents = self.parents.borrow();
             let mut parents_iter = parents.iter().enumerate();
             let pci = self.parent_child_indices.borrow();
@@ -1545,10 +1528,8 @@ impl<G: NodeGenerics> Node<G> {
                     "p.needs_to_be_computed(): {:?}",
                     p
                 );
-                if !p.is_in_recompute_heap() {
-                    if p.parent_iter_can_recompute_now(self, &state) {
-                        return Some(p);
-                    }
+                if !p.is_in_recompute_heap() && p.parent_iter_can_recompute_now(self, state) {
+                    return Some(p);
                 }
             }
         } else {

@@ -83,7 +83,7 @@ impl<T: Value> Drop for Observer<T> {
         if Rc::strong_count(&self.sentinel) <= 1 {
             if let Some(state) = self.internal.incr_state() {
                 // causes it to eventually be dropped
-                self.internal.disallow_future_use(&*state);
+                self.internal.disallow_future_use(&state);
             } else {
                 // if state is already dead, or is currently in the process of being dropped and
                 // has triggered Observer::drop because an Observer was owned by some other node
@@ -275,7 +275,7 @@ impl IncrState {
             let val = f(i.clone());
             let mut storage_ = storage.borrow_mut();
             storage_.insert(i, val.weak());
-            return val;
+            val
         }
     }
 

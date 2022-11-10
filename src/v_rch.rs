@@ -482,8 +482,8 @@ impl<T: Value> Incr<T> {
             state.current_scope.borrow().clone(),
             Kind::Map(mapper),
         );
-        let map = Incr { node };
-        map
+
+        Incr { node }
     }
 
     /// A version of map that gives you a (weak) reference to the map node you're making, in the
@@ -564,8 +564,8 @@ impl<T: Value> Incr<T> {
             state.current_scope.borrow().clone(),
             Kind::Map2(mapper),
         );
-        let map = Incr { node };
-        map
+
+        Incr { node }
     }
 
     /// A version of bind that includes a copy of the `incremental::State`
@@ -764,7 +764,7 @@ impl<T: Value> Incr<T> {
         T::OutputMap<V2>: Value,
     {
         let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
-            (o @ _, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
+            (o, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();
@@ -773,7 +773,7 @@ impl<T: Value> Incr<T> {
                         did_change = true;
                         match change {
                             DiffElement::Left(_) => {
-                                out.remove(&key);
+                                out.remove(key);
                             }
                             DiffElement::Right(newval) => {
                                 if let Some(v2) = f(key, newval) {

@@ -143,8 +143,8 @@ fn shares(orders: Incr<OrdMap<Oid, Order>>) -> Incr<u32> {
 
 fn shares_per_symbol(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
     orders
-        .pipe1(index_by, |x| x.sym.clone())
-        .incr_mapi_(|_k, v| shares(v.clone()), None)
+        .pipe1(index_by, |x| x.sym)
+        .incr_mapi_(|_k, v| shares(v), None)
 }
 
 fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
@@ -152,7 +152,7 @@ fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbo
         op: fn(u32, u32) -> u32,
     ) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> {
         move |mut acc, _k, o| {
-            match acc.entry(_k.clone()) {
+            match acc.entry(*_k) {
                 Entry::Vacant(e) => {
                     e.insert(o.size);
                 }
@@ -194,7 +194,7 @@ fn random_order(rng: &mut impl rand::Rng) -> Order {
 fn random_orders(rng: &mut impl rand::Rng, n: u32) -> OrdMap<Oid, Order> {
     (0..n).into_iter().fold(OrdMap::new(), |mut acc, _| {
         let o = random_order(rng);
-        acc.insert(o.id.clone(), o);
+        acc.insert(o.id, o);
         acc
     })
 }
@@ -215,7 +215,7 @@ fn setup(
     }
     move || {
         let random = random_order(&mut rng);
-        var.set(init_orders.update(random.id.clone(), random));
+        var.set(init_orders.update(random.id, random));
         incr.stabilise();
         drop(shares.expect_value());
     }

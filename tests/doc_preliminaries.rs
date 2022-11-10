@@ -38,7 +38,7 @@ mod projections_and_cutoffs {
             let a = z.map(|z| z.a.clone());
             a.map(|a| {
                 println!("a_prod ran (expensive)");
-                a.iter().fold(1, |acc, x| acc * x)
+                a.iter().product()
             })
         };
         let b_prod = {
@@ -124,7 +124,7 @@ mod projections_and_cutoffs {
     fn sumproduct_smaller_graph(z: Incr<Z>) -> Incr<i32> {
         let a_prod = z.map(|z| {
             println!("a_prod ran (expensive)");
-            z.a.iter().fold(1, |acc, x| acc * x)
+            z.a.iter().product()
         });
         let b_prod = z.map(|&Z { b: (b1, b2), .. }| {
             println!("b_prod ran (cheap)");

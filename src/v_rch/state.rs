@@ -2,7 +2,7 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
-use crate::{SubscriptionToken, WeakIncr, WeakMap};
+use crate::{SubscriptionToken, WeakMap};
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
@@ -91,7 +91,7 @@ impl State {
             inner: Rc::downgrade(self),
         }
     }
-    pub(crate) fn weak(self: &Self) -> Weak<Self> {
+    pub(crate) fn weak(&self) -> Weak<Self> {
         self.weak_self.clone()
     }
     pub(crate) fn current_scope(&self) -> Scope {

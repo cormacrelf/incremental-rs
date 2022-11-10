@@ -11,7 +11,7 @@ fn join<T: Value>(incr: Incr<Incr<T>>) -> Incr<T> {
     });
     let join_ = join.weak();
     let lhs_change = incr.map(move |rhs| {
-        let dep = join_.add_dependency(&rhs);
+        let dep = join_.add_dependency(rhs);
         let mut prev_rhs_ = prev_rhs.borrow_mut();
         if let Some(prev) = prev_rhs_.take() {
             join_.remove_dependency(prev);

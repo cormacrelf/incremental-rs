@@ -194,7 +194,7 @@ impl<T: Value> InternalObserver<T> {
         handler: OnUpdateHandler<T>,
     ) -> Result<SubscriptionToken, ObserverError> {
         match self.state.get() {
-            Disallowed | Unlinked => return Err(ObserverError::Disallowed),
+            Disallowed | Unlinked => Err(ObserverError::Disallowed),
             Created | InUse => {
                 let token = self.next_subscriber.get();
                 self.next_subscriber.set(token.succ());
@@ -224,7 +224,7 @@ impl<T: Value> InternalObserver<T> {
         let mut handlers = self.on_update_handlers.borrow_mut();
         for (id, handler) in handlers.iter_mut() {
             tracing::trace!("running update handler with id {id:?}");
-            handler.run(&input, node_update, now);
+            handler.run(input, node_update, now);
         }
     }
 }

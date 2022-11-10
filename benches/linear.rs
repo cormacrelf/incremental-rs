@@ -28,12 +28,11 @@ fn sequence(node: Incr<u64>, kind: SequenceKind, size: u64) -> Incr<u64> {
         SequenceKind::Wide => {
             let double = |list: Vec<Incr<u64>>| -> Vec<Incr<_>> {
                 list.into_iter()
-                    .map(|i| {
+                    .flat_map(|i| {
                         let a = i.map(|x| x + 1);
                         let b = i.map(|x| x + 1);
                         [a, b]
                     })
-                    .flatten()
                     .collect()
             };
             let spread = (0..size).into_iter().fold(vec![node], |acc, _| double(acc));

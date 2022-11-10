@@ -226,7 +226,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MergeElement<L, R> {
     Left(L),
     Right(R),
@@ -247,7 +247,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum DiffElement<V> {
     Unequal(V, V),
     Left(V),
@@ -256,8 +256,8 @@ pub enum DiffElement<V> {
 
 #[test]
 fn test_merge_once() {
-    let i = [1i32, 2, 3][..].into_iter();
-    let j = [2i32, 4][..].into_iter();
+    let i = [1i32, 2, 3][..].iter();
+    let j = [2i32, 4][..].iter();
     let v: Vec<_> = MergeOnce::new(i, j).cloned().collect();
     assert_eq!(v, vec![1, 2, 3, 4]);
 }
@@ -452,6 +452,6 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
     }
     #[inline]
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R {
-        self.into_iter().fold(init, f)
+        self.iter().fold(init, f)
     }
 }

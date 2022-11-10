@@ -151,8 +151,8 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
             }
         };
         let lhs_change = lhs.map_cyclic({
-            let prev_map_ = prev_map.clone();
-            let acc_ = acc.clone();
+            let prev_map_ = prev_map;
+            let acc_ = acc;
             let result = result.weak();
             let mut prev_nodes = BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new();
             move |lhs_change, map| {

@@ -90,12 +90,10 @@ fn do_stabilise<A: AnyThunk + ?Sized>(thunk: &A) {
                 return;
             }
             // println!("dirty count: {}", val);
-            val = val - 1;
+            val -= 1;
             desc.flags().dirty_count.set(val);
-            if val == 0 {
-                if desc.eval() {
-                    to_reconnect.push(desc_weak.clone());
-                }
+            if val == 0 && desc.eval() {
+                to_reconnect.push(desc_weak.clone());
             }
         }
     }

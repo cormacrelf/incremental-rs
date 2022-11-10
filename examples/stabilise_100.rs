@@ -13,7 +13,7 @@ fn using_map(mut node: Incr<u64>) -> Incr<u64> {
 
 fn using_bind(mut node: Incr<u64>) -> Incr<u64> {
     for _ in 0..NODE_COUNT {
-        node = node.binds({ move |incr, &val| incr.constant(val + 1) });
+        node = node.binds(move |incr, &val| incr.constant(val + 1));
     }
     node
 }
@@ -32,7 +32,7 @@ fn main() {
     let dur = Instant::now().duration_since(start);
     let recomputed = (incr.stats() - prev_stats).recomputed;
 
-    println!("");
+    println!();
     let expect_total = (NODE_COUNT * ITER_COUNT) as u32;
     println!(
         "recompute count {recomputed} ({:.2}x NODE_COUNT * ITER_COUNT)",

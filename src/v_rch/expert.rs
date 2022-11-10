@@ -282,7 +282,7 @@ pub mod public {
             f: impl FnMut() -> T + 'static,
             obs_change: impl FnMut(bool) + 'static,
         ) -> Self {
-            let incr = expert::create::<T, C, _, _>(&*state.upgrade().unwrap(), f, obs_change);
+            let incr = expert::create::<T, C, _, _>(&state.upgrade().unwrap(), f, obs_change);
             Self {
                 incr,
                 _p: PhantomData,

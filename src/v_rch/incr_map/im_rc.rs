@@ -329,8 +329,8 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
         // this one is just moved into the closure
         let lhs_change = lhs.map_cyclic({
-            let prev_map_ = prev_map.clone();
-            let acc_ = acc.clone();
+            let prev_map_ = prev_map;
+            let acc_ = acc;
             let result = result.weak();
             let mut prev_nodes = OrdMap::<K, (WeakNode<_, _>, Dependency<_>)>::new();
             move |lhs_change, map| {
