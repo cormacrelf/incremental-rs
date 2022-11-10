@@ -383,12 +383,10 @@ impl State {
         if self.status.get() == IncrStatus::Stabilising {
             panic!("tried to set_max_height_allowed during stabilisation");
         }
-        // let mut ah_heap = self.adjust_heights_heap.borrow_mut();
-        // ah_heap.set_max_height_allowed(new_max_height);
-        // drop(ah_heap);
-        // let mut rc_heap = self.recompute_heap.borrow_mut();
-        // rc_heap.set_max_height_allowed(new_max_height);
-        // drop(rc_heap);
+        let mut ah_heap = self.adjust_heights_heap.borrow_mut();
+        ah_heap.set_max_height_allowed(new_max_height);
+        drop(ah_heap);
+        self.recompute_heap.set_max_height_allowed(new_max_height);
     }
 
     pub(crate) fn set_height(&self, node: NodeRef, height: i32) {
