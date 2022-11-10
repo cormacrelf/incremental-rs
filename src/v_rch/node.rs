@@ -702,7 +702,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         - add parent pointers to [node] from its children.
         - set [node]'s height.
         - add [node] to the recompute heap, if necessary. */
-        let weak = self.clone().weak();
+        let weak = self.weak();
         let as_parent = self.as_parent_weak();
         state.set_height(self.packed(), self.created_in.height() + 1);
         let h = &Cell::new(self.height());
