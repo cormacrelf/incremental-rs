@@ -3,15 +3,49 @@ use crate::v_rch::CellIncrement;
 use super::NodeRef;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::VecDeque;
+use std::fmt;
 
 type Queue = RefCell<VecDeque<NodeRef>>;
 
-#[derive(Debug)]
 pub(crate) struct RecomputeHeap {
     queues: RefCell<Vec<Queue>>,
     height_lower_bound: Cell<i32>,
     length: Cell<usize>,
     swap: Queue,
+}
+
+impl fmt::Debug for RecomputeHeap {
+    #[rustfmt::skip::macros]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "RecomputeHeap {{")?;
+        writeln!(f, "  length: {},", self.length.get())?;
+        writeln!(
+            f,
+            "  height_lower_bound: {},",
+            self.height_lower_bound.get()
+        )?;
+        writeln!(f, "  ---")?;
+        let mut skip = 0;
+        for (ix, q) in self.queues.borrow().iter().map(RefCell::borrow).enumerate() {
+            if q.is_empty() {
+                skip += 1;
+                continue;
+            }
+            if skip != 0 {
+                writeln!(f, "  [ skipped {:3} ]", skip)?;
+            }
+            skip = 0;
+            writeln!(
+                f,
+                "  [ height: {:3}, len: {:5}, cap: {:5} ],",
+                ix,
+                q.len(),
+                q.capacity()
+            )?;
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
 }
 
 impl RecomputeHeap {

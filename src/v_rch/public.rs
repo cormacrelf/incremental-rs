@@ -235,14 +235,12 @@ impl Default for IncrState {
 
 impl IncrState {
     pub fn new() -> Self {
-        Self {
-            inner: State::new(),
-        }
+        let inner = State::new();
+        Self { inner }
     }
     pub fn new_with_height(max_height: usize) -> Self {
-        Self {
-            inner: State::new_with_height(max_height),
-        }
+        let inner = State::new_with_height(max_height);
+        Self { inner }
     }
 
     pub fn weak(&self) -> WeakState {
@@ -348,6 +346,12 @@ impl WeakState {
     }
     pub(crate) fn upgrade(&self) -> Option<Rc<State>> {
         self.inner.upgrade()
+    }
+
+    #[doc(hidden)]
+    pub fn print_heap(&self) {
+        let inner = self.upgrade().unwrap();
+        println!("{:?}", inner.recompute_heap);
     }
 
     #[inline]
