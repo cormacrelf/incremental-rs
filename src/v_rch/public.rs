@@ -227,6 +227,12 @@ impl Drop for IncrState {
     }
 }
 
+impl Default for IncrState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IncrState {
     pub fn new() -> Self {
         Self {
@@ -412,7 +418,6 @@ impl Debug for StatsDiff {
         field("became_necessary", self.became_necessary);
         field("became_unnecessary", self.became_unnecessary);
         field("necessary", self.necessary);
-        drop(field);
         f.finish()
     }
 }
@@ -475,6 +480,8 @@ impl<T: Value> IntoIncr<T> for &Var<T> {
     }
 }
 
+// We don't need is_empty... this is only for stats, if that.
+#[allow(clippy::len_without_is_empty)]
 pub trait WeakMap {
     fn len(&self) -> usize;
     fn capacity(&self) -> usize;

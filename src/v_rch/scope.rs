@@ -11,10 +11,7 @@ pub(crate) enum Scope {
 impl Scope {
     fn equals(&self, other: &Self) -> bool {
         match self {
-            Scope::Top => match other {
-                Scope::Top => true,
-                _ => false,
-            },
+            Scope::Top => matches!(other, Scope::Top),
             Scope::Bind(w1) => match other {
                 Scope::Bind(w2) => Weak::ptr_eq(w1, w2),
                 _ => false,

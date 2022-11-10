@@ -143,14 +143,11 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.value_opt().unwrap()
     }
     fn value_as_ref(&self) -> Option<Ref<G::R>> {
-        match &self.kind {
-            Kind::MapRef(mapref) => {
-                let mapper = &mapref.mapper;
-                let input = mapref.input.value_as_ref()?;
-                let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
-                return mapped;
-            }
-            _ => {}
+        if let Kind::MapRef(mapref) = &self.kind {
+            let mapper = &mapref.mapper;
+            let input = mapref.input.value_as_ref()?;
+            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
+            return mapped;
         }
         let v = self.value_opt.borrow();
         Ref::filter_map(v, |o| o.as_ref()).ok()
@@ -177,9 +174,8 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         if !was_necessary {
             self.became_necessary(state);
         }
-        match &self.kind {
-            Kind::Expert(expert) => expert.run_edge_callback(child_index),
-            _ => {}
+        if let Kind::Expert(expert) = &self.kind {
+            expert.run_edge_callback(child_index)
         }
     }
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>, state: &State) {
@@ -376,9 +372,8 @@ impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
         child_index: i32,
         old_value_opt: Option<&G::I2>,
     ) {
-        match &self.kind {
-            Kind::Expert(expert) => expert.run_edge_callback(child_index),
-            _ => {}
+        if let Kind::Expert(expert) = &self.kind {
+            expert.run_edge_callback(child_index)
         }
     }
     fn p2_erased(&self) -> &dyn ErasedNode {
@@ -723,9 +718,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if self.is_stale() {
             state.recompute_heap.insert(self.packed());
         }
-        match &self.kind {
-            Kind::Expert(expert) => expert.observability_change(true),
-            _ => {}
+        if let Kind::Expert(expert) = &self.kind {
+            expert.observability_change(true)
         }
     }
     fn check_if_unnecessary(&self, state: &State) {
@@ -738,9 +732,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.maybe_handle_after_stabilisation(state);
         state.set_height(self.packed(), -1);
         self.remove_children(state);
-        match &self.kind {
-            Kind::Expert(expert) => expert.observability_change(false),
-            _ => {}
+        if let Kind::Expert(expert) = &self.kind {
+            expert.observability_change(false)
         }
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
@@ -992,43 +985,41 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         any
     }
     fn invalidate_node(&self, state: &State) {
-        if self.is_valid() {
-            self.maybe_handle_after_stabilisation(state);
-            *self.value_opt.borrow_mut() = None;
-            // this was for node-level subscriptions. we don't have those
-            // debug_assert!(self.old_value_opt.borrow().is_none());
-            self.changed_at.set(state.stabilisation_num.get());
-            self.recomputed_at.set(state.stabilisation_num.get());
-            state.num_nodes_invalidated.increment();
-            if self.is_necessary() {
-                self.remove_children(state);
-                /* The self doesn't have children anymore, so we can lower its height as much as
-                possible, to one greater than the scope it was created in.  Also, because we
-                are lowering the height, we don't need to adjust any of its ancestors' heights.
-                We could leave the height alone, but we may as well lower it as much as
-                possible to avoid making the heights of any future ancestors unnecessarily
-                large. */
-                let h = self.created_in.height() + 1;
-                state.set_height(self.packed(), h);
-                /* We don't set [node.created_in] or [node.next_node_in_same_scope]; we leave [node]
-                in the scope it was created in.  If that scope is ever invalidated, then that
-                will clear [node.next_node_in_same_scope] */
-            }
-            // (match node.kind with
-            //  | At at -> remove_alarm at.clock at.alarm
-            //  | At_intervals at_intervals -> remove_alarm at_intervals.clock at_intervals.alarm
-            //  | Bind_main bind -> invalidate_nodes_created_on_rhs bind.all_nodes_created_on_rhs
-            //  | Step_function { alarm; clock; _ } -> remove_alarm clock alarm
-            //  | _ -> ());
-            match &self.kind {
-                Kind::BindMain(_, bind, _) => {
-                    let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
-                    invalidate_nodes_created_on_rhs(&mut all, state);
-                }
-                _ => {}
-            }
-            self.is_valid.set(false)
+        if !self.is_valid() {
+            return;
         }
+        self.maybe_handle_after_stabilisation(state);
+        *self.value_opt.borrow_mut() = None;
+        // this was for node-level subscriptions. we don't have those
+        // debug_assert!(self.old_value_opt.borrow().is_none());
+        self.changed_at.set(state.stabilisation_num.get());
+        self.recomputed_at.set(state.stabilisation_num.get());
+        state.num_nodes_invalidated.increment();
+        if self.is_necessary() {
+            self.remove_children(state);
+            /* The self doesn't have children anymore, so we can lower its height as much as
+            possible, to one greater than the scope it was created in.  Also, because we
+            are lowering the height, we don't need to adjust any of its ancestors' heights.
+            We could leave the height alone, but we may as well lower it as much as
+            possible to avoid making the heights of any future ancestors unnecessarily
+            large. */
+            let h = self.created_in.height() + 1;
+            state.set_height(self.packed(), h);
+            /* We don't set [node.created_in] or [node.next_node_in_same_scope]; we leave [node]
+            in the scope it was created in.  If that scope is ever invalidated, then that
+            will clear [node.next_node_in_same_scope] */
+        }
+        // (match node.kind with
+        //  | At at -> remove_alarm at.clock at.alarm
+        //  | At_intervals at_intervals -> remove_alarm at_intervals.clock at_intervals.alarm
+        //  | Bind_main bind -> invalidate_nodes_created_on_rhs bind.all_nodes_created_on_rhs
+        //  | Step_function { alarm; clock; _ } -> remove_alarm clock alarm
+        //  | _ -> ());
+        if let Kind::BindMain(_, bind, _) = &self.kind {
+            let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
+            invalidate_nodes_created_on_rhs(&mut all, state);
+        }
+        self.is_valid.set(false)
     }
 
     fn adjust_heights_bind_lhs_change(
@@ -1037,19 +1028,17 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         oc: &NodeRef,
         op: &NodeRef,
     ) {
-        match &self.kind {
-            Kind::BindLhsChange(_, bind) => tracing::debug_span!("adjust_heights_bind_lhs_change")
-                .in_scope(|| {
-                    let all = bind.all_nodes_created_on_rhs.borrow();
-                    for rnode_weak in all.iter() {
-                        let rnode = rnode_weak.upgrade().unwrap();
-                        tracing::debug!("all_nodes_created_on_rhs: {:?}", rnode);
-                        if rnode.is_necessary() {
-                            ahh.ensure_height_requirement(oc, op, &self.packed(), &rnode)
-                        }
+        if let Kind::BindLhsChange(_, bind) = &self.kind {
+            tracing::debug_span!("adjust_heights_bind_lhs_change").in_scope(|| {
+                let all = bind.all_nodes_created_on_rhs.borrow();
+                for rnode_weak in all.iter() {
+                    let rnode = rnode_weak.upgrade().unwrap();
+                    tracing::debug!("all_nodes_created_on_rhs: {:?}", rnode);
+                    if rnode.is_necessary() {
+                        ahh.ensure_height_requirement(oc, op, &self.packed(), &rnode)
                     }
-                }),
-            _ => {}
+                }
+            })
         }
     }
 
@@ -1133,15 +1122,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>) {
-        match &self.kind {
-            Kind::BindLhsChange(_, bind) => {
-                let all = bind.all_nodes_created_on_rhs.borrow();
-                for rhs in all.iter().filter_map(Weak::upgrade) {
-                    tracing::info!("bind created on RHS: {rhs:?}");
-                    bind_edges.push((self.packed(), rhs.clone()));
-                }
+        if let Kind::BindLhsChange(_, bind) = &self.kind {
+            let all = bind.all_nodes_created_on_rhs.borrow();
+            for rhs in all.iter().filter_map(Weak::upgrade) {
+                tracing::info!("bind created on RHS: {rhs:?}");
+                bind_edges.push((self.packed(), rhs.clone()));
             }
-            _ => {}
         }
     }
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
@@ -1624,17 +1610,14 @@ impl<G: NodeGenerics> Node<G> {
     fn as_parent_weak(&self) -> ParentWeak<G::I1> {
         ParentWeak::I1(self.weak_self.clone())
     }
-    fn as_parent_ref<'a>(&'a self) -> ParentRef<'a, G::I1> {
+    fn as_parent_ref(&self) -> ParentRef<G::I1> {
         ParentRef::I1(self)
     }
     fn as_parent2_weak(&self) -> ParentWeak<G::I2> {
         ParentWeak::I2(self.weak_self.clone())
     }
-    fn as_parent2_ref<'a>(&'a self) -> ParentRef<'a, G::I2> {
+    fn as_parent2_ref(&self) -> ParentRef<G::I2> {
         ParentRef::I2(self)
-    }
-    fn as_child(&self) -> Input<G::R> {
-        self.weak_self.clone().upgrade().unwrap()
     }
     fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b, G>) {
         match &self.kind {

@@ -1,5 +1,9 @@
 // #![feature(type_alias_impl_trait)]
 
+// We have some really complicated types. Most of them can't be typedef'd to be any shorter.
+#![allow(clippy::type_complexity)]
+// #![allow(clippy::single_match)]
+
 mod order;
 mod v1;
 mod v_rch;

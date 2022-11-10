@@ -124,27 +124,6 @@ impl RecomputeHeap {
             .expect("we just created this queue!")
     }
 
-    pub(crate) fn remove_min(&self) -> Option<NodeRef> {
-        if self.length.get() == 0 {
-            return None;
-        }
-        debug_assert!(self.height_lower_bound.get() >= 0);
-        let len = self.queues.len();
-        let mut queue;
-        while {
-            queue = self.queues.get(self.height_lower_bound.get() as usize)?;
-            queue.borrow().is_empty()
-        } {
-            self.height_lower_bound.increment();
-            debug_assert!(self.height_lower_bound.get() as usize <= len);
-        }
-        let mut q = queue.borrow_mut();
-        let removed = q.pop_front()?;
-        self.length.decrement();
-        removed.height_in_recompute_heap().set(-1);
-        Some(removed)
-    }
-
     pub(crate) fn remove_min_layer(&self) -> Option<RefMut<VecDeque<NodeRef>>> {
         if self.length.get() == 0 {
             return None;
