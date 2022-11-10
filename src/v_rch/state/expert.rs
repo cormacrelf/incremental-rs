@@ -1,15 +1,11 @@
 use std::any::Any;
 
-use crate::WeakIncr;
-use crate::v_rch::node::Incremental;
-use crate::v_rch::expert::*;
 use super::*;
+use crate::v_rch::expert::*;
+use crate::v_rch::node::Incremental;
+use crate::WeakIncr;
 
-pub(crate) fn create<T, C, F, O>(
-    state: &State,
-    recompute: F, 
-    on_observability_change: O,
-) -> Incr<T>
+pub(crate) fn create<T, C, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
     T: Value,
     C: Value,
@@ -58,7 +54,7 @@ where
         node
     });
     node.created_in.add_node(node.clone());
-    Incr{node}
+    Incr { node }
 }
 
 pub(crate) fn make_stale(node: &NodeRef) {
@@ -77,6 +73,10 @@ pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
     node.expert_add_dependency(edge);
 }
 
-pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, packed_edge: &dyn IsEdge, edge: &dyn Any) {
+pub(crate) fn remove_dependency<T>(
+    node: &dyn Incremental<T>,
+    packed_edge: &dyn IsEdge,
+    edge: &dyn Any,
+) {
     node.expert_remove_dependency(packed_edge, edge);
 }

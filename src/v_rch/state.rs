@@ -1,7 +1,7 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
-use super::{NodeRef, Value, WeakNode, CellIncrement};
+use super::{CellIncrement, NodeRef, Value, WeakNode};
 use crate::{SubscriptionToken, WeakIncr, WeakMap};
 
 use super::internal_observer::{
@@ -88,7 +88,7 @@ pub enum IncrStatus {
 impl State {
     pub(crate) fn public_weak(self: &Rc<Self>) -> public::WeakState {
         public::WeakState {
-            inner: Rc::downgrade(self)
+            inner: Rc::downgrade(self),
         }
     }
     pub(crate) fn weak(self: &Self) -> Weak<Self> {
@@ -179,8 +179,11 @@ impl State {
             node: RefCell::new(None),
             value_set_during_stabilisation: RefCell::new(None),
         });
-        let node =
-            Node::<super::var::VarGenerics<T>>::create_rc(self.weak(), scope, Kind::Var(var.clone()));
+        let node = Node::<super::var::VarGenerics<T>>::create_rc(
+            self.weak(),
+            scope,
+            Kind::Var(var.clone()),
+        );
         {
             let mut slot = var.node.borrow_mut();
             var.node_id.set(node.id);
@@ -256,7 +259,8 @@ impl State {
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
-        #[cfg(debug_assertions)] {
+        #[cfg(debug_assertions)]
+        {
             self.only_in_debug.currently_running_node.take();
             // t.only_in_debug.expert_nodes_created_by_current_node <- []);
         }

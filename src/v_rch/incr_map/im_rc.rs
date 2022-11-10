@@ -1,12 +1,15 @@
-use std::{rc::Rc, cell::RefCell, marker::PhantomData};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
-use im_rc::{OrdMap, ordmap::DiffItem, ordmap};
+use im_rc::{ordmap, ordmap::DiffItem, OrdMap};
 
-use crate::{Value, Incr, Cutoff};
+use crate::{Cutoff, Incr, Value};
 
-use super::symmetric_fold::{MergeElement, DiffElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap, SymmetricMapMap, GenericMap};
+use super::symmetric_fold::{
+    DiffElement, GenericMap, MergeElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap,
+    SymmetricMapMap,
+};
 
-use super::{MapOperator, FilterMapOperator, Operator};
+use super::{FilterMapOperator, MapOperator, Operator};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -18,7 +21,10 @@ impl<'a, V> DiffElement<&'a V> {
             // if we have to remove k from self, that means it was only found in self (=Left)
             DiffItem::Remove(k, v) => (k, Self::Left(v)),
             // now we have "old" and "new"...
-            DiffItem::Update { old: (k, old), new: (_, new) } => (k, Self::Unequal(old, new)),
+            DiffItem::Update {
+                old: (k, old),
+                new: (_, new),
+            } => (k, Self::Unequal(old, new)),
         }
     }
 }
@@ -48,15 +54,13 @@ fn test_diff_item_to_element() {
     assert_eq!(diff, expected);
 }
 
-
 impl<'a, K: Ord + 'a, V: PartialEq + 'a> SymmetricDiffMap<'a, K, V> for OrdMap<K, V> {
     type Iter = core::iter::Map<
         ordmap::DiffIter<'a, K, V>,
-        fn (DiffItem<'a, K, V>) -> (&'a K, DiffElement<&'a V>)
+        fn(DiffItem<'a, K, V>) -> (&'a K, DiffElement<&'a V>),
     >;
     fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter {
-        self.diff(other)
-            .map(DiffElement::from_diff_item)
+        self.diff(other).map(DiffElement::from_diff_item)
     }
 }
 
@@ -68,8 +72,7 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for OrdMap<K, V> {
         init: R,
         f: impl FnMut(R, (&K, DiffElement<&V>)) -> R,
     ) -> R {
-        self.symmetric_diff(other)
-            .fold(init, f)
+        self.symmetric_diff(other).fold(init, f)
     }
 
     #[inline]
@@ -129,9 +132,12 @@ fn test_merge() {
     let obs = merge.observe();
     incr.stabilise();
     use MergeElement::*;
-    assert_eq!(obs.value(), Ok(ordmap! {
-        1 => Both("a", "one"), 2 => Both("b", "two"), 3 => Both("c", "three")
-    }));
+    assert_eq!(
+        obs.value(),
+        Ok(ordmap! {
+            1 => Both("a", "one"), 2 => Both("b", "two"), 3 => Both("c", "three")
+        })
+    );
 
     o1.modify(|map| {
         map.remove(&2);
@@ -139,17 +145,23 @@ fn test_merge() {
         map.insert(4, "added");
     });
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), Ok(ordmap! {
-        1 => Both("a", "one"), 2 => Right("two"), 3 => Both("replaced", "three"),
-        4 => Left("added")
-    }));
+    assert_eq!(
+        dbg!(obs.value()),
+        Ok(ordmap! {
+            1 => Both("a", "one"), 2 => Right("two"), 3 => Both("replaced", "three"),
+            4 => Left("added")
+        })
+    );
     obs.save_dot_to_file("im_incr_merge.dot");
 }
 
 #[test]
 fn test_ptr_eq() {
     #[derive(PartialEq, Clone)]
-    enum NotEq { A, B }
+    enum NotEq {
+        A,
+        B,
+    }
     let o1 = ordmap! { 1 => NotEq::A, 2 => NotEq::B };
     let o2 = o1.clone();
     assert!(o1.ptr_eq(&o2));
@@ -161,7 +173,10 @@ fn ordmap_fast_eq<K: Ord + Eq, V: Eq>(a: &OrdMap<K, V>, b: &OrdMap<K, V>) -> boo
     a.ptr_eq(b) || a.eq(b)
 }
 use std::hash::Hash;
-fn hashmap_fast_eq<K: Hash + Eq, V: Eq>(a: &im_rc::HashMap<K, V>, b: &im_rc::HashMap<K, V>) -> bool {
+fn hashmap_fast_eq<K: Hash + Eq, V: Eq>(
+    a: &im_rc::HashMap<K, V>,
+    b: &im_rc::HashMap<K, V>,
+) -> bool {
     a.ptr_eq(b) || a.eq(b)
 }
 pub fn im_ordmap_cutoff<K: Ord + Eq, V: Eq>() -> Cutoff<OrdMap<K, V>> {
@@ -171,11 +186,20 @@ pub fn im_hashmap_cutoff<K: Hash + Eq, V: Eq>() -> Cutoff<im_rc::HashMap<K, V>> 
     Cutoff::Custom(hashmap_fast_eq)
 }
 
-pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone + PartialEq, R: Clone>(
+pub(crate) fn merge_shared_impl<
+    K: Clone + Ord,
+    V1: Clone + PartialEq,
+    V2: Clone + PartialEq,
+    R: Clone,
+>(
     old: Option<(OrdMap<K, V1>, OrdMap<K, V2>, OrdMap<K, R>)>,
     new_left_map: &OrdMap<K, V1>,
     new_right_map: &OrdMap<K, V2>,
-    mut f: impl FnMut(OrdMap<K, R>, &K, MergeElement<(&K, DiffElement<&V1>), (&K, DiffElement<&V2>)>) -> OrdMap<K, R>,
+    mut f: impl FnMut(
+        OrdMap<K, R>,
+        &K,
+        MergeElement<(&K, DiffElement<&V1>), (&K, DiffElement<&V2>)>,
+    ) -> OrdMap<K, R>,
 ) -> OrdMap<K, R> {
     let (old_left_map, old_right_map, old_output) = match old {
         None => (OrdMap::new(), OrdMap::new(), OrdMap::new()),
@@ -184,23 +208,18 @@ pub(crate) fn merge_shared_impl<K: Clone + Ord, V1: Clone + PartialEq, V2: Clone
     let left_diff = old_left_map.symmetric_diff(new_left_map);
     let right_diff = old_right_map.symmetric_diff(new_right_map);
     // relies on the key iteration being sorted, as in BTreeMap.
-    let merge = MergeOnceWith::new(
-        left_diff,
-        right_diff,
-        |(k, _), (k2, _)| k.cmp(k2)
-    );
-    merge
-        .fold(old_output, |output, merge_elem| {
-            let key = match merge_elem {
-                MergeElement::Left((key, _))| MergeElement::Right((key, _)) => key,
-                MergeElement::Both((left_key, _), (right_key, _)) => {
-                    // comparisons can be expensive
-                    // assert_eq!(left_key, right_key);
-                    left_key
-                }
-            };
-            f(output, key, merge_elem)
-        })
+    let merge = MergeOnceWith::new(left_diff, right_diff, |(k, _), (k2, _)| k.cmp(k2));
+    merge.fold(old_output, |output, merge_elem| {
+        let key = match merge_elem {
+            MergeElement::Left((key, _)) | MergeElement::Right((key, _)) => key,
+            MergeElement::Both((left_key, _), (right_key, _)) => {
+                // comparisons can be expensive
+                // assert_eq!(left_key, right_key);
+                left_key
+            }
+        };
+        f(output, key, merge_elem)
+    })
 }
 
 impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
@@ -223,12 +242,8 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                         Both((_, left_diff), (_, right_diff)) => {
                             (left_diff.new_data(), right_diff.new_data())
                         }
-                        Left((_, left_diff)) => {
-                            (left_diff.new_data(), new_right_map.get(key))
-                        }
-                        Right((_, right_diff)) => {
-                            (new_left_map.get(key), right_diff.new_data())
-                        }
+                        Left((_, left_diff)) => (left_diff.new_data(), new_right_map.get(key)),
+                        Right((_, right_diff)) => (new_left_map.get(key), right_diff.new_data()),
                     };
                     let output_data_opt = match data {
                         (None, None) => None,
@@ -241,12 +256,15 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                         Some(r) => acc_output.insert(key.clone(), r),
                     };
                     acc_output
-                }
+                },
             );
             (output, did_change)
         });
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_merge -> {}", std::any::type_name::<OrdMap<K, R>>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_merge -> {}",
+            std::any::type_name::<OrdMap<K, R>>()
+        )));
         i
     }
 }
@@ -274,21 +292,23 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         )
     }
 
-    fn incr_filter_mapi_ordmap<O, V2>(&self, mut f: O, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    fn incr_filter_mapi_ordmap<O, V2>(
+        &self,
+        mut f: O,
+        cutoff: Option<Cutoff<V>>,
+    ) -> Incr<OrdMap<K, V2>>
     where
         O: Operator<K, V, V2> + 'static,
         O::Output: Value,
         V2: Value,
     {
-        use crate::expert::{Node, WeakNode, Dependency};
+        use crate::expert::{Dependency, Node, WeakNode};
         let state = self.state();
         let lhs = self;
         let acc = Rc::new(RefCell::new(OrdMap::new()));
         let result = Node::<OrdMap<K, V2>, O::Output>::new(&state, {
             let acc_ = acc.clone();
-            move || {
-                OrdMap::clone(&acc_.borrow())
-            }
+            move || OrdMap::clone(&acc_.borrow())
         });
         let on_inner_change = {
             let acc_ = acc.clone();
@@ -296,8 +316,12 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                 let mut acc = acc_.borrow_mut();
                 let opt = O::as_opt(output);
                 match opt {
-                    None => { acc.remove(key); }
-                    Some(x) => { acc.insert(key.clone(), x.clone()); }
+                    None => {
+                        acc.remove(key);
+                    }
+                    Some(x) => {
+                        acc.insert(key.clone(), x.clone());
+                    }
                 }
                 drop(acc);
             }
@@ -308,61 +332,60 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
             let prev_map_ = prev_map.clone();
             let acc_ = acc.clone();
             let result = result.weak();
-            let mut prev_nodes = OrdMap::<K, (WeakNode<_,_>, Dependency<_>)>::new();
+            let mut prev_nodes = OrdMap::<K, (WeakNode<_, _>, Dependency<_>)>::new();
             move |lhs_change, map| {
                 let mut prev_map = prev_map_.borrow_mut();
-                let new_nodes = prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
-                    match diff {
-                        DiffElement::Unequal(_, _) => {
-                            let (node, _dep) = nodes.get(key).unwrap();
-                            node.make_stale();
-                            nodes
-                        }
-                        DiffElement::Left(_) => {
-                            let (node, dep) = nodes.remove(key).unwrap();
-                            // remove_dependency will cause node's weak ref to die.
-                            // so we upgrade it first.
-                            let node = node.upgrade().unwrap();
-                            result.remove_dependency(dep);
-                            let mut acc = acc_.borrow_mut();
-                            acc.remove(key);
-                            // Invalidate does have to happen after remove_dependency.
-                            node.invalidate();
-                            nodes
-                        }
-                        DiffElement::Right(_) => {
-                            let key = key.clone();
-                            let node = Node::<V>::new(&state, {
-                                let key_ = key.clone();
-                                let prev_map_ = prev_map_.clone();
-                                move || {
-                                    let prev_map = prev_map_.borrow();
-                                    prev_map.get(&key_).unwrap().clone()
-                                }
-                            });
-                            if let Some(cutoff) = cutoff {
-                                node.watch().set_cutoff(cutoff);
+                let new_nodes =
+                    prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
+                        match diff {
+                            DiffElement::Unequal(_, _) => {
+                                let (node, _dep) = nodes.get(key).unwrap();
+                                node.make_stale();
+                                nodes
                             }
-                            let lhs_change = lhs_change.upgrade().unwrap();
-                            node.add_dependency_unit(&lhs_change);
-                            let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
-                            let user_function_dep: Dependency<O::Output> = result.add_dependency_with(&mapped, {
+                            DiffElement::Left(_) => {
+                                let (node, dep) = nodes.remove(key).unwrap();
+                                // remove_dependency will cause node's weak ref to die.
+                                // so we upgrade it first.
+                                let node = node.upgrade().unwrap();
+                                result.remove_dependency(dep);
+                                let mut acc = acc_.borrow_mut();
+                                acc.remove(key);
+                                // Invalidate does have to happen after remove_dependency.
+                                node.invalidate();
+                                nodes
+                            }
+                            DiffElement::Right(_) => {
                                 let key = key.clone();
-                                let on_inner_change = on_inner_change.clone();
-                                move |v| on_inner_change(&key, v)
-                            });
-                            nodes.insert(key, (node.weak(), user_function_dep));
-                            nodes
+                                let node = Node::<V>::new(&state, {
+                                    let key_ = key.clone();
+                                    let prev_map_ = prev_map_.clone();
+                                    move || {
+                                        let prev_map = prev_map_.borrow();
+                                        prev_map.get(&key_).unwrap().clone()
+                                    }
+                                });
+                                if let Some(cutoff) = cutoff {
+                                    node.watch().set_cutoff(cutoff);
+                                }
+                                let lhs_change = lhs_change.upgrade().unwrap();
+                                node.add_dependency_unit(&lhs_change);
+                                let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
+                                let user_function_dep: Dependency<O::Output> = result
+                                    .add_dependency_with(&mapped, {
+                                        let key = key.clone();
+                                        let on_inner_change = on_inner_change.clone();
+                                        move |v| on_inner_change(&key, v)
+                                    });
+                                nodes.insert(key, (node.weak(), user_function_dep));
+                                nodes
+                            }
                         }
-                    }
-                });
+                    });
                 *prev_map = map.clone();
             }
         });
         result.add_dependency_unit(&lhs_change);
         result.watch()
     }
-
 }
-
-

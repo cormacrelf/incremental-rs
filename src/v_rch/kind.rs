@@ -9,7 +9,7 @@ use super::array_fold::ArrayFold;
 use super::expert::ExpertNode;
 use super::node::{Input, Node};
 use super::var::Var;
-use super::{BindNode, Map2Node, MapNode, MapWithOld, MapRefNode, BindLhsChangeNodeGenerics};
+use super::{BindLhsChangeNodeGenerics, BindNode, Map2Node, MapNode, MapRefNode, MapWithOld};
 
 pub(crate) trait NodeGenerics: 'static {
     type R: Value;

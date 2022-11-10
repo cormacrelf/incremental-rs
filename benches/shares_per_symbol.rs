@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use im_rc::{OrdMap, ordmap::Entry};
-use incremental::{Incr, Value, IncrState};
+use im_rc::{ordmap::Entry, OrdMap};
+use incremental::{Incr, IncrState, Value};
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -13,7 +13,6 @@ enum Dir {
 
 type Symbol = u32;
 type Oid = u32;
-
 
 #[derive(Clone, PartialEq)]
 struct Order {
@@ -82,40 +81,55 @@ fn test_index_by() {
         o.expect_value()
     };
     use im_rc::ordmap;
-    assert_eq!(insert(1, "bar"), ordmap! {
-        "BAR".to_string() => ordmap! {
-            1i32 => "bar".to_string()
+    assert_eq!(
+        insert(1, "bar"),
+        ordmap! {
+            "BAR".to_string() => ordmap! {
+                1i32 => "bar".to_string()
+            }
         }
-    });
-    assert_eq!(insert(1, "foo"), ordmap! {
-        "FOO".to_string() => ordmap! {
-            1i32 => "foo".to_string()
+    );
+    assert_eq!(
+        insert(1, "foo"),
+        ordmap! {
+            "FOO".to_string() => ordmap! {
+                1i32 => "foo".to_string()
+            }
         }
-    });
-    assert_eq!(insert(2, "foo"), ordmap! {
-        "FOO".to_string() => ordmap! {
-            1i32 => "foo".to_string(),
-            2i32 => "foo".to_string()
+    );
+    assert_eq!(
+        insert(2, "foo"),
+        ordmap! {
+            "FOO".to_string() => ordmap! {
+                1i32 => "foo".to_string(),
+                2i32 => "foo".to_string()
+            }
         }
-    });
-    assert_eq!(insert(3, "bar"), ordmap! {
-        "BAR".to_string() => ordmap! {
-            3i32 => "bar".to_string()
-        },
-        "FOO".to_string() => ordmap! {
-            1i32 => "foo".to_string(),
-            2i32 => "foo".to_string()
+    );
+    assert_eq!(
+        insert(3, "bar"),
+        ordmap! {
+            "BAR".to_string() => ordmap! {
+                3i32 => "bar".to_string()
+            },
+            "FOO".to_string() => ordmap! {
+                1i32 => "foo".to_string(),
+                2i32 => "foo".to_string()
+            }
         }
-    });
-    assert_eq!(insert(2, "bar"), ordmap! {
-        "BAR".to_string() => ordmap! {
-            2i32 => "bar".to_string(),
-            3i32 => "bar".to_string()
-        },
-        "FOO".to_string() => ordmap! {
-            1i32 => "foo".to_string()
+    );
+    assert_eq!(
+        insert(2, "bar"),
+        ordmap! {
+            "BAR".to_string() => ordmap! {
+                2i32 => "bar".to_string(),
+                3i32 => "bar".to_string()
+            },
+            "FOO".to_string() => ordmap! {
+                1i32 => "foo".to_string()
+            }
         }
-    });
+    );
 }
 
 fn shares(orders: Incr<OrdMap<Oid, Order>>) -> Incr<u32> {
@@ -134,22 +148,27 @@ fn shares_per_symbol(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u3
 }
 
 fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
-    fn update_sym_map(op: fn(u32, u32) -> u32) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> {
+    fn update_sym_map(
+        op: fn(u32, u32) -> u32,
+    ) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> {
         move |mut acc, _k, o| {
             match acc.entry(_k.clone()) {
-                Entry::Vacant(e) => { e.insert(o.size); }
-                Entry::Occupied(mut e) => { e.insert(op(*e.get(), o.size)); }
+                Entry::Vacant(e) => {
+                    e.insert(o.size);
+                }
+                Entry::Occupied(mut e) => {
+                    e.insert(op(*e.get(), o.size));
+                }
             }
             acc
         }
     }
-    orders
-        .incr_unordered_fold(
-            OrdMap::new(),
-            update_sym_map(|a, b| a + b),
-            update_sym_map(|a, b| a - b),
-            false,
-        )
+    orders.incr_unordered_fold(
+        OrdMap::new(),
+        update_sym_map(|a, b| a + b),
+        update_sym_map(|a, b| a - b),
+        false,
+    )
 }
 
 fn random_order(rng: &mut impl rand::Rng) -> Order {
@@ -157,10 +176,18 @@ fn random_order(rng: &mut impl rand::Rng) -> Order {
     let sym = rng.gen_range(0..num_symbols);
     let size = rng.gen_range(0..10_000);
     let price = rng.gen_range(0..10_000) as f32 / 100.;
-    let dir = if rng.gen_ratio(1, 2) { Dir::Buy } else { Dir::Sell };
+    let dir = if rng.gen_ratio(1, 2) {
+        Dir::Buy
+    } else {
+        Dir::Sell
+    };
     let id = rng.gen_range(0..u32::MAX);
     Order {
-        id, dir, price, size, sym
+        id,
+        dir,
+        price,
+        size,
+        sym,
     }
 }
 
@@ -172,7 +199,10 @@ fn random_orders(rng: &mut impl rand::Rng, n: u32) -> OrdMap<Oid, Order> {
     })
 }
 
-fn setup(n: u32, sps_fn: fn(Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>>) -> impl FnMut() {
+fn setup(
+    n: u32,
+    sps_fn: fn(Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>>,
+) -> impl FnMut() {
     tracing::info!("setup called");
     let mut rng = rand::thread_rng();
     let init_orders = random_orders(&mut rng, n);

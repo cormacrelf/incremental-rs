@@ -88,11 +88,14 @@ where
     fused: Option<bool>,
 }
 
-impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering>
-MergeOnceWith<I, J, F>
-{
+impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering> MergeOnceWith<I, J, F> {
     pub(crate) fn new(a: I, b: J, f: F) -> Self {
-        Self { a: a.peekable(), b: b.peekable(), f, fused: None }
+        Self {
+            a: a.peekable(),
+            b: b.peekable(),
+            f,
+            fused: None,
+        }
     }
 }
 
@@ -122,11 +125,11 @@ where
         };
 
         match ordering {
-            Ordering::Equal => {
-                self.a.next()
-                    .zip(self.b.next())
-                    .map(|(a, b)| MergeElement::Both(a, b))
-            }
+            Ordering::Equal => self
+                .a
+                .next()
+                .zip(self.b.next())
+                .map(|(a, b)| MergeElement::Both(a, b)),
             Ordering::Less => {
                 if self.fused.is_none() {
                     drop(self.b.next());
@@ -231,8 +234,9 @@ pub enum MergeElement<L, R> {
 }
 
 impl<L, R> MergeElement<&L, &R>
-where L: Clone,
-      R: Clone,
+where
+    L: Clone,
+    R: Clone,
 {
     pub fn cloned(&self) -> MergeElement<L, R> {
         match *self {
@@ -451,4 +455,3 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for BTreeMap<K, V> {
         self.into_iter().fold(init, f)
     }
 }
-

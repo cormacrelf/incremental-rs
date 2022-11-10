@@ -111,7 +111,6 @@ impl RecomputeHeap {
         self.height_lower_bound.get()
     }
 
-
     pub(crate) fn increase_height(&self, node: &NodeRef) {
         debug_assert!(node.height() > node.height_in_recompute_heap().get());
         debug_assert!(node.is_in_recompute_heap());

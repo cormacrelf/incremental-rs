@@ -1,4 +1,4 @@
-use incremental::{Var, IncrState, Observer, Incr};
+use incremental::{Incr, IncrState, Observer, Var};
 use std::time::Instant;
 
 const NODE_COUNT: u64 = 50;
@@ -13,9 +13,7 @@ fn using_map(mut node: Incr<u64>) -> Incr<u64> {
 
 fn using_bind(mut node: Incr<u64>) -> Incr<u64> {
     for _ in 0..NODE_COUNT {
-        node = node.binds({
-            move |incr, &val| incr.constant(val + 1)
-        });
+        node = node.binds({ move |incr, &val| incr.constant(val + 1) });
     }
     node
 }
@@ -36,7 +34,10 @@ fn main() {
 
     println!("");
     let expect_total = (NODE_COUNT * ITER_COUNT) as u32;
-    println!("recompute count {recomputed} ({:.2}x NODE_COUNT * ITER_COUNT)", recomputed as f32 / expect_total as f32);
+    println!(
+        "recompute count {recomputed} ({:.2}x NODE_COUNT * ITER_COUNT)",
+        recomputed as f32 / expect_total as f32
+    );
     println!("{:?} per node", dur / recomputed as u32);
 }
 

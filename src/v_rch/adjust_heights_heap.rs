@@ -101,11 +101,13 @@ impl AdjustHeightsHeap {
         debug_assert!(child.is_necessary());
         debug_assert!(parent.is_necessary());
         if Rc::ptr_eq(&parent, original_child) {
-            panic!("adding edge made graph cyclic:\n\
+            panic!(
+                "adding edge made graph cyclic:\n\
                    original_child: {original_child:?}\n\
                    original_parent: {original_parent:?}\n\
                    current child: {child:?}\n\
-                   current parent: {parent:?}");
+                   current parent: {parent:?}"
+            );
         }
         if child.height() >= parent.height() {
             self.add_unless_mem(parent.clone());

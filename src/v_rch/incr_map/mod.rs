@@ -20,7 +20,7 @@ where
     F: FnMut(&K, Incr<V>) -> Incr<V2>;
 impl<K, V, V2, F> Operator<K, V, V2> for MapOperator<K, V, V2, F>
 where
-    F: FnMut(&K, Incr<V>) -> Incr<V2>
+    F: FnMut(&K, Incr<V>) -> Incr<V2>,
 {
     type Output = V2;
     type Function = F;
@@ -39,7 +39,7 @@ where
     F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>;
 impl<K, V, V2, F> Operator<K, V, V2> for FilterMapOperator<K, V, V2, F>
 where
-    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>
+    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>,
 {
     type Output = Option<V2>;
     type Function = F;
@@ -52,4 +52,3 @@ where
         (self.0)(key, input)
     }
 }
-

@@ -17,18 +17,18 @@ mod state;
 mod syntax;
 mod var;
 
-use crate::v_rch::kind::{BindMainId, BindLhsId};
+use crate::v_rch::kind::{BindLhsId, BindMainId};
 use crate::v_rch::node::Incremental;
 use crate::{GraphvizDot, WeakState};
 
 use self::cutoff::Cutoff;
+use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use self::kind::Kind;
 use self::node::{ErasedNode, Node};
 use self::scope::Scope;
-use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use fmt::Debug;
 use refl::refl;
-use std::cell::{RefCell, Cell};
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::{Rc, Weak};
@@ -71,7 +71,7 @@ macro_rules! impl_cell_increment {
                 self.update_val(|x| x - 1)
             }
         }
-    }
+    };
 }
 impl_cell_increment!(i32);
 impl_cell_increment!(usize);
@@ -84,7 +84,9 @@ pub struct Incr<T> {
 
 impl<T> Clone for Incr<T> {
     fn clone(&self) -> Self {
-        Self { node: self.node.clone() }
+        Self {
+            node: self.node.clone(),
+        }
     }
 }
 
@@ -100,7 +102,7 @@ impl<T> PartialEq for Incr<T> {
     }
 }
 
-impl<T> Eq for Incr<T> { }
+impl<T> Eq for Incr<T> {}
 
 impl<T> Hash for Incr<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -397,7 +399,6 @@ where
 }
 
 impl<T: Value> Incr<T> {
-
     /// A convenience function for taking a function of type `fn(Incr<T>) -> Incr<R>` and
     /// applying it to self. This enables you to put your own functions
     /// into the middle of a chain of method calls on Incr.
@@ -463,7 +464,7 @@ impl<T: Value> Incr<T> {
                 let (r, didchange) = f(
                     old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
                     a,
-                    b
+                    b,
                 );
                 *oi = Some((a.clone(), b.clone()));
                 (r, didchange)
@@ -490,14 +491,14 @@ impl<T: Value> Incr<T> {
     ///
     /// Useful for advanced usage where you want to add manual dependencies with the
     /// `incremental::expert` constructs.
-    pub fn map_cyclic<R: Value>(&self, mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static) -> Incr<R>
-    {
+    pub fn map_cyclic<R: Value>(
+        &self,
+        mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static,
+    ) -> Incr<R> {
         let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
             let f = {
                 let weak = WeakIncr(node_weak.clone());
-                move |t: &T| {
-                    cyclic(weak.clone(), t)
-                }
+                move |t: &T| cyclic(weak.clone(), t)
             };
             let mapper = MapNode {
                 input: self.clone().node,
@@ -601,7 +602,7 @@ impl<T: Value> Incr<T> {
                     input_lhs_i2: refl(),
                     r_unit: refl(),
                 },
-                bind.clone()
+                bind.clone(),
             ),
         );
         let main = Node::<BindNodeMainGenerics<F, T, R>>::create_rc(
@@ -609,10 +610,12 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::BindMain(
                 BindMainId {
-                    rhs_r: refl(), input_rhs_i1: refl(), input_lhs_i2: refl()
+                    rhs_r: refl(),
+                    input_rhs_i1: refl(),
+                    input_lhs_i2: refl(),
                 },
                 bind.clone(),
-                lhs_change.clone()
+                lhs_change.clone(),
             ),
         );
         {
@@ -706,7 +709,10 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_map -> {}",
+            std::any::type_name::<T::OutputMap<V2>>()
+        )));
         i
     }
 
@@ -722,7 +728,10 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_filter_map -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_filter_map -> {}",
+            std::any::type_name::<T::OutputMap<V2>>()
+        )));
         i
     }
 
@@ -738,7 +747,10 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_mapi -> {}",
+            std::any::type_name::<T::OutputMap<V2>>()
+        )));
         i
     }
 
@@ -784,7 +796,10 @@ impl<T: Value> Incr<T> {
             }
         });
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_filter_mapi -> {}", std::any::type_name::<T::OutputMap<V2>>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_filter_mapi -> {}",
+            std::any::type_name::<T::OutputMap<V2>>()
+        )));
         i
     }
 
@@ -813,22 +828,26 @@ impl<T: Value> Incr<T> {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded: R = old_in.symmetric_fold(new_in, old_out, |mut acc, (key, difference)| {
-                    did_change = true;
-                    match difference {
-                        DiffElement::Left(value) => remove(acc, key, value),
-                        DiffElement::Right(value) => add(acc, key, value),
-                        DiffElement::Unequal(lv, rv) => {
-                            acc = remove(acc, key, lv);
-                            add(acc, key, rv)
+                let folded: R =
+                    old_in.symmetric_fold(new_in, old_out, |mut acc, (key, difference)| {
+                        did_change = true;
+                        match difference {
+                            DiffElement::Left(value) => remove(acc, key, value),
+                            DiffElement::Right(value) => add(acc, key, value),
+                            DiffElement::Unequal(lv, rv) => {
+                                acc = remove(acc, key, lv);
+                                add(acc, key, rv)
+                            }
                         }
-                    }
-                });
+                    });
                 (folded, did_change)
             }
         });
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!("incr_unordered_fold -> {}", std::any::type_name::<R>())));
+        i.node.set_graphviz_user_data(Box::new(format!(
+            "incr_unordered_fold -> {}",
+            std::any::type_name::<R>()
+        )));
         i
     }
 }
@@ -844,7 +863,7 @@ impl<T> DiffElement<T> {
 impl<T: Value> Incr<T> {
     pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
     where
-        F: for<'a> Fn(&'a T) -> &'a R + 'static
+        F: for<'a> Fn(&'a T) -> &'a R + 'static,
     {
         let state = self.node.state();
         let node = Node::<MapRefNode<F, T, R>>::create_rc(
@@ -897,10 +916,8 @@ where
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f
-            .debug_struct("MapRefNode")
+        f.debug_struct("MapRefNode")
             .field("did_change", &self.did_change.get())
             .finish()
     }
 }
-

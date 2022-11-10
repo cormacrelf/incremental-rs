@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::{cell::Cell, rc::Weak};
 
-use super::{Incr, CellIncrement};
+use super::{CellIncrement, Incr};
 use super::{NodeRef, Value};
 
 use self::ObserverState::*;
@@ -284,7 +284,10 @@ impl std::error::Error for ObserverError {}
 impl<T> Drop for InternalObserver<T> {
     fn drop(&mut self) {
         let count = Rc::strong_count(&self.observing.node);
-        tracing::warn!("dropping InternalObserver with id {:?}, observing node with strong_count {count}", self.id);
+        tracing::warn!(
+            "dropping InternalObserver with id {:?}, observing node with strong_count {count}",
+            self.id
+        );
         debug_assert!(matches!(self.state.get(), Disallowed | Unlinked));
     }
 }

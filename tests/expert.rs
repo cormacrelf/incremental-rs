@@ -1,15 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
-use incremental::{IncrState, Incr, expert::*, Value};
+use incremental::{expert::*, Incr, IncrState, Value};
 
 fn join<T: Value>(incr: Incr<Incr<T>>) -> Incr<T> {
     let prev_rhs: Rc<RefCell<Option<Dependency<T>>>> = Rc::new(None.into());
     let state = incr.state();
     let join = Node::<T, T>::new(&state, {
         let prev_rhs_ = prev_rhs.clone();
-        move || {
-            prev_rhs_.borrow().clone().unwrap().value_cloned()
-        }
+        move || prev_rhs_.borrow().clone().unwrap().value_cloned()
     });
     let join_ = join.weak();
     let lhs_change = incr.map(move |rhs| {
@@ -44,9 +42,7 @@ fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 's
     let state = incr.state();
     let join = Node::<R, R>::new(&state, {
         let prev_rhs_ = prev_rhs.clone();
-        move || {
-            prev_rhs_.borrow().clone().unwrap().value_cloned()
-        }
+        move || prev_rhs_.borrow().clone().unwrap().value_cloned()
     });
     let join_ = join.weak();
     let lhs_change = incr.map(move |input| {
@@ -64,4 +60,3 @@ fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 's
     join.add_dependency_unit(&lhs_change);
     join.watch()
 }
-

@@ -3,14 +3,17 @@ pub use debug::DebugWithDb;
 
 #[doc(hidden)]
 pub mod re_export {
-    pub use slotmap;
     pub use incremental;
+    pub use slotmap;
     pub use string_interner;
 }
 
 pub trait Indexed {
     type Storage: Default;
-    fn register(_incr: &::incremental::IncrState, _storage: &::std::rc::Rc<::std::cell::RefCell<Self::Storage>>) {
+    fn register(
+        _incr: &::incremental::IncrState,
+        _storage: &::std::rc::Rc<::std::cell::RefCell<Self::Storage>>,
+    ) {
         // default is not to register
     }
 }
@@ -35,7 +38,12 @@ impl InternedString {
 }
 
 impl<Db: ProviderFor<Self>> DebugWithDb<Db> for InternedString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>, db: &Db, _include_all_fields: bool) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        db: &Db,
+        _include_all_fields: bool,
+    ) -> std::fmt::Result {
         let storage = db.__storage__().borrow();
         let string = storage.resolve(self.0);
         write!(f, "{:?}", string)
@@ -168,7 +176,7 @@ macro_rules! tracked {
 
         paste::paste! {
             impl $crate::Indexed for $id {
-                type Storage = 
+                type Storage =
                     $crate::re_export::slotmap::SlotMap<$id, [<__ $id Data >]> ;
             }
             $vis struct [<__ $id Data >] {

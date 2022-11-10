@@ -1,8 +1,8 @@
 use std::time::Instant;
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use incremental::{IncrState, Observer, Incr, Var};
+use incremental::{Incr, IncrState, Observer, Var};
 
 #[derive(Clone, Copy)]
 enum SequenceKind {
@@ -14,23 +14,17 @@ enum SequenceKind {
 
 fn sequence(node: Incr<u64>, kind: SequenceKind, size: u64) -> Incr<u64> {
     match kind {
-        SequenceKind::Trivial => {
-            (0..size).into_iter().fold(node, |node, _| {
-                node.map(|val| val + 1)
-            })
-        }
-        SequenceKind::TrivialBind => {
-            (0..size).into_iter().fold(node, |node, _| {
-                node.binds(|incr, &val| incr.constant(val + 1))
-            })
-        }
-        SequenceKind::Recombine => {
-            (0..size).into_iter().fold(node, |node, _| {
-                let a = node.map(|x| x + 1);
-                let b = node.map(|x| x + 1);
-                (a % b).map(|a, b| a + b)
-            })
-        }
+        SequenceKind::Trivial => (0..size)
+            .into_iter()
+            .fold(node, |node, _| node.map(|val| val + 1)),
+        SequenceKind::TrivialBind => (0..size).into_iter().fold(node, |node, _| {
+            node.binds(|incr, &val| incr.constant(val + 1))
+        }),
+        SequenceKind::Recombine => (0..size).into_iter().fold(node, |node, _| {
+            let a = node.map(|x| x + 1);
+            let b = node.map(|x| x + 1);
+            (a % b).map(|a, b| a + b)
+        }),
         SequenceKind::Wide => {
             let double = |list: Vec<Incr<u64>>| -> Vec<Incr<_>> {
                 list.into_iter()
@@ -43,8 +37,7 @@ fn sequence(node: Incr<u64>, kind: SequenceKind, size: u64) -> Incr<u64> {
                     .collect()
             };
             let spread = (0..size).into_iter().fold(vec![node], |acc, _| double(acc));
-            reduce_balanced(&spread, |a, b| a.map2(b, |a, b| a + b))
-                .unwrap()
+            reduce_balanced(&spread, |a, b| a.map2(b, |a, b| a + b)).unwrap()
         }
     }
 }
@@ -52,8 +45,12 @@ fn sequence(node: Incr<u64>, kind: SequenceKind, size: u64) -> Incr<u64> {
 fn reduce_balanced<T: Clone>(slice: &[T], mut f: impl FnMut(&T, &T) -> T) -> Option<T> {
     fn reduce_balanced_inner<T: Clone>(slice: &[T], f: &mut impl FnMut(&T, &T) -> T) -> Option<T> {
         let size = slice.len();
-        if size == 0 { return None }
-        if size == 1 { return slice.first().cloned() }
+        if size == 0 {
+            return None;
+        }
+        if size == 1 {
+            return slice.first().cloned();
+        }
         let mid = size / 2;
         let left = reduce_balanced_inner(&slice[..mid], f).unwrap();
         let right = reduce_balanced_inner(&slice[mid..], f).unwrap();
