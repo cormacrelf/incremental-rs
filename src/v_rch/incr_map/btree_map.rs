@@ -150,15 +150,15 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                 drop(acc);
             }
         };
+
+        let mut prev_nodes = BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new();
+        let result_weak = result.weak();
+
         let lhs_change = lhs.map_cyclic({
-            let prev_map_ = prev_map;
-            let acc_ = acc;
-            let result = result.weak();
-            let mut prev_nodes = BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new();
             move |lhs_change, map| {
-                let mut prev_map = prev_map_.borrow_mut();
+                let mut prev_map_mut = prev_map.borrow_mut();
                 let new_nodes =
-                    prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
+                    prev_map_mut.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
                         match diff {
                             DiffElement::Unequal(_, _) => {
                                 let (node, dep) = nodes.get(key).unwrap();
@@ -170,8 +170,8 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                                 // running remove_dependency will cause node's weak ref to die.
                                 // so we upgrade it first.
                                 let node = node.upgrade().unwrap();
-                                result.remove_dependency(dep);
-                                let mut acc = acc_.borrow_mut();
+                                result_weak.remove_dependency(dep);
+                                let mut acc = acc.borrow_mut();
                                 acc.remove(key);
                                 // Invalidate does have to happen after remove_dependency.
                                 node.invalidate();
@@ -181,7 +181,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                                 let key = key.clone();
                                 let node = Node::<V>::new(&state, {
                                     let key_ = key.clone();
-                                    let prev_map_ = prev_map_.clone();
+                                    let prev_map_ = prev_map.clone();
                                     move || {
                                         let prev_map = prev_map_.borrow();
                                         prev_map.get(&key_).unwrap().clone()
@@ -193,7 +193,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                                 let lhs_change = lhs_change.upgrade().unwrap();
                                 node.add_dependency_unit(&lhs_change);
                                 let mapped = f.call_fn(&key, node.watch());
-                                let user_function_dep = result.add_dependency_with(&mapped, {
+                                let user_function_dep = result_weak.add_dependency_with(&mapped, {
                                     let key = key.clone();
                                     let on_inner_change = on_inner_change.clone();
                                     move |v| on_inner_change(&key, v)
@@ -203,7 +203,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                             }
                         }
                     });
-                *prev_map = map.clone();
+                *prev_map_mut = map.clone();
             }
         });
         result.add_dependency_unit(&lhs_change);

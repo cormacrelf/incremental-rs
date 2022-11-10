@@ -305,6 +305,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         use crate::expert::{Dependency, Node, WeakNode};
         let state = self.state();
         let lhs = self;
+        let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
         let acc = Rc::new(RefCell::new(OrdMap::new()));
         let result = Node::<OrdMap<K, V2>, O::Output>::new(&state, {
             let acc_ = acc.clone();
@@ -326,17 +327,15 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                 drop(acc);
             }
         };
-        let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
+        let mut prev_nodes = OrdMap::<K, (WeakNode<_, _>, Dependency<_>)>::new();
+        let result_weak = result.weak();
+
         // this one is just moved into the closure
         let lhs_change = lhs.map_cyclic({
-            let prev_map_ = prev_map;
-            let acc_ = acc;
-            let result = result.weak();
-            let mut prev_nodes = OrdMap::<K, (WeakNode<_, _>, Dependency<_>)>::new();
             move |lhs_change, map| {
-                let mut prev_map = prev_map_.borrow_mut();
+                let mut prev_map_mut = prev_map.borrow_mut();
                 let new_nodes =
-                    prev_map.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
+                    prev_map_mut.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
                         match diff {
                             DiffElement::Unequal(_, _) => {
                                 let (node, _dep) = nodes.get(key).unwrap();
@@ -348,8 +347,8 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                 // remove_dependency will cause node's weak ref to die.
                                 // so we upgrade it first.
                                 let node = node.upgrade().unwrap();
-                                result.remove_dependency(dep);
-                                let mut acc = acc_.borrow_mut();
+                                result_weak.remove_dependency(dep);
+                                let mut acc = acc.borrow_mut();
                                 acc.remove(key);
                                 // Invalidate does have to happen after remove_dependency.
                                 node.invalidate();
@@ -359,7 +358,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                 let key = key.clone();
                                 let node = Node::<V>::new(&state, {
                                     let key_ = key.clone();
-                                    let prev_map_ = prev_map_.clone();
+                                    let prev_map_ = prev_map_mut.clone();
                                     move || {
                                         let prev_map = prev_map_.borrow();
                                         prev_map.get(&key_).unwrap().clone()
@@ -371,7 +370,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                 let lhs_change = lhs_change.upgrade().unwrap();
                                 node.add_dependency_unit(&lhs_change);
                                 let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
-                                let user_function_dep: Dependency<O::Output> = result
+                                let user_function_dep: Dependency<O::Output> = result_weak
                                     .add_dependency_with(&mapped, {
                                         let key = key.clone();
                                         let on_inner_change = on_inner_change.clone();
@@ -382,7 +381,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                             }
                         }
                     });
-                *prev_map = map.clone();
+                *prev_map_mut = map.clone();
             }
         });
         result.add_dependency_unit(&lhs_change);
