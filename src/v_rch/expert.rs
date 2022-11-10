@@ -237,7 +237,7 @@ pub mod public {
     }
     impl<T> PartialEq for Dependency<T> {
         fn eq(&self, other: &Self) -> bool {
-            Weak::ptr_eq(&self.edge, &other.edge)
+            crate::weak_thin_ptr_eq(&self.edge, &other.edge)
         }
     }
 

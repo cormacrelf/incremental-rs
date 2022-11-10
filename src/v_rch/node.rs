@@ -852,7 +852,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let rhs = f(&lhs);
                     *state.current_scope.borrow_mut() = old_scope;
                     // Check that the returned RHS node is from the same world.
-                    assert!(Weak::ptr_eq(rhs.node.weak_state(), &state.weak_self));
+                    assert!(crate::weak_thin_ptr_eq(
+                        rhs.node.weak_state(),
+                        &state.weak_self
+                    ));
                     rhs
                 };
 
@@ -980,7 +983,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let Some(upgraded) = child.upgrade() else { return false };
         let mut any = false;
         self.foreach_child(&mut |_ix, child| {
-            any = any || crate::rc_fat_ptr_eq(&child, &upgraded);
+            any = any || crate::rc_thin_ptr_eq(&child, &upgraded);
         });
         any
     }

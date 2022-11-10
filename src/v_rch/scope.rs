@@ -13,7 +13,7 @@ impl Scope {
         match self {
             Scope::Top => matches!(other, Scope::Top),
             Scope::Bind(w1) => match other {
-                Scope::Bind(w2) => Weak::ptr_eq(w1, w2),
+                Scope::Bind(w2) => crate::weak_thin_ptr_eq(w1, w2),
                 _ => false,
             },
         }

@@ -8,7 +8,7 @@ mod order;
 mod v1;
 mod v_rch;
 
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub use v_rch::public::*;
 
@@ -24,8 +24,13 @@ pub trait Invariant {
 /// Probably don't use this for traits implemented by ZSTs... but there is no
 /// good way to do pointer equality in that case anyway, without any allocations to
 /// compare.
-pub(crate) fn rc_fat_ptr_eq<T: ?Sized>(one: &Rc<T>, two: &Rc<T>) -> bool {
+pub(crate) fn rc_thin_ptr_eq<T: ?Sized>(one: &Rc<T>, two: &Rc<T>) -> bool {
     let one_: *const () = Rc::as_ptr(one).cast();
     let two_: *const () = Rc::as_ptr(two).cast();
+    one_ == two_
+}
+pub(crate) fn weak_thin_ptr_eq<T: ?Sized>(one: &Weak<T>, two: &Weak<T>) -> bool {
+    let one_: *const () = Weak::as_ptr(one).cast();
+    let two_: *const () = Weak::as_ptr(two).cast();
     one_ == two_
 }

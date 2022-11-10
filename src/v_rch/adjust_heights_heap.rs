@@ -99,7 +99,7 @@ impl AdjustHeightsHeap {
     ) {
         debug_assert!(child.is_necessary());
         debug_assert!(parent.is_necessary());
-        if crate::rc_fat_ptr_eq(parent, original_child) {
+        if crate::rc_thin_ptr_eq(parent, original_child) {
             panic!(
                 "adding edge made graph cyclic:\n\
                    original_child: {original_child:?}\n\

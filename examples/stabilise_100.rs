@@ -4,6 +4,7 @@ use std::time::Instant;
 const NODE_COUNT: u64 = 50;
 const ITER_COUNT: u64 = 500000;
 
+#[allow(dead_code)]
 fn using_map(mut node: Incr<u64>) -> Incr<u64> {
     for _ in 0..NODE_COUNT {
         node = node.map(|val| val + 1);
@@ -11,6 +12,7 @@ fn using_map(mut node: Incr<u64>) -> Incr<u64> {
     node
 }
 
+#[allow(dead_code)]
 fn using_bind(mut node: Incr<u64>) -> Incr<u64> {
     for _ in 0..NODE_COUNT {
         node = node.binds(move |incr, &val| incr.constant(val + 1));

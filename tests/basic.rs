@@ -726,7 +726,7 @@ fn test_constant() {
 }
 
 #[test]
-#[should_panic = "assertion failed: Weak::ptr_eq"]
+#[should_panic = "ptr_eq"]
 fn two_worlds() {
     let one = IncrState::new();
     let two = IncrState::new();
@@ -1123,7 +1123,7 @@ fn test_map_ref() {
 fn map_with_old() {
     let incr = IncrState::new();
     let v = incr.var(10);
-    let m = v
+    let _ = v
         .map_with_old(|old, input| {
             tracing::warn!("old {old:?} <- input {input:?}");
             (input + 1, false)

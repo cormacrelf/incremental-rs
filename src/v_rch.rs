@@ -136,7 +136,7 @@ impl<T> Clone for WeakIncr<T> {
 
 impl<T> Incr<T> {
     pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
-        crate::rc_fat_ptr_eq(&self.node, &other.node)
+        crate::rc_thin_ptr_eq(&self.node, &other.node)
     }
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
