@@ -133,7 +133,7 @@ fn test_merge() {
         1 => Both("a", "one"), 2 => Both("b", "two"), 3 => Both("c", "three")
     }));
 
-    o1.update(|map| {
+    o1.modify(|map| {
         map.remove(&2);
         map.insert(3, "replaced");
         map.insert(4, "added");

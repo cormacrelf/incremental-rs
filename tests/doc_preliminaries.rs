@@ -81,7 +81,7 @@ mod projections_and_cutoffs {
         // We don't have the problem with "newly allocated tuples" having
         // different pointer addresses. The default cutoff comparator in
         // incremental-rs is PartialEq.
-        z.update(|z| z.b = (1, 4));
+        z.modify(|z| z.b = (1, 4));
 
         let diff = stabilise_diff(&incr, "after updating z.b but with no actual change");
         assert!(matches!(
@@ -95,7 +95,7 @@ mod projections_and_cutoffs {
         ));
 
         assert_eq!(result.expect_value(), 10);
-        z.update(|z| z.b = (5, 6));
+        z.modify(|z| z.b = (5, 6));
 
         let diff = stabilise_diff(&incr, "after updating z.b");
         assert!(matches!(
@@ -153,7 +153,7 @@ mod projections_and_cutoffs {
             }
         ));
 
-        z.update(|z| z.b = (5, 6));
+        z.modify(|z| z.b = (5, 6));
 
         let diff = stabilise_diff(&incr, "after updating z.b");
         assert!(matches!(

@@ -1,21 +1,21 @@
 use core::fmt::Debug;
-use std::cell::{RefMut, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::fmt;
+use std::hash::Hash;
 use std::ops::{Deref, Sub};
 use std::rc::{Rc, Weak};
 
 pub use super::cutoff::Cutoff;
+pub use super::expert::public as expert;
+pub use super::incr_map::symmetric_fold::DiffElement;
+pub use super::incr_map::symmetric_fold::MergeElement;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
 pub use super::node::GraphvizDot;
 pub use super::node_update::NodeUpdate;
 pub use super::Incr;
-pub use super::WeakIncr;
 pub use super::Value;
-pub use super::incr_map::symmetric_fold::MergeElement;
-pub use super::incr_map::symmetric_fold::DiffElement;
-pub use super::expert::public as expert;
+pub use super::WeakIncr;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
@@ -140,9 +140,38 @@ impl<T: Value> Var<T> {
     pub fn set(&self, value: T) {
         self.internal.set(value)
     }
+    /// Takes the current value, replaces it using the function provided,
+    /// and queues a recompute.
+    ///
+    /// Must be `T: Default` as we need to move out of the stored value, and
+    /// `std::mem::take` lets us avoid cloning.
     #[inline]
-    pub fn update(&self, f: impl FnOnce(&mut T)) {
+    pub fn update(&self, f: impl FnOnce(T) -> T)
+    where
+        T: Default,
+    {
         self.internal.update(f)
+    }
+
+    /// Like `RefCell::replace_with`. You get a mutable reference to the old
+    /// value, your closure returns a new one, and you get back the old value
+    /// (with any modifications you made to it during the closure).
+    #[inline]
+    pub fn replace_with(&self, f: impl FnOnce(&mut T) -> T) -> T {
+        self.internal.replace_with(|mutable| f(mutable))
+    }
+
+    /// Like `RefCell::replace`.
+    #[inline]
+    pub fn replace(&self, value: T) -> T {
+        self.internal.replace_with(|_| value)
+    }
+
+    /// Gives you a mutable reference to the variable, you do what you wish,
+    /// and afterwards queues a recompute.
+    #[inline]
+    pub fn modify(&self, f: impl FnOnce(&mut T)) {
+        self.internal.modify(f);
     }
     #[inline]
     pub fn get(&self) -> T {
@@ -200,14 +229,20 @@ impl Drop for IncrState {
 
 impl IncrState {
     pub fn new() -> Self {
-        Self { inner: State::new() }
+        Self {
+            inner: State::new(),
+        }
     }
     pub fn new_with_height(max_height: usize) -> Self {
-        Self { inner: State::new_with_height(max_height) }
+        Self {
+            inner: State::new_with_height(max_height),
+        }
     }
 
     pub fn weak(&self) -> WeakState {
-        WeakState { inner: Rc::downgrade(&self.inner) }
+        WeakState {
+            inner: Rc::downgrade(&self.inner),
+        }
     }
 
     pub fn add_weak_map<S: WeakMap + 'static>(&self, weak_map: Rc<RefCell<S>>) {
@@ -216,9 +251,8 @@ impl IncrState {
 
     pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static, T: Value>(
         &self,
-        f: impl Fn(I) -> Incr<T> + Clone
+        f: impl Fn(I) -> Incr<T> + Clone,
     ) -> impl Fn(I) -> Incr<T> + Clone {
-
         // // we define this inside the generic function.
         // // so it's a new type for every T!
         // slotmap::new_key_type! { struct TKey; }
@@ -233,7 +267,7 @@ impl IncrState {
                 let occ = storage_.get(&i).unwrap();
                 let incr = occ.upgrade();
                 if let Some(found_strong) = incr {
-                    return found_strong
+                    return found_strong;
                 }
             }
             // don't want f to get a BorrowMutError if it's recursive
@@ -241,7 +275,7 @@ impl IncrState {
             let val = f(i.clone());
             let mut storage_ = storage.borrow_mut();
             storage_.insert(i, val.weak());
-            return val
+            return val;
         }
     }
 
@@ -294,7 +328,7 @@ impl IncrState {
 /// Type to avoid Rc cyles on IncrState
 #[derive(Debug, Clone)]
 pub struct WeakState {
-    pub(crate) inner: Weak<State>
+    pub(crate) inner: Weak<State>,
 }
 impl WeakState {
     pub fn ptr_eq(&self, other: &Self) -> bool {
@@ -316,24 +350,29 @@ impl WeakState {
     }
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
-        where
+    where
         F: FnMut(R, &T) -> R + 'static,
     {
         self.inner.upgrade().unwrap().fold(vec, init, f)
     }
 
     pub fn var<T: Value>(&self, value: T) -> Var<T> {
-        self.inner.upgrade().unwrap().var_in_scope(value, Scope::Top)
+        self.inner
+            .upgrade()
+            .unwrap()
+            .var_in_scope(value, Scope::Top)
     }
 
     pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
-        self.inner.upgrade().unwrap().var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
+        self.inner
+            .upgrade()
+            .unwrap()
+            .var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
     }
 
     // pub fn unsubscribe(&self, token: SubscriptionToken) {
     //     self.inner.upgrade().unwrap().unsubscribe(token)
     // }
-
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -471,4 +510,3 @@ impl<K: slotmap::Key, V> WeakMap for WeakSlotMap<K, V> {
         slotmap::HopSlotMap::capacity(self)
     }
 }
-

@@ -639,9 +639,23 @@ fn var_update_simple() {
     let o = var.observe();
     incr.stabilise();
     assert_eq!(o.value(), Ok(10));
-    var.update(|x| *x += 10);
+    var.update(|x| x + 10);
     incr.stabilise();
     assert_eq!(o.value(), Ok(20));
+    var.modify(|x| *x += 10);
+    incr.stabilise();
+    assert_eq!(o.value(), Ok(30));
+    let old = var.replace(40);
+    incr.stabilise();
+    assert_eq!(old, 30);
+    assert_eq!(o.value(), Ok(40));
+    let old = var.replace_with(|old| {
+        *old += 5;
+        *old + 5
+    });
+    incr.stabilise();
+    assert_eq!(old, 45);
+    assert_eq!(o.value(), Ok(50));
 }
 
 #[test]
@@ -651,7 +665,7 @@ fn var_update_during_stabilisation() {
     let var_ = var.clone();
     let o = var
         .map(move |&x| {
-            var_.update(|y| *y += 1);
+            var_.modify(|y| *y += 1);
             x
         })
         .observe();
@@ -678,7 +692,7 @@ fn var_update_before_set_during_stabilisation() {
             x
         })
         .observe();
-    var.update(|x| *x += 1);
+    var.modify(|x| *x += 1);
     incr.stabilise();
     assert_eq!(o.value(), Ok(11));
     incr.stabilise();
@@ -1097,11 +1111,11 @@ fn test_map_ref() {
 
     incr.stabilise();
 
-    var.update(|v| v.other = 10);
+    var.modify(|v| v.other = 10);
     incr.stabilise();
-    var.update(|v| v.other = 20);
+    var.modify(|v| v.other = 20);
     incr.stabilise();
-    var.update(|v| v.string += ", world");
+    var.modify(|v| v.string += ", world");
     incr.stabilise();
 }
 
@@ -1134,7 +1148,6 @@ fn map_with_old_map_ref() {
             let v = *input;
             (v, old.map_or(true, |o| o != v))
         })
-
         // problem: map_with_old doesn't keep its old value.
         // so how are we supposed to compare them in
         // child_changed on map_ref?
@@ -1156,12 +1169,18 @@ fn map_with_old_map_ref() {
     v.set((10, 30));
     incr.stabilise();
     assert_eq!(*counter, 2);
-    v.update(|_| {});
+    v.modify(|_| {});
     incr.stabilise();
-    assert_eq!(*counter, 2, "as long as map_with_old doesn't actually change, it cuts off right");
+    assert_eq!(
+        *counter, 2,
+        "as long as map_with_old doesn't actually change, it cuts off right"
+    );
     v.set((20, 30));
     incr.stabilise();
-    assert_eq!(*counter, 2, "should not execute map_ref, since the original map node was cut off.");
+    assert_eq!(
+        *counter, 2,
+        "should not execute map_ref, since the original map node was cut off."
+    );
 }
 
 #[test]

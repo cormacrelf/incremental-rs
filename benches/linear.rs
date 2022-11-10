@@ -106,7 +106,7 @@ fn bench_node(c: &mut Criterion, kind: SequenceKind, size: u64) {
         b.iter_custom(|iters| {
             let start = Instant::now();
             for _ in 0..iters {
-                var.update(|x| *x += 1);
+                var.update(|x| x + 1);
                 incr.stabilise();
                 drop(obs.expect_value());
             }

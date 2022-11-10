@@ -75,7 +75,9 @@ fn test_index_by() {
     let var = incr.var(OrdMap::<i32, String>::default());
     let o = index_by(var.watch(), |x| x.to_uppercase()).observe();
     let insert = |k: i32, val: &str| {
-        var.update(|map| { map.insert(k, val.to_string()); });
+        var.modify(|map| {
+            map.insert(k, val.to_string());
+        });
         incr.stabilise();
         o.expect_value()
     };

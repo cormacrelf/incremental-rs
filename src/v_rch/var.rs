@@ -87,7 +87,68 @@ impl<T: Value> Var<T> {
         self.value.borrow().clone()
     }
 
-    pub(crate) fn update(self: &Rc<Self>, f: impl FnOnce(&mut T)) {
+    pub(crate) fn update(self: &Rc<Self>, f: impl FnOnce(T) -> T)
+    where
+        T: Default,
+    {
+        let t = self.state.upgrade().unwrap();
+        match t.status.get() {
+            IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {
+                {
+                    let mut value = self.value.borrow_mut();
+                    // T: Default. So we can save a clone by writing e.g. an empty vec or map in there.
+                    let taken = std::mem::take(&mut *value);
+                    *value = f(taken);
+                }
+                self.did_set_var_while_not_stabilising();
+            }
+            IncrStatus::Stabilising => {
+                let mut delayed_slot = self.value_set_during_stabilisation.borrow_mut();
+                if let Some(delayed) = &mut *delayed_slot {
+                    // T: Default. So we can save a clone by writing e.g. an empty vec or map in there.
+                    let taken = std::mem::take(delayed);
+                    *delayed = f(taken);
+                } else {
+                    let mut stack = t.set_during_stabilisation.borrow_mut();
+                    stack.push(self.erased());
+                    // we have to clone, because we don't want to mem::take the value
+                    // that some nodes might still need to read during this stabilisation.
+                    let cloned = (*self.value.borrow()).clone();
+                    delayed_slot.replace(f(cloned));
+                }
+            }
+        };
+    }
+
+    pub(crate) fn replace_with(self: &Rc<Self>, f: impl FnOnce(&mut T) -> T) -> T {
+        let t = self.state.upgrade().unwrap();
+        match t.status.get() {
+            IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {
+                let old = {
+                    let v = &mut *self.value.borrow_mut();
+                    let new = f(v);
+                    std::mem::replace(v, new)
+                };
+                self.did_set_var_while_not_stabilising();
+                old
+            }
+            IncrStatus::Stabilising => {
+                let mut v = self.value_set_during_stabilisation.borrow_mut();
+                if let Some(v) = &mut *v {
+                    let new = f(v);
+                    std::mem::replace(v, new)
+                } else {
+                    let mut stack = t.set_during_stabilisation.borrow_mut();
+                    stack.push(self.erased());
+                    let mut cloned = (*self.value.borrow()).clone();
+                    let new = f(&mut cloned);
+                    std::mem::replace(&mut cloned, new)
+                }
+            }
+        }
+    }
+
+    pub(crate) fn modify(self: &Rc<Self>, f: impl FnOnce(&mut T)) {
         let t = self.state.upgrade().unwrap();
         match t.status.get() {
             IncrStatus::NotStabilising | IncrStatus::RunningOnUpdateHandlers => {
@@ -111,6 +172,7 @@ impl<T: Value> Var<T> {
             }
         };
     }
+
     pub(crate) fn set(self: &Rc<Self>, value: T) {
         let t = self.state.upgrade().unwrap();
         match t.status.get() {
@@ -135,6 +197,7 @@ impl<T: Value> Var<T> {
         }
         self.did_set_var_while_not_stabilising();
     }
+
     fn did_set_var_while_not_stabilising(&self) {
         let Some(watch) = self.node.borrow().clone() else {
             panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
