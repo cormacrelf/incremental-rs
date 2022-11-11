@@ -283,6 +283,12 @@ impl IncrState {
         }
     }
 
+    /// Returns true if there is nothing to do. In particular, this allows you to
+    /// find a fixed point in a computation that sets variables during stabilisation.
+    pub fn is_stable(&self) -> bool {
+        self.inner.is_stable()
+    }
+
     pub fn stabilise(&self) {
         self.inner.stabilise();
     }

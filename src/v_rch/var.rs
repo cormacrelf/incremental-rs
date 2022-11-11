@@ -133,16 +133,18 @@ impl<T: Value> Var<T> {
                 old
             }
             IncrStatus::Stabilising => {
-                let mut v = self.value_set_during_stabilisation.borrow_mut();
-                if let Some(v) = &mut *v {
-                    let new = f(v);
-                    std::mem::replace(v, new)
+                let mut delayed_slot = self.value_set_during_stabilisation.borrow_mut();
+                if let Some(delayed) = &mut *delayed_slot {
+                    let new = f(delayed);
+                    std::mem::replace(delayed, new)
                 } else {
                     let mut stack = t.set_during_stabilisation.borrow_mut();
                     stack.push(self.erased());
                     let mut cloned = (*self.value.borrow()).clone();
                     let new = f(&mut cloned);
-                    std::mem::replace(&mut cloned, new)
+                    let old = std::mem::replace(&mut cloned, new);
+                    delayed_slot.replace(cloned);
+                    old
                 }
             }
         }

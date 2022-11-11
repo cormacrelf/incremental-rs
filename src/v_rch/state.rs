@@ -317,6 +317,12 @@ impl State {
         self.status.set(IncrStatus::NotStabilising);
     }
 
+    pub(crate) fn is_stable(&self) -> bool {
+        self.recompute_heap.is_empty()
+            && self.dead_vars.borrow().is_empty()
+            && self.new_observers.borrow().is_empty()
+    }
+
     pub(crate) fn stabilise(&self) {
         let span = tracing::info_span!("stabilise");
         span.in_scope(|| {

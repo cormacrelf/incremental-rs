@@ -62,6 +62,14 @@ impl RecomputeHeap {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.length.get()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.length.get() == 0
+    }
+
     pub fn clear(&self) {
         for q in self.queues.borrow().iter() {
             q.borrow_mut().clear();
