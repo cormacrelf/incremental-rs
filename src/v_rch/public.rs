@@ -140,6 +140,12 @@ impl<T: Value> Var<T> {
     pub fn set(&self, value: T) {
         self.internal.set(value)
     }
+
+    #[inline]
+    pub fn was_changed_during_stabilisation(&self) -> bool {
+        self.internal.was_changed_during_stabilisation()
+    }
+
     /// Takes the current value, replaces it using the function provided,
     /// and queues a recompute.
     ///

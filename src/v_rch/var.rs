@@ -87,6 +87,13 @@ impl<T: Value> Var<T> {
         self.value.borrow().clone()
     }
 
+    pub(crate) fn was_changed_during_stabilisation(&self) -> bool {
+        self.value_set_during_stabilisation
+            .borrow()
+            .as_ref()
+            .map_or(false, |during| self.value.borrow().ne(during))
+    }
+
     pub(crate) fn update(self: &Rc<Self>, f: impl FnOnce(T) -> T)
     where
         T: Default,

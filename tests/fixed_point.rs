@@ -95,7 +95,6 @@ fn iterated() {
     let fixed_point = FixedPointIter::new(&incr, observer);
     let value = fixed_point.iterate();
     assert_eq!(value, 0);
-    panic!();
 }
 
 #[test]
@@ -113,7 +112,6 @@ fn dependencies() {
         incr.stabilise();
     }
     assert_eq!(observer.expect_value(), 1);
-    panic!();
 }
 
 fn using_cutoff<T: Value>(
@@ -234,7 +232,6 @@ fn dependencies_using_cutoff_iterated() {
     assert_eq!(map_observer.expect_value(), 1);
     // this time we didn't fire until tillzero had settled.
     assert_eq!(cell.get(), 1);
-    panic!();
 }
 
 #[test]
