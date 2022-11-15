@@ -1,8 +1,6 @@
 //! Traits and types for partially ordered sets.
 #![allow(dead_code)]
 
-use serde::{Deserialize, Serialize};
-
 /// A type that is partially ordered.
 ///
 /// This trait is distinct from Rust's `PartialOrd` trait, because the implementation
@@ -101,18 +99,7 @@ use std::fmt::{Debug, Error, Formatter};
 ///
 /// We use `Product` rather than `(TOuter, TInner)` so that we can derive our own `PartialOrd`,
 /// because Rust just uses the lexicographic total order.
-#[derive(
-    /* Abomonation, */ Copy,
-    Clone,
-    Hash,
-    Eq,
-    PartialEq,
-    Default,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-)]
+#[derive(/* Abomonation, */ Copy, Clone, Hash, Eq, PartialEq, Default, Ord, PartialOrd)]
 pub struct Product<TOuter, TInner> {
     /// Outer timestamp.
     pub outer: TOuter,
