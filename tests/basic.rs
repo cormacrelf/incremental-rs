@@ -164,6 +164,7 @@ fn create_var_in_bind() {
     lhs.set(false);
     incr.stabilise();
     assert_eq!(o.value(), Ok(9));
+    o.save_dot_to_file("create_var_in_bind.dot");
 }
 
 #[test]
@@ -360,6 +361,7 @@ fn bind_fold() {
     assert_eq!(obs.value(), Ok(60));
 
     v1.set(40);
+    obs.debug_stabilise(&incr, "bind_fold");
     incr.stabilise();
     obs.save_dot_to_file("bind_fold.dot");
 

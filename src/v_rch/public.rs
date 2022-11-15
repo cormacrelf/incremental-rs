@@ -75,6 +75,13 @@ impl<T: Value> Observer<T> {
             .save_to_file(named)
             .unwrap();
     }
+
+    #[doc(hidden)]
+    pub fn debug_stabilise(&self, state: &IncrState, prefix: &str) {
+        state
+            .inner
+            .stabilise_debug(Some(self.internal.observing()), prefix)
+    }
 }
 
 impl<T: Value> Drop for Observer<T> {
@@ -136,6 +143,7 @@ impl<T: Value> Var<T> {
             sentinel: Rc::new(()),
         }
     }
+
     #[inline]
     pub fn set(&self, value: T) {
         self.internal.set(value)

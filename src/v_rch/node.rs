@@ -10,12 +10,12 @@ use super::internal_observer::{InternalObserver, ObserverId};
 use super::kind::{Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
-use super::state::State;
+use super::state::{IncrStatus, State};
 use super::{Incr, Map2Node, MapNode, MapRefNode, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::any::Any;
 use std::cell::Ref;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{self, Display, Write};
 use std::rc::Weak;
 
@@ -440,6 +440,7 @@ pub(crate) trait ErasedNode: Debug {
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result;
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
+    fn dot_was_recomputed(&self, state: &State) -> bool;
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
@@ -486,7 +487,11 @@ pub(crate) trait ErasedNode: Debug {
     fn packed(&self) -> NodeRef;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
     fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef));
-    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef));
+    fn iter_descendants_internal(
+        &self,
+        seen: &mut HashMap<NodeId, i32>,
+        f: &mut dyn FnMut(&NodeRef),
+    );
     fn recomputed_at(&self) -> &Cell<StabilisationNum>;
     fn changed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate_node(&self, state: &State);
@@ -1091,12 +1096,16 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
     fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef)) {
-        let mut seen = HashSet::new();
+        let mut seen = HashMap::new();
         self.iter_descendants_internal(&mut seen, f)
     }
-    fn iter_descendants_internal(&self, seen: &mut HashSet<NodeId>, f: &mut dyn FnMut(&NodeRef)) {
-        if !seen.contains(&self.id) {
-            seen.insert(self.id);
+    fn iter_descendants_internal(
+        &self,
+        seen: &mut HashMap<NodeId, i32>,
+        f: &mut dyn FnMut(&NodeRef),
+    ) {
+        if !seen.contains_key(&self.id) {
+            seen.insert(self.id, self.height.get());
             f(&self.packed());
             self.foreach_child(&mut |_ix, child| child.iter_descendants_internal(seen, f))
         }
@@ -1106,19 +1115,21 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
             writeln!(f, "{:?}", user)?;
         }
+        let h = self.height.get();
         match &self.kind {
-            Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?})"),
+            Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?}) @ {h}"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
             Kind::Map(_) => write!(f, "Map"),
             Kind::MapRef(_) => write!(f, "MapRef"),
             Kind::MapWithOld(_) => write!(f, "MapWithOld"),
             Kind::Map2(_) => write!(f, "Map2"),
-            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange"),
+            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange @ {h}"),
             Kind::BindMain(..) => write!(f, "BindMain"),
             Kind::Expert(..) => write!(f, "Expert"),
         }?;
         write!(f, "({id:?})")?;
+        write!(f, " @ {h}")?;
         if let Some(val) = self.value_as_ref() {
             write!(f, " => {:?}", val)?;
         }
@@ -1134,6 +1145,13 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
+    fn dot_was_recomputed(&self, state: &State) -> bool {
+        let r = state.stabilisation_num.get();
+        match state.status.get() {
+            IncrStatus::NotStabilising => self.recomputed_at.get().add1() == r,
+            _ => self.recomputed_at.get() == r,
+        }
+    }
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
         let node = self;
         write!(f, "  {} [", name)?;
@@ -1143,10 +1161,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let mut buf = String::new();
         node.dot_label(&mut buf)?;
         write!(f, "{:?}", buf)?;
-        if node.recomputed_at().get().add1() < r {
-            write!(f, ", color=grey, fontcolor=grey")?;
+        if node.is_in_recompute_heap() {
+            write!(f, ", fillcolor=3, style=filled")?;
+        } else if node.dot_was_recomputed(&t) {
+            write!(f, ", fillcolor=6, style=filled")?;
         } else {
-            write!(f, ", style=bold")?;
+            write!(f, ", fillcolor=5, style=filled")?;
         }
         match node.kind {
             Kind::Var(..) => {
@@ -1169,40 +1189,52 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             f,
             r#"rankdir = BT
                        graph [fontname = "Courier"];
-                       node [fontname = "Courier", shape=box];
-                       edge [fontname = "Courier"];"#
+                       node [fontname = "Courier", shape=box, colorscheme=rdylbu7];
+                       edge [fontname = "Courier", colorscheme=rdylbu7];"#
         )?;
         let mut bind_edges = vec![];
-        let mut seen = HashSet::new();
-        let r = self.state().stabilisation_num.get();
+        let mut seen = HashMap::new();
+        let t = self.state();
         self.iter_descendants_internal(&mut seen, &mut |node| {
             let name = node_name(node);
             node.dot_node(f, &name).unwrap();
             node.foreach_child(&mut |_, child| {
                 writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
-                if child.recomputed_at().get().add1() < r {
-                    write!(f, " [color=grey]").unwrap();
-                } else {
-                    write!(f, " [style=bold]").unwrap();
+                if child.dot_was_recomputed(&t) {
+                    write!(f, " [color=4]").unwrap();
                 }
                 writeln!(f).unwrap();
             });
             node.dot_add_bind_edges(&mut bind_edges);
         });
         for (bind, rhs) in bind_edges {
-            if seen.contains(&rhs.id()) {
+            if seen.contains_key(&rhs.id()) {
                 writeln!(
                     f,
                     "  {} -> {} [style=dashed{}]",
                     node_name(&bind),
                     node_name(&rhs),
-                    if bind.recomputed_at().get().add1() < r {
-                        ", color=grey"
+                    if bind.dot_was_recomputed(&t) {
+                        ", color=4"
                     } else {
                         ""
                     }
                 )?;
             }
+        }
+        let mut by_height: HashMap<i32, Vec<NodeId>> = HashMap::new();
+        let mut min_height = i32::MAX;
+        for (node_id, height) in seen {
+            by_height.entry(height).or_default().push(node_id);
+            min_height = min_height.min(height);
+        }
+        for (height, nodes) in by_height {
+            let rank = if height == min_height { "min" } else { "same" };
+            writeln!(f, "{{ rank={:?}; ", rank)?;
+            for id in nodes {
+                writeln!(f, "{};", id.0)?;
+            }
+            writeln!(f, "}}")?;
         }
         writeln!(f, "}}")?;
         Ok(())

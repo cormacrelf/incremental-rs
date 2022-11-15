@@ -2,7 +2,7 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
-use crate::{SubscriptionToken, WeakMap};
+use crate::{GraphvizDot, SubscriptionToken, WeakMap};
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
@@ -324,21 +324,42 @@ impl State {
     }
 
     pub(crate) fn stabilise(&self) {
+        self.stabilise_debug(None, "")
+    }
+
+    pub(crate) fn stabilise_debug(&self, root_node: Option<NodeRef>, prefix: &str) {
         let span = tracing::info_span!("stabilise");
         span.in_scope(|| {
             assert_eq!(self.status.get(), IncrStatus::NotStabilising);
             let mut stdout = std::io::stdout();
             stdout.flush().unwrap();
             self.stabilise_start();
+            let mut iterations = 0;
+            let buf = &mut String::new();
+            let debug_node = root_node.map(GraphvizDot::new_erased);
+            let mut do_debug = move || {
+                if tracing::enabled!(tracing::Level::INFO) {
+                    if let Some(node) = &debug_node {
+                        iterations += 1;
+                        use std::fmt::Write;
+                        buf.clear();
+                        write!(buf, "{prefix}-stabilise-{iterations}.dot").unwrap();
+                        node.save_to_file(buf).unwrap();
+                    }
+                }
+            };
             while let Some(mut min_layer) = self.recompute_heap.remove_min_layer() {
+                do_debug();
                 for node in min_layer.drain(..) {
                     node.recompute(self);
                     node.height_in_recompute_heap().set(-1);
                 }
             }
+            do_debug();
             self.stabilise_end();
         });
     }
+
     pub(crate) fn propagate_invalidity(&self) {
         while let Some(node) = {
             let mut pi = self.propagate_invalidity.borrow_mut();

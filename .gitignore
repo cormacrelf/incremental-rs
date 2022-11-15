@@ -3,3 +3,6 @@
 Cargo.lock
 *.png
 *.dot
+*.svg
+*.pdf
+.DS_Store
