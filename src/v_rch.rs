@@ -688,7 +688,13 @@ impl<T: Value> Incr<T> {
     /// ```
     ///
     pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
-        self.node.set_cutoff(cutoff);
+        self.node.set_cutoff(cutoff.boxed());
+    }
+    pub fn set_cutoff_custom_boxed<F>(&self, cutoff_fn: F)
+    where
+        F: FnMut(&T, &T) -> bool + 'static,
+    {
+        self.node.set_cutoff(Cutoff::Custom(cutoff_fn).boxed());
     }
 
     pub fn save_dot_to_file(&self, named: &str) {

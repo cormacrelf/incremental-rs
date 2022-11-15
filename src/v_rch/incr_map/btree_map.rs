@@ -92,25 +92,35 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         i
     }
 
-    pub fn incr_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    pub fn incr_mapi_<F, V2>(
+        &self,
+        f: F,
+        // see im_rc
+        // cutoff: Option<Cutoff<V>>
+    ) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
     {
         self.incr_filter_mapi_generic_btree_map::<MapOperator<K, V, V2, F>, V2>(
             MapOperator(f, PhantomData),
-            cutoff,
+            None,
         )
     }
 
-    pub fn incr_filter_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<BTreeMap<K, V2>>
+    pub fn incr_filter_mapi_<F, V2>(
+        &self,
+        f: F,
+        // see im_rc
+        // cutoff: Option<Cutoff<V>>
+    ) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
     {
         self.incr_filter_mapi_generic_btree_map::<FilterMapOperator<K, V, V2, F>, V2>(
             FilterMapOperator(f, PhantomData),
-            cutoff,
+            None,
         )
     }
 

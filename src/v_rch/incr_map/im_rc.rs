@@ -270,25 +270,36 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
 }
 
 impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
-    pub fn incr_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    pub fn incr_mapi_<F, V2>(
+        &self,
+        f: F,
+        // need a variant for this to avoid making everyone specify the cutoff function type
+        // using a turbofish whenever it's None.
+        // cutoff: Option<Cutoff<V, Cut>>,
+    ) -> Incr<OrdMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
     {
         self.incr_filter_mapi_ordmap::<MapOperator<K, V, V2, F>, V2>(
             MapOperator(f, PhantomData),
-            cutoff,
+            None,
         )
     }
 
-    pub fn incr_filter_mapi_<F, V2>(&self, f: F, cutoff: Option<Cutoff<V>>) -> Incr<OrdMap<K, V2>>
+    pub fn incr_filter_mapi_<F, V2>(
+        &self,
+        f: F,
+        // see above
+        // cutoff: Option<Cutoff<V>>
+    ) -> Incr<OrdMap<K, V2>>
     where
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
     {
         self.incr_filter_mapi_ordmap::<FilterMapOperator<K, V, V2, F>, V2>(
             FilterMapOperator(f, PhantomData),
-            cutoff,
+            None,
         )
     }
 
@@ -358,7 +369,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                 let key = key.clone();
                                 let node = Node::<V>::new(&state, {
                                     let key_ = key.clone();
-                                    let prev_map_ = prev_map_mut.clone();
+                                    let prev_map_ = prev_map.clone();
                                     move || {
                                         let prev_map = prev_map_.borrow();
                                         prev_map.get(&key_).unwrap().clone()

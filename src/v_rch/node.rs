@@ -65,7 +65,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
-    pub cutoff: Cell<Cutoff<G::R>>,
+    pub cutoff: RefCell<Cutoff<G::R, Box<dyn FnMut(&G::R, &G::R) -> bool>>>,
     /// The time at which our value changed. -1 if never.
     ///
     /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
@@ -128,7 +128,7 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
     );
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<R>, state: &State);
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
-    fn set_cutoff(&self, cutoff: Cutoff<R>);
+    fn set_cutoff(&self, cutoff: Cutoff<R, Box<dyn FnMut(&R, &R) -> bool>>);
     fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
@@ -242,8 +242,8 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         child_parents.swap_remove(parent_index as usize);
     }
 
-    fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
-        self.cutoff.set(cutoff)
+    fn set_cutoff(&self, cutoff: Cutoff<G::R, Box<dyn FnMut(&G::R, &G::R) -> bool>>) {
+        self.cutoff.replace(cutoff);
     }
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
         let mut os = self.observers.borrow_mut();
@@ -404,8 +404,9 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
                 let child_new = child.value_as_ref().unwrap();
                 let self_new = (mapref.mapper)(&child_new);
 
-                let did_change =
-                    self_old.map_or(true, |old| !self.cutoff.get().should_cutoff(old, self_new));
+                let did_change = self_old.map_or(true, |old| {
+                    !self.cutoff.borrow_mut().should_cutoff(old, self_new)
+                });
                 mapref.did_change.set(did_change);
                 // now we propagate to parent
                 // (but first, set the only_in_debug stuff & recomputed_at <- t.stabilisation_num)
@@ -1433,10 +1434,10 @@ impl<G: NodeGenerics> Node<G> {
 
     fn maybe_change_value(&self, value: G::R, state: &State) -> Option<NodeRef> {
         let old_value_opt = self.value_opt.take();
-        let cutoff = self.cutoff.get();
+        let mut cutoff = self.cutoff.borrow_mut();
         let should_change = old_value_opt
             .as_ref()
-            .map_or(true, |old| !self.cutoff.get().should_cutoff(old, &value));
+            .map_or(true, |old| !cutoff.should_cutoff(old, &value));
         return self.maybe_change_value_manual(
             old_value_opt.as_ref(),
             Some(value),
