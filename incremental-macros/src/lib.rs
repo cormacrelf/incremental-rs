@@ -52,9 +52,11 @@ impl<Db: ProviderFor<Self>> DebugWithDb<Db> for InternedString {
 
 #[macro_export]
 macro_rules! interned {
-
-    // special case
-    ($vis:vis type $id:ident = String;) => {
+    (
+        $(#[$attr:meta])*
+        $vis:vis type $id:ident = String;
+    ) => {
+        $(#[$attr])*
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         $vis struct $id($crate::re_export::string_interner::DefaultSymbol);
         impl $id {
@@ -86,15 +88,11 @@ macro_rules! interned {
     (@clone $field:ident $field_ty:ty) => { $field.clone() };
 
     ($(#[$attr:meta])* $vis:vis struct $id:ident {
-        $(
-            #[id]
-            $id_field_vis:vis $id_field:ident : $id_field_ty:ty,
-        )?
         $($field_vis:vis $field:ident : $field_ty:ty,)+
     }) => {
         $(#[$attr])*
         $crate::re_export::slotmap::new_key_type! { $vis struct $id; }
-        paste::paste! {
+        ::paste::paste! {
             impl $crate::Indexed for $id {
                 type Storage = (
                     // look up by all but the id fields
@@ -161,55 +159,62 @@ macro_rules! interned {
     };
 }
 
+// #[macro_export]
+// macro_rules! slot_indexed {
+//     // structs
+//     ($(#[$attr:meta])* $vis:vis struct $id:ident {
+//         $($field_vis:vis $field:ident : $field_ty:ty,)+
+//     }) => {
+//         $(#[$attr])*
+//         $crate::re_export::slotmap::new_key_type! { $vis struct $id; }
+//         ::paste::paste! {
+//             impl $crate::Indexed for $id {
+//                 type Storage =
+//                     $crate::re_export::slotmap::SlotMap<$id, [<__ $id Data >]> ;
+//             }
+//             $vis struct [<__ $id Data >] {
+//                 $($field: $field_ty,)*
+//             }
+//             #[allow(dead_code)]
+//             impl $id {
+//                 $vis fn new(__db: &impl $crate::ProviderFor<Self>, $($field: $field_ty,)+) -> Self {
+//                     let slotmap = __db.__storage__();
+//                     let mut slotmap_ = slotmap.borrow_mut();
+//                     slotmap_.insert([<__ $id Data>] {
+//                             $($field,)+
+//                     })
+//                 }
+//                 $(
+//                     $field_vis fn $field<'a>(&'_ self, __db: &'a impl $crate::ProviderFor<Self>) -> ::std::cell::Ref<'a, $field_ty> {
+//                         let slotmap = __db.__storage__();
+//                         ::std::cell::Ref::map(slotmap.borrow(), |slotmap| {
+//                             &slotmap.get(*self).unwrap().$field
+//                         })
+//                     }
+//                  )*
+//             }
+//         }
+//     };
+// }
+
 #[macro_export]
-macro_rules! tracked {
-    // structs
-    ($(#[$attr:meta])* $vis:vis struct $id:ident {
-        $(
-            #[id]
-            $id_field_vis:vis $id_field:ident : $id_field_ty:ty,
-            )?
-            $($field_vis:vis $field:ident : $field_ty:ty,)+
-    }) => {
-        $(#[$attr])*
-            $crate::re_export::slotmap::new_key_type! { $vis struct $id; }
-
-        paste::paste! {
-            impl $crate::Indexed for $id {
-                type Storage =
-                    $crate::re_export::slotmap::SlotMap<$id, [<__ $id Data >]> ;
-            }
-            $vis struct [<__ $id Data >] {
-                $($id_field: $id_field_ty,)?
-                    $($field: $field_ty,)*
-            }
-            #[allow(dead_code)]
-            impl $id {
-                $vis fn new(__db: &impl $crate::ProviderFor<Self>, $($field: $field_ty,)+) -> Self {
-                    let slotmap = __db.__storage__();
-                    let mut slotmap_ = slotmap.borrow_mut();
-                    slotmap_.insert_with_key(|_k| [<__ $id Data>] {
-                        $($id_field: _k,)?
-                            $($field,)+
-                    })
-                }
-                $(
-                    $field_vis fn $field(&self, __db: &impl $crate::ProviderFor<Self>) -> $field_ty {
-                        let slotmap = __db.__storage__();
-                        let slotmap = slotmap.borrow();
-                        slotmap.get(*self).unwrap().$field.clone()
-                    }
-                 )*
-            }
-        }
-    };
-
-    // functions
-    ($vis:vis fn $function:ident($db:ident : &$db_ty:ty, $($arg:ident : $arg_ty:ty,)+) -> Incr<$r:ty> {
+macro_rules! memoized {
+    (@doc_helper $( #[doc = $doc:expr] $( $thing:tt )* )* ) => ( $( #[doc = $doc] $( $thing )* )* );
+    ($(#[$attr:meta])* $vis:vis fn $function:ident($db:ident : &$db_ty:ty, $($arg:ident : $arg_ty:ty),+ $(,)?) -> Incr<$r:ty> {
         $($body:tt)*
     }) => {
         ::paste::paste! {
-            $vis struct [<$function:camel>];
+            $(#[$attr])*
+            $vis fn $function($db: &$db_ty, $($arg: $arg_ty,)*)
+            -> ::incremental::Incr<$r> {
+                [<$function:camel>]::get(&$db, $($arg,)*)
+            }
+
+            /// Helper struct for
+            $crate::memoized!{@doc_helper
+                #[doc = concat!("Helper struct implementing [incremental_macros::Indexed] for [", stringify!($function), "]")]
+                $vis struct [<$function:camel>];
+            }
             impl $crate::Indexed for [<$function:camel>] {
                 type Storage = $crate::re_export::incremental::WeakHashMap< ($($arg_ty,)*), $r >;
                 fn register(incr: &IncrState, storage: &::std::rc::Rc<::std::cell::RefCell<Self::Storage>>) {
@@ -226,7 +231,8 @@ macro_rules! tracked {
                     let mut storage_ = storage.borrow_mut();
                     let entry = storage_.entry(($($arg.clone(),)*));
                     let execute = || {
-                        __fn($db, $($arg,)*)
+                        let top = ::incremental::Scope::top();
+                        $db.incr.within_scope(top, || __fn($db, $($arg,)*))
                     };
 
                     match entry {
@@ -248,55 +254,128 @@ macro_rules! tracked {
                     }
                 }
             }
-            $vis fn $function($db: &$db_ty, $($arg: $arg_ty,)*) -> $crate::re_export::incremental::Incr<$r> {
-                [<$function:camel>]::get(&$db, $($arg,)*)
-            }
         }
     }
 }
 
+/// Example
+///
+/// ```
+/// # use incremental_macros::db;
+/// db! {
+///     pub struct Db
+/// }
+/// ```
+///
 #[macro_export]
 macro_rules! db {
-    ($vis:vis struct $Db:ident {
-            $($input:ident: $input_ty:ty),* $(,)?
-    }) => {
-        $vis struct $Db {
-            incr: $crate::re_export::incremental::IncrState,
-            $(
-                $input:
-                ::std::rc::Rc<::std::cell::RefCell<<$input_ty as $crate::Indexed>::Storage>>,
-            )*
-        }
-
-        impl $Db {
-            $vis fn new() -> Self {
-                let __state = $crate::re_export::incremental::IncrState::new();
-                $(
-                    let $input = ::std::rc::Rc::new(::std::cell::RefCell::new(
-                        <$input_ty as $crate::Indexed>::Storage::default()
-                    ));
-                    <$input_ty as $crate::Indexed>::register(&__state, &&&$input);
-                )*
-                Self {
-                    incr: __state,
-                    $($input,)*
+    (@storage_path_to_ident $Db:ident, $memo_ty:ty, $(::)? $segment:ident $(:: $rest:ident)*) => {
+        paste::paste! {
+            impl $crate::ProviderFor<$memo_ty> for $Db {
+                fn __storage__(&self) -> &::std::cell::RefCell<<$memo_ty as $crate::Indexed>::Storage> {
+                    &self.__storage.[< $segment:snake $(_ $rest:snake )* >]
                 }
             }
         }
+    };
+    (@input_arg #[input] $input:ident: $input_ty:ty) => { , $input: $input_ty };
+    (@input_arg $memo:ident: $memo_ty:ty) => { };
 
-        impl ::core::ops::Deref for $Db {
-            type Target = $crate::re_export::incremental::IncrState;
-            fn deref(&self) -> &Self::Target {
-                &self.incr
+    (@input_ident #[input] $input:ident: $input_ty:ty) => { $input };
+    (@input_ident $memo:ident: $memo_ty:ty) => {};
+
+    (@memo_init $state:ident, $memo_ty:ty) => {
+        {
+            let memo = ::std::rc::Rc::new(::std::cell::RefCell::new(
+                    <$memo_ty as $crate::Indexed>::Storage::default()
+                    ));
+            <$memo_ty as $crate::Indexed>::register(&$state, &memo);
+            memo
+        }
+    };
+
+    (@memo_ident #[input] $input:ident: $input_ty:ty) => { };
+    (@memo_ident $memo:ident: $memo_ty:ty) => { $memo };
+
+    (@s_munch () -> {$vis:vis struct $Db:ident { $($memo:ident : $memo_ty:ty,)* $(,)? } }) => {
+        $crate::db!(@storage_inner $vis struct $Db {
+            $($memo: $memo_ty),*
+        });
+    };
+    (@s_munch ($(::)? $segment:ident $(::$rest:ident)* => $ty:ty, $($next:tt)*) -> {$vis:vis struct $Db:ident { $($memo:ident : $memo_ty:ty),* $(,)? }}) => {
+        ::paste::paste! {
+            $crate::db!(@s_munch ($($next)*) -> { $vis struct $Db {
+                $($memo: $memo_ty,)*
+                [< $segment:snake $(_ $rest:snake)* >]: $ty,
+            } });
+        }
+    };
+
+    (@storage_inner $vis:vis struct $Db:ident {
+        $($memo:ident : $memo_ty:ty),*
+    }) => {
+        ::paste::paste! {
+            #[derive(Clone)]
+            struct [<$Db Storage>] {
+                $($memo: $memo_ty,)*
+            }
+
+            impl [<$Db Storage>] {
+                fn new($($memo: $memo_ty),*) -> Self {
+                    Self { $($memo),* }
+                }
+            }
+        }
+    };
+
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $Db:ident provides $tt:tt
+    ) => {
+        $crate::db!($vis struct $Db {} provides $tt)
+    };
+    (
+        $(#[$attr:meta])*
+        $vis:vis struct $Db:ident {
+            $($(#[$fattr:meta])* $field:ident : $field_ty:ty),* $(,)?
+        } provides {
+            $($memo_ty:ident),* $(,)?
+        }
+    ) => {
+
+        /// Storage struct for $Db
+        $crate::db!(@s_munch ($(
+            $memo_ty => ::std::rc::Rc<::std::cell::RefCell<<$memo_ty as $crate::Indexed>::Storage>>,
+        )*) -> {$vis struct $Db {}});
+
+        ::paste::paste! {
+            $(#[$attr])*
+            #[derive(Clone)]
+            $vis struct $Db {
+                $vis incr: $crate::re_export::incremental::WeakState,
+                $($(#[$fattr])* $field: $field_ty,)*
+                __storage: [<$Db Storage>]
+            }
+
+            impl $Db {
+                $vis fn new(
+                    __state: &$crate::re_export::incremental::IncrState,
+                    $($field: $field_ty,)*
+                ) -> Self {
+                    let __storage = [<$Db Storage>]::new(
+                        $($crate::db!(@memo_init __state, $memo_ty)),*
+                    );
+                    Self {
+                        incr: __state.weak(),
+                        $($field,)*
+                        __storage,
+                    }
+                }
             }
         }
 
         $(
-            impl $crate::ProviderFor<$input_ty> for $Db {
-                fn __storage__(&self) -> &::std::cell::RefCell<<$input_ty as $crate::Indexed>::Storage> {
-                    &self.$input
-                }
-            }
+            $crate::db!(@storage_path_to_ident $Db, $memo_ty, $memo_ty);
         )*
     };
 }

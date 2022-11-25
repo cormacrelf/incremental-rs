@@ -9,3 +9,9 @@ edition = "2021"
 incremental = { path = "..", features = ["slotmap"] }
 slotmap = "1.0.6"
 string-interner = "0.14.0"
+paste = { version = "1.0.9" }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.16", default-features = false, features = ["fmt", "ansi", "env-filter", "smallvec", "tracing-log"] }
+tracing = { version = "0.1.37", features = [ "release_max_level_off" ]}
+
