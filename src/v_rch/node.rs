@@ -442,6 +442,7 @@ pub(crate) trait ErasedNode: Debug {
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
     fn dot_was_recomputed(&self, state: &State) -> bool;
+    fn dot_was_changed(&self) -> bool;
     fn should_be_invalidated(&self) -> bool;
     fn propagate_invalidity_helper(&self);
     fn has_invalid_child(&self) -> bool;
@@ -487,8 +488,7 @@ pub(crate) trait ErasedNode: Debug {
     fn weak(&self) -> WeakNode;
     fn packed(&self) -> NodeRef;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
-    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef));
-    fn iter_descendants_internal(
+    fn iter_descendants_internal_one(
         &self,
         seen: &mut HashMap<NodeId, i32>,
         f: &mut dyn FnMut(&NodeRef),
@@ -1099,21 +1099,19 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
-    fn iter_descendants(&self, f: &mut dyn FnMut(&NodeRef)) {
-        let mut seen = HashMap::new();
-        self.iter_descendants_internal(&mut seen, f)
-    }
-    fn iter_descendants_internal(
+
+    fn iter_descendants_internal_one(
         &self,
         seen: &mut HashMap<NodeId, i32>,
         f: &mut dyn FnMut(&NodeRef),
     ) {
-        if !seen.contains_key(&self.id) {
-            seen.insert(self.id, self.height.get());
+        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(self.id) {
+            e.insert(self.height.get());
             f(&self.packed());
-            self.foreach_child(&mut |_ix, child| child.iter_descendants_internal(seen, f))
+            self.foreach_child(&mut |_ix, child| child.iter_descendants_internal_one(seen, f))
         }
     }
+
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result {
         let id = self.id;
         if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
@@ -1121,14 +1119,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
         let h = self.height.get();
         match &self.kind {
-            Kind::Constant(v) => return write!(f, "Constant({id:?}, {v:?}) @ {h}"),
+            _ if !self.is_valid() => return write!(f, "Invalid"),
+            Kind::Constant(v) => return write!(f, "Constant({id:?}) @ {h} => {v:?}"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
             Kind::Map(_) => write!(f, "Map"),
             Kind::MapRef(_) => write!(f, "MapRef"),
             Kind::MapWithOld(_) => write!(f, "MapWithOld"),
             Kind::Map2(_) => write!(f, "Map2"),
-            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange @ {h}"),
+            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange({id:?}) @ {h}"),
             Kind::BindMain(..) => write!(f, "BindMain"),
             Kind::Expert(..) => write!(f, "Expert"),
         }?;
@@ -1144,7 +1143,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if let Kind::BindLhsChange(_, bind) = &self.kind {
             let all = bind.all_nodes_created_on_rhs.borrow();
             for rhs in all.iter().filter_map(Weak::upgrade) {
-                tracing::info!("bind created on RHS: {rhs:?}");
                 bind_edges.push((self.packed(), rhs.clone()));
             }
         }
@@ -1157,6 +1155,16 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             _ => self.recomputed_at.get() == r,
         }
     }
+
+    fn dot_was_changed(&self) -> bool {
+        let state = self.state();
+        let r = state.stabilisation_num.get();
+        match state.status.get() {
+            IncrStatus::NotStabilising => self.changed_at.get().add1() == r,
+            _ => self.changed_at.get() == r,
+        }
+    }
+
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
         let node = self;
         write!(f, "  {} [", name)?;
@@ -1184,64 +1192,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         writeln!(f, "]")?;
         Ok(())
     }
+
     fn dot_write(&self, f: &mut dyn Write) -> fmt::Result {
-        fn node_name(node: &NodeRef) -> String {
-            node.id().0.to_string()
-        }
-        writeln!(f, "digraph G {{")?;
-        writeln!(
-            f,
-            r#"rankdir = BT
-                       graph [fontname = "Courier"];
-                       node [fontname = "Courier", shape=box, colorscheme=rdylbu7];
-                       edge [fontname = "Courier", colorscheme=rdylbu7];"#
-        )?;
-        let mut bind_edges = vec![];
-        let mut seen = HashMap::new();
-        let t = self.state();
-        self.iter_descendants_internal(&mut seen, &mut |node| {
-            let name = node_name(node);
-            node.dot_node(f, &name).unwrap();
-            node.foreach_child(&mut |_, child| {
-                writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
-                if child.dot_was_recomputed(&t) {
-                    write!(f, " [color=4]").unwrap();
-                }
-                writeln!(f).unwrap();
-            });
-            node.dot_add_bind_edges(&mut bind_edges);
-        });
-        for (bind, rhs) in bind_edges {
-            if seen.contains_key(&rhs.id()) {
-                writeln!(
-                    f,
-                    "  {} -> {} [style=dashed{}]",
-                    node_name(&bind),
-                    node_name(&rhs),
-                    if bind.dot_was_recomputed(&t) {
-                        ", color=4"
-                    } else {
-                        ""
-                    }
-                )?;
-            }
-        }
-        let mut by_height: HashMap<i32, Vec<NodeId>> = HashMap::new();
-        let mut min_height = i32::MAX;
-        for (node_id, height) in seen {
-            by_height.entry(height).or_default().push(node_id);
-            min_height = min_height.min(height);
-        }
-        for (height, nodes) in by_height {
-            let rank = if height == min_height { "min" } else { "same" };
-            writeln!(f, "{{ rank={:?}; ", rank)?;
-            for id in nodes {
-                writeln!(f, "{};", id.0)?;
-            }
-            writeln!(f, "}}")?;
-        }
-        writeln!(f, "}}")?;
-        Ok(())
+        save_dot(f, core::iter::once(self.packed()))
     }
 
     // Expert
@@ -1746,7 +1699,76 @@ fn test_node_size() {
     assert_eq!(core::mem::size_of_val(&*node), 408);
 }
 
-pub struct GraphvizDot(NodeRef);
+fn iter_descendants_internal(
+    i: impl IntoIterator<Item = NodeRef>,
+    f: &mut dyn FnMut(&NodeRef),
+) -> HashMap<NodeId, i32> {
+    let mut seen = HashMap::new();
+    for node in i.into_iter() {
+        node.iter_descendants_internal_one(&mut seen, f);
+    }
+    seen
+}
+
+pub(crate) fn save_dot(f: &mut dyn Write, nodes: impl IntoIterator<Item = NodeRef>) -> fmt::Result {
+    fn node_name(node: &NodeRef) -> String {
+        node.id().0.to_string()
+    }
+    writeln!(f, "digraph G {{")?;
+    writeln!(
+        f,
+        r#"rankdir = BT
+        graph [fontname = "Courier"];
+        node [fontname = "Courier", shape=box, colorscheme=rdylbu7];
+        edge [fontname = "Courier", colorscheme=rdylbu7];"#
+    )?;
+    let mut bind_edges = vec![];
+    let seen = iter_descendants_internal(nodes, &mut |node| {
+        let name = node_name(node);
+        node.dot_node(f, &name).unwrap();
+        node.foreach_child(&mut |_, child| {
+            writeln!(f, "  {} -> {}", node_name(&child.packed()), name).unwrap();
+            if child.dot_was_changed() {
+                write!(f, " [color=1]").unwrap();
+            }
+            writeln!(f).unwrap();
+        });
+        node.dot_add_bind_edges(&mut bind_edges);
+    });
+    for (bind, rhs) in bind_edges {
+        if seen.contains_key(&rhs.id()) {
+            writeln!(
+                f,
+                "  {} -> {} [style=dashed{}]",
+                node_name(&bind),
+                node_name(&rhs),
+                if bind.dot_was_changed() {
+                    ", color=2"
+                } else {
+                    ""
+                }
+            )?;
+        }
+    }
+    let mut by_height: HashMap<i32, Vec<NodeId>> = HashMap::new();
+    let mut min_height = i32::MAX;
+    for (node_id, height) in seen {
+        by_height.entry(height).or_default().push(node_id);
+        min_height = min_height.min(height);
+    }
+    for (height, nodes) in by_height {
+        let rank = if height == min_height { "min" } else { "same" };
+        writeln!(f, "{{ rank={:?}; ", rank)?;
+        for id in nodes {
+            writeln!(f, "{};", id.0)?;
+        }
+        writeln!(f, "}}")?;
+    }
+    writeln!(f, "}}")?;
+    Ok(())
+}
+
+pub(crate) struct GraphvizDot(NodeRef);
 
 impl GraphvizDot {
     pub(crate) fn new_erased(erased: NodeRef) -> Self {
@@ -1777,6 +1799,6 @@ impl Display for GraphvizDot {
 #[cfg(debug_assertions)]
 impl<G: NodeGenerics> Drop for Node<G> {
     fn drop(&mut self) {
-        tracing::warn!("dropping Node: {:?}", self);
+        tracing::trace!("dropping Node: {:?}", self);
     }
 }

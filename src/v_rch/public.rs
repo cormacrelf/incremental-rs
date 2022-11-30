@@ -11,13 +11,13 @@ pub use super::expert::public as expert;
 pub use super::incr_map::symmetric_fold::DiffElement;
 pub use super::incr_map::symmetric_fold::MergeElement;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
-pub use super::node::GraphvizDot;
 pub use super::node_update::NodeUpdate;
 pub use super::Incr;
 pub use super::Value;
 pub use super::WeakIncr;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
+use super::node::GraphvizDot;
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
 use super::scope::Scope;
@@ -335,6 +335,10 @@ impl IncrState {
         self.inner.set_max_height_allowed(new_max_height)
     }
 
+    pub fn save_dot_to_file(&self, named: &str) {
+        self.inner.save_dot_to_file(named)
+    }
+
     pub fn stats(&self) -> Stats {
         Stats {
             created: self.inner.num_nodes_created.get(),
@@ -398,6 +402,10 @@ impl WeakState {
             .upgrade()
             .unwrap()
             .var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
+    }
+
+    pub fn save_dot_to_file(&self, named: &str) {
+        self.inner.upgrade().unwrap().save_dot_to_file(named)
     }
 
     // pub fn unsubscribe(&self, token: SubscriptionToken) {

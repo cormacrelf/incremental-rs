@@ -2,13 +2,13 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::array_fold::ArrayFold;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
-use crate::{GraphvizDot, SubscriptionToken, WeakMap};
+use crate::{SubscriptionToken, WeakMap};
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
 };
 use super::kind::{Constant, Kind};
-use super::node::{Node, NodeId};
+use super::node::{GraphvizDot, Node, NodeId};
 use super::recompute_heap::RecomputeHeap;
 use super::scope::Scope;
 use super::stabilisation_num::StabilisationNum;
@@ -419,6 +419,24 @@ impl State {
     pub(crate) fn set_height(&self, node: NodeRef, height: i32) {
         let mut ah_heap = self.adjust_heights_heap.borrow_mut();
         ah_heap.set_height(&node, height);
+    }
+
+    pub(crate) fn save_dot_to_file(&self, named: &str) {
+        let observers = self.all_observers.borrow();
+        let all_observed = observers.iter().map(|(_id, o)| o.observing());
+
+        let buf = &mut String::new();
+        super::node::save_dot(buf, all_observed).unwrap();
+
+        use std::fs::File;
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(named)
+            .unwrap();
+        file.write_all(buf.as_bytes()).unwrap();
     }
 
     #[tracing::instrument]
