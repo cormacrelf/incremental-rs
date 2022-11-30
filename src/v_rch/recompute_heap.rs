@@ -18,7 +18,7 @@ impl fmt::Debug for RecomputeHeap {
     #[rustfmt::skip::macros]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "RecomputeHeap {{")?;
-        writeln!(f, "  length: {},", self.length.get())?;
+        writeln!(f, "  length: {},", self.len())?;
         writeln!(
             f,
             "  height_lower_bound: {},",
@@ -67,7 +67,7 @@ impl RecomputeHeap {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.length.get() == 0
+        self.len() == 0
     }
 
     pub fn clear(&self) {
@@ -158,7 +158,7 @@ impl RecomputeHeap {
 
     pub(crate) fn remove_min_layer(&self) -> Option<RefMut<VecDeque<NodeRef>>> {
         let queues = self.queues.borrow();
-        if self.length.get() == 0 {
+        if self.is_empty() {
             return None;
         }
         debug_assert!(self.height_lower_bound.get() >= 0);
@@ -174,7 +174,9 @@ impl RecomputeHeap {
         let mut swap = self.swap.borrow_mut();
         swap.clear();
         let mut q = queue.borrow_mut();
-        self.length.set(self.length.get() - q.len());
+        let len = self.len();
+        let q_len = q.len();
+        self.length.set(len - q_len);
         // must use &mut *swap, because we don't want to swap the RefMuts,
         // we want to swap the actual VecDeques inside the RefMuts..
         std::mem::swap(&mut *swap, &mut *q);
