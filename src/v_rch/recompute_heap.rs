@@ -80,20 +80,26 @@ impl RecomputeHeap {
     }
 
     pub fn link(&self, node: NodeRef) {
-        assert!(node.height() >= 0);
-        assert!(node.height() <= self.max_height_allowed());
-        node.height_in_recompute_heap().set(node.height());
-        let q = self.queue_for(node.height() as usize);
+        // make these locals so the debugger can see them
+        let _node_id = node.id().0;
+        let node_height = node.height();
+        assert!(node_height >= 0);
+        assert!(node_height <= self.max_height_allowed());
+        node.height_in_recompute_heap().set(node_height);
+        let q = self.queue_for(node_height as usize);
         q.borrow_mut().push_back(node);
     }
 
     pub fn unlink(&self, node: &NodeRef) {
-        let queue = self.queue_for(node.height_in_recompute_heap().get() as usize);
+        let height_in_rch = node.height_in_recompute_heap().get();
+        let queue = self.queue_for(height_in_rch as usize);
         // Unfortunately we must scan for the node
         // if this is slow, we should use a hash set or something instead with a fast "remove_any"
         // method
         let mut q = queue.borrow_mut();
-        let Some(indexof) = q.iter().position(|x| crate::rc_thin_ptr_eq(x, node)) else { return };
+        let Some(indexof) = q.iter().position(|x| crate::rc_thin_ptr_eq(x, node)) else {
+            panic!("node was not in recompute heap: {node:?}");
+        };
         // order within a particular queue does not matter at all.
         // they're all the same height so they cannot have any dependencies
         // so we can use swap_remove
@@ -115,6 +121,7 @@ impl RecomputeHeap {
     }
 
     pub fn remove(&self, node: NodeRef) {
+        let _node_id = node.id();
         debug_assert!(
             node.is_in_recompute_heap() && !node.needs_to_be_computed(),
             "incorrect attempt to remove node from recompute heap"
@@ -180,6 +187,12 @@ impl RecomputeHeap {
         // must use &mut *swap, because we don't want to swap the RefMuts,
         // we want to swap the actual VecDeques inside the RefMuts..
         std::mem::swap(&mut *swap, &mut *q);
+        // make nodes report false for in_recompute_heap, just in case
+        // they become unnecessary & are removed from heap (to little effect)
+        // while they're sitting in the frontier here.
+        for node in swap.iter() {
+            node.height_in_recompute_heap().set(-1);
+        }
         Some(swap)
     }
 
