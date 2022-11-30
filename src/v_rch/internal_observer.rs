@@ -96,7 +96,6 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
     }
     fn add_to_observed_node(&self) {
         let node = &self.observing.node;
-        let was_necessary = node.is_necessary();
         node.add_observer(self.id(), self.weak_self.clone());
         let num = node.num_on_update_handlers();
         num.set(num.get() + self.num_handlers());

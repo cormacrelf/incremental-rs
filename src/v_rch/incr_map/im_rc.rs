@@ -212,7 +212,7 @@ pub(crate) fn merge_shared_impl<
     merge.fold(old_output, |output, merge_elem| {
         let key = match merge_elem {
             MergeElement::Left((key, _)) | MergeElement::Right((key, _)) => key,
-            MergeElement::Both((left_key, _), (right_key, _)) => {
+            MergeElement::Both((left_key, _), (_right_key, _)) => {
                 // comparisons can be expensive
                 // assert_eq!(left_key, right_key);
                 left_key
@@ -345,53 +345,52 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
         let lhs_change = lhs.map_cyclic({
             move |lhs_change, map| {
                 let mut prev_map_mut = prev_map.borrow_mut();
-                let new_nodes =
-                    prev_map_mut.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
-                        match diff {
-                            DiffElement::Unequal(_, _) => {
-                                let (node, _dep) = nodes.get(key).unwrap();
-                                node.make_stale();
-                                nodes
-                            }
-                            DiffElement::Left(_) => {
-                                let (node, dep) = nodes.remove(key).unwrap();
-                                // remove_dependency will cause node's weak ref to die.
-                                // so we upgrade it first.
-                                let node = node.upgrade().unwrap();
-                                result_weak.remove_dependency(dep);
-                                let mut acc = acc.borrow_mut();
-                                acc.remove(key);
-                                // Invalidate does have to happen after remove_dependency.
-                                node.invalidate();
-                                nodes
-                            }
-                            DiffElement::Right(_) => {
-                                let key = key.clone();
-                                let node = Node::<V>::new(&state, {
-                                    let key_ = key.clone();
-                                    let prev_map_ = prev_map.clone();
-                                    move || {
-                                        let prev_map = prev_map_.borrow();
-                                        prev_map.get(&key_).unwrap().clone()
-                                    }
-                                });
-                                if let Some(cutoff) = cutoff {
-                                    node.watch().set_cutoff(cutoff);
-                                }
-                                let lhs_change = lhs_change.upgrade().unwrap();
-                                node.add_dependency_unit(&lhs_change);
-                                let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
-                                let user_function_dep: Dependency<O::Output> = result_weak
-                                    .add_dependency_with(&mapped, {
-                                        let key = key.clone();
-                                        let on_inner_change = on_inner_change.clone();
-                                        move |v| on_inner_change(&key, v)
-                                    });
-                                nodes.insert(key, (node.weak(), user_function_dep));
-                                nodes
-                            }
+                prev_map_mut.symmetric_fold(map, &mut prev_nodes, |nodes, (key, diff)| {
+                    match diff {
+                        DiffElement::Unequal(_, _) => {
+                            let (node, _dep) = nodes.get(key).unwrap();
+                            node.make_stale();
+                            nodes
                         }
-                    });
+                        DiffElement::Left(_) => {
+                            let (node, dep) = nodes.remove(key).unwrap();
+                            // remove_dependency will cause node's weak ref to die.
+                            // so we upgrade it first.
+                            let node = node.upgrade().unwrap();
+                            result_weak.remove_dependency(dep);
+                            let mut acc = acc.borrow_mut();
+                            acc.remove(key);
+                            // Invalidate does have to happen after remove_dependency.
+                            node.invalidate();
+                            nodes
+                        }
+                        DiffElement::Right(_) => {
+                            let key = key.clone();
+                            let node = Node::<V>::new(&state, {
+                                let key_ = key.clone();
+                                let prev_map_ = prev_map.clone();
+                                move || {
+                                    let prev_map = prev_map_.borrow();
+                                    prev_map.get(&key_).unwrap().clone()
+                                }
+                            });
+                            if let Some(cutoff) = cutoff {
+                                node.watch().set_cutoff(cutoff);
+                            }
+                            let lhs_change = lhs_change.upgrade().unwrap();
+                            node.add_dependency_unit(&lhs_change);
+                            let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
+                            let user_function_dep: Dependency<O::Output> = result_weak
+                                .add_dependency_with(&mapped, {
+                                    let key = key.clone();
+                                    let on_inner_change = on_inner_change.clone();
+                                    move |v| on_inner_change(&key, v)
+                                });
+                            nodes.insert(key, (node.weak(), user_function_dep));
+                            nodes
+                        }
+                    }
+                });
                 *prev_map_mut = map.clone();
             }
         });

@@ -364,7 +364,7 @@ pub mod public {
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             let edge = dep.edge.upgrade().unwrap();
-            expert::remove_dependency(&*self.incr.node, &*edge, &edge)
+            expert::remove_dependency(&*self.incr.node, &*edge, &*edge)
         }
     }
 

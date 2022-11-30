@@ -117,7 +117,7 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Map2(_) => 2,
             Self::BindLhsChange(..) => 1,
             Self::BindMain(..) => 2,
-            Self::Expert(e) => 0,
+            Self::Expert(_) => 0,
         }
     }
 }

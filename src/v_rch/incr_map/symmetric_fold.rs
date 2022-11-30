@@ -216,7 +216,7 @@ where
             let o = self.other.get(key);
             match (s, o) {
                 (Some(a), Some(b)) if a != b => break DiffElement::Unequal(a, b),
-                (Some(a), Some(b)) => continue,
+                (Some(_), Some(_)) => continue,
                 (Some(a), _) => break DiffElement::Left(a),
                 (_, Some(b)) => break DiffElement::Right(b),
                 _ => return None,

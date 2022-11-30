@@ -1,5 +1,3 @@
-#![allow(unused_variables)]
-
 mod adjust_heights_heap;
 mod array_fold;
 mod cutoff;
@@ -777,7 +775,7 @@ impl<T: Value> Incr<T> {
         T::OutputMap<V2>: Value,
     {
         let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
-            (o, 0) | (o @ None, _) => (input.filter_map_collect(&mut f), true),
+            (_, 0) | (None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();

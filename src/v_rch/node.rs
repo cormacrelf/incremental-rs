@@ -178,6 +178,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             expert.run_edge_callback(child_index)
         }
     }
+
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>, state: &State) {
         let parent = parent_ref.erased();
         debug_assert!(parent.is_necessary());
@@ -368,9 +369,9 @@ impl<T: Value> ParentNode<T> for ParentWeak<T> {
 impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
     fn p2_child_changed(
         &self,
-        child: &dyn Incremental<G::I2>,
+        _child: &dyn Incremental<G::I2>,
         child_index: i32,
-        old_value_opt: Option<&G::I2>,
+        _old_value_opt: Option<&G::I2>,
     ) {
         if let Kind::Expert(expert) = &self.kind {
             expert.run_edge_callback(child_index)
@@ -574,7 +575,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             /* This is similar to what we do for bind above, except that any invalid child can be
             removed, so we can only tell if an expert node becomes invalid when all its
             dependencies have fired (which in practice means when we are about to run it). */
-            Kind::Expert(e) => false,
+            Kind::Expert(_) => false,
         }
     }
     fn propagate_invalidity_helper(&self) {
@@ -593,7 +594,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn has_invalid_child(&self) -> bool {
         let mut any = false;
-        self.foreach_child(&mut |ix, child| {
+        self.foreach_child(&mut |_ix, child| {
             any = any || !child.is_valid();
         });
         any
@@ -633,7 +634,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
-            Kind::Constant(v) => self.recomputed_at.get().is_never(),
+            Kind::Constant(_) => self.recomputed_at.get().is_never(),
 
             Kind::MapRef(_)
             | Kind::ArrayFold(_)
@@ -656,7 +657,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn is_stale_with_respect_to_a_child(&self) -> bool {
         let mut is_stale = false;
         // TODO: make a version of try_fold for this, to short-circuit it
-        self.foreach_child(&mut |ix, child| {
+        self.foreach_child(&mut |_ix, child| {
             tracing::trace!(
                 "child.changed_at {:?} >? self.recomputed_at {:?}",
                 child.changed_at().get(),
@@ -687,6 +688,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.became_necessary(state);
         state.propagate_invalidity();
     }
+
     // #[tracing::instrument]
     fn became_necessary(&self, state: &State) {
         if self.is_valid() && !self.created_in.is_necessary() {
@@ -698,8 +700,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         - add parent pointers to [node] from its children.
         - set [node]'s height.
         - add [node] to the recompute heap, if necessary. */
-        let weak = self.weak();
-        let as_parent = self.as_parent_weak();
         state.set_height(self.packed(), self.created_in.height() + 1);
         let h = &Cell::new(self.height());
         let p1 = self.as_parent_ref();
@@ -728,11 +728,13 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             expert.observability_change(true)
         }
     }
+
     fn check_if_unnecessary(&self, state: &State) {
         if !self.is_necessary() {
             self.became_unnecessary(state);
         }
     }
+
     fn became_unnecessary(&self, state: &State) {
         state.num_nodes_became_unnecessary.increment();
         self.maybe_handle_after_stabilisation(state);
@@ -746,6 +748,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             state.recompute_heap.remove(self.packed());
         }
     }
+
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef)) {
         match &self.kind {
             Kind::Constant(_) => {}
@@ -768,7 +771,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     f(ix as i32, child.node.packed())
                 }
             }
-            Kind::Var(var) => {}
+            Kind::Var(_var) => {}
             Kind::Expert(e) => {
                 for (ix, child) in e.children.borrow().iter().enumerate() {
                     f(ix as i32, child.packed())
@@ -791,6 +794,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         // This is a flattened version of the original recursion, which OCaml could probably tail-call
         // optimise. First recompute self
         let Some(mut parent) = self.recompute_one(state) else { return };
+
         // Then, as far as we can_recompute_now, recompute parent
         while let Some(next_parent) = parent.recompute_one(state) {
             parent = next_parent;
@@ -1145,6 +1149,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
+
     fn dot_was_recomputed(&self, state: &State) -> bool {
         let r = state.stabilisation_num.get();
         match state.status.get() {
@@ -1156,7 +1161,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let node = self;
         write!(f, "  {} [", name)?;
         let t = node.state();
-        let r = t.stabilisation_num.get();
         write!(f, "label=")?;
         let mut buf = String::new();
         node.dot_label(&mut buf)?;
@@ -1289,7 +1293,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         //           ~equal:phys_equal
         //           state.only_in_debug.expert_nodes_created_by_current_node
         //           (T node))
-        let e = packed_edge.as_any();
         let new_child_index = expert.add_child_edge(packed_edge.clone());
         /* [node] is not guaranteed to be necessary, even if we are running in a child of
         [node], because we could be running due to a parent other than [node] making us
@@ -1340,7 +1343,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         debug_assert!(self.is_stale());
         if self.is_necessary() {
             let state = self.state();
-            self.expert_remove_child(packed_edge.as_any(), last_edge_index, &state);
+            self.expert_remove_child(any_edge, last_edge_index, &state);
             if !self.is_in_recompute_heap() {
                 state.recompute_heap.insert(self.packed());
             }
@@ -1682,7 +1685,7 @@ impl<G: NodeGenerics> Node<G> {
                     (f.i1)(ix as i32, child.node.as_input())
                 }
             }
-            Kind::Var(var) => {}
+            Kind::Var(_var) => {}
             Kind::Expert(e) => {
                 for (ix, child) in e.children.borrow().iter().enumerate() {
                     if let Some(e1) = child.as_any().downcast_ref::<Edge<G::I1>>() {

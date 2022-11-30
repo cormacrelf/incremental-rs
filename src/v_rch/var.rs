@@ -281,7 +281,7 @@ fn var_drop_delayed() {
         let incr = crate::IncrState::new();
         let v = incr.var(10);
         let w = v.watch();
-        let c = incr.constant(9).bind(move |x| {
+        let c = incr.constant(9).bind(move |_| {
             v.set(99);
             w.clone()
         });
