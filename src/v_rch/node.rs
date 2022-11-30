@@ -60,8 +60,12 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
     pub value_opt: RefCell<Option<G::R>>,
+    /// We use this flag instead of making kind mutable with an Invalid variant. That makes it much
+    /// easier to implement `value_as_ref` for `Kind::MapRef`.
     pub is_valid: Cell<bool>,
-    pub kind: Kind<G>,
+    // Don't use this field directly. Use `self::kind()` to be forced to confront
+    // the !is_valid case.
+    pub _kind: Kind<G>,
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
@@ -77,7 +81,10 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// receives G::R.
     ///
     /// Most of the time, a node only has one parent. So we will use a SmallVec with space enough
-    /// for one without hitting the allocator.
+    /// for one without hitting the allocator. The original does this with a `parent0` and
+    /// `parent1_and_beyond: Packed.t Option.t Uniform_array`, where the Option.nones are used to
+    /// do what `vec.pop()` does and ignore
+    ///
     pub parents: RefCell<SmallVec<[ParentWeak<G::R>; 1]>>,
     /// Scope the node was created in. Never modified.
     pub created_in: Scope,
@@ -143,7 +150,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.value_opt().unwrap()
     }
     fn value_as_ref(&self) -> Option<Ref<G::R>> {
-        if let Kind::MapRef(mapref) = &self.kind {
+        if let Some(Kind::MapRef(mapref)) = self.kind() {
             let mapper = &mapref.mapper;
             let input = mapref.input.value_as_ref()?;
             let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
@@ -174,7 +181,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         if !was_necessary {
             self.became_necessary(state);
         }
-        if let Kind::Expert(expert) = &self.kind {
+        if let Some(Kind::Expert(expert)) = self.kind() {
             expert.run_edge_callback(child_index)
         }
     }
@@ -373,7 +380,7 @@ impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
         child_index: i32,
         _old_value_opt: Option<&G::I2>,
     ) {
-        if let Kind::Expert(expert) = &self.kind {
+        if let Some(Kind::Expert(expert)) = self.kind() {
             expert.run_edge_callback(child_index)
         }
     }
@@ -396,7 +403,8 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
         child_index: i32,
         old_value_opt: Option<&G::I1>,
     ) {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return };
+        match kind {
             Kind::Expert(expert) => expert.run_edge_callback(child_index),
             Kind::MapRef(mapref) => {
                 // mapref is the only node that uses old_value_opt in child_changed.
@@ -523,7 +531,7 @@ impl<G: NodeGenerics> Debug for Node<G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            .field("kind", &self.kind)
+            .field("kind", &self.kind())
             // .field("height", &self.height.get())
             .finish()
     }
@@ -558,7 +566,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.is_valid.get()
     }
     fn should_be_invalidated(&self) -> bool {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return false };
+        match kind {
             Kind::Constant(_) | Kind::Var(_) => false,
             Kind::ArrayFold(..)
             | Kind::Map(..)
@@ -579,7 +588,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
     fn propagate_invalidity_helper(&self) {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return };
+        match kind {
             /* If multiple children are invalid, they will push us as many times on the
             propagation stack, so we count them right. */
             Kind::Expert(expert) => expert.incr_invalid_children(),
@@ -628,7 +638,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.height.set(height);
     }
     fn is_stale(&self) -> bool {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return false };
+        match kind {
             Kind::Var(var) => {
                 let set_at = var.set_at.get();
                 let recomputed_at = self.recomputed_at.get();
@@ -724,7 +735,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if self.is_stale() {
             state.recompute_heap.insert(self.packed());
         }
-        if let Kind::Expert(expert) = &self.kind {
+        if let Some(Kind::Expert(expert)) = self.kind() {
             expert.observability_change(true)
         }
     }
@@ -740,7 +751,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.maybe_handle_after_stabilisation(state);
         state.set_height(self.packed(), -1);
         self.remove_children(state);
-        if let Kind::Expert(expert) = &self.kind {
+        if let Some(Kind::Expert(expert)) = self.kind() {
             expert.observability_change(false)
         }
         debug_assert!(!self.needs_to_be_computed());
@@ -750,7 +761,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef)) {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return };
+        match kind {
             Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. })
             | Kind::MapRef(MapRefNode { input, .. })
@@ -812,7 +824,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
         state.num_nodes_recomputed.increment();
         self.recomputed_at.set(state.stabilisation_num.get());
-        match &self.kind {
+        let Some(kind) = self.kind() else { return None };
+        match kind {
             Kind::Map(map) => {
                 let new_value = {
                     let mut f = map.mapper.borrow_mut();
@@ -938,7 +951,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     /// If it returns false, it has already added parent to the RCH.
     fn parent_iter_can_recompute_now(&self, child: &dyn ErasedNode, state: &State) -> bool {
         let parent = self;
-        let can_recompute_now = match &parent.kind {
+
+        let Some(parent_kind) = parent.kind() else {
+            return false
+        };
+
+        let can_recompute_now = match parent_kind {
             // these nodes aren't parents
             Kind::Constant(_) | Kind::Var(_) => panic!(),
             // These nodes have more than one child.
@@ -962,8 +980,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             {[
             node.height > Scope.height parent.created_in
             ]} */
-            Kind::BindMain(_, _, lhs_change) => child.height() > lhs_change.height(), // | Kind::If_then_else i -> node.height > i.test_change.height
-                                                                                      // | Join_main j -> node.height > j.lhs_change.height
+            Kind::BindMain(_, _, lhs_change) => child.height() > lhs_change.height(),
+            // | Kind::If_then_else i -> node.height > i.test_change.height
+            // | Join_main j -> node.height > j.lhs_change.height
         };
         if can_recompute_now || parent.height() <= state.recompute_heap.min_height() {
             /* If [parent.height] is [<=] the height of all nodes in the recompute heap
@@ -997,6 +1016,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         });
         any
     }
+
     fn invalidate_node(&self, state: &State) {
         if !self.is_valid() {
             return;
@@ -1028,7 +1048,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         //  | Bind_main bind -> invalidate_nodes_created_on_rhs bind.all_nodes_created_on_rhs
         //  | Step_function { alarm; clock; _ } -> remove_alarm clock alarm
         //  | _ -> ());
-        if let Kind::BindMain(_, bind, _) = &self.kind {
+        if let Some(Kind::BindMain(_, bind, _)) = self.kind() {
             let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
             invalidate_nodes_created_on_rhs(&mut all, state);
         }
@@ -1041,7 +1061,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         oc: &NodeRef,
         op: &NodeRef,
     ) {
-        if let Kind::BindLhsChange(_, bind) = &self.kind {
+        if let Some(Kind::BindLhsChange(_, bind)) = self.kind() {
             tracing::debug_span!("adjust_heights_bind_lhs_change").in_scope(|| {
                 let all = bind.all_nodes_created_on_rhs.borrow();
                 for rnode_weak in all.iter() {
@@ -1118,8 +1138,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             writeln!(f, "{:?}", user)?;
         }
         let h = self.height.get();
-        match &self.kind {
-            _ if !self.is_valid() => return write!(f, "Invalid"),
+        let Some(kind) = self.kind() else {
+            return write!(f, "Invalid")
+        };
+        match kind {
             Kind::Constant(v) => return write!(f, "Constant({id:?}) @ {h} => {v:?}"),
             Kind::ArrayFold(_) => write!(f, "ArrayFold"),
             Kind::Var(_) => write!(f, "Var"),
@@ -1140,7 +1162,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>) {
-        if let Kind::BindLhsChange(_, bind) = &self.kind {
+        if let Some(Kind::BindLhsChange(_, bind)) = self.kind() {
             let all = bind.all_nodes_created_on_rhs.borrow();
             for rhs in all.iter().filter_map(Weak::upgrade) {
                 bind_edges.push((self.packed(), rhs.clone()));
@@ -1180,11 +1202,11 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         } else {
             write!(f, ", fillcolor=5, style=filled")?;
         }
-        match node.kind {
-            Kind::Var(..) => {
+        match node.kind() {
+            Some(Kind::Var(..)) => {
                 write!(f, ", shape=note")?;
             }
-            Kind::BindLhsChange(..) => {
+            Some(Kind::BindLhsChange(..)) => {
                 write!(f, ", shape=box3d, bgcolor=grey")?;
             }
             _ => {}
@@ -1222,7 +1244,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         );
     }
     fn expert_make_stale(&self) {
-        let Some(expert) = self.kind.expert() else { return };
+        if !self.is_valid() {
+            return;
+        }
+        let Some(Kind::Expert(expert)) = self.kind() else { return };
         #[cfg(debug_assertions)]
         self.assert_currently_running_node_is_child("make_stale");
         match expert.make_stale() {
@@ -1237,7 +1262,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn expert_add_dependency(&self, packed_edge: PackedEdge) {
-        let Some(expert) = self.kind.expert() else { return };
+        let Some(Kind::Expert(expert)) = self.kind() else { return };
         // if debug
         // then
         //   if am_stabilizing state
@@ -1271,7 +1296,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn expert_remove_dependency(&self, packed_edge: &dyn IsEdge, any_edge: &dyn Any) {
-        let Some(expert) = self.kind.expert() else { return };
+        let Some(Kind::Expert(expert)) = self.kind() else { return };
         #[cfg(debug_assertions)]
         self.assert_currently_running_node_is_child("remove_dependency");
         /* [node] is not guaranteed to be necessary, for the reason stated in
@@ -1407,7 +1432,7 @@ impl<G: NodeGenerics> Node<G> {
             recomputed_at: Cell::new(StabilisationNum::init()),
             value_opt: RefCell::new(None),
             // old_value_opt: RefCell::new(None),
-            kind,
+            _kind: kind,
             parents: smallvec::smallvec![].into(),
             observers: HashMap::new().into(),
             graphviz_user_data: None.into(),
@@ -1418,6 +1443,13 @@ impl<G: NodeGenerics> Node<G> {
 
     pub fn create_rc(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Rc<Self> {
         Node::create(state, created_in, kind).into_rc()
+    }
+
+    fn kind(&self) -> Option<&Kind<G>> {
+        if !self.is_valid() {
+            return None;
+        }
+        Some(&self._kind)
     }
 
     fn maybe_change_value(&self, value: G::R, state: &State) -> Option<NodeRef> {
@@ -1525,10 +1557,7 @@ impl<G: NodeGenerics> Node<G> {
         state: &State,
     ) {
         let bind_main = self;
-        let id = match &bind_main.kind {
-            Kind::BindMain(id, ..) => id,
-            _ => return,
-        };
+        let Some(Kind::BindMain(id, ..)) = bind_main.kind() else { return };
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
         match old_child {
             None => {
@@ -1612,7 +1641,8 @@ impl<G: NodeGenerics> Node<G> {
         ParentRef::I2(self)
     }
     fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b, G>) {
-        match &self.kind {
+        let Some(kind) = self.kind() else { return };
+        match kind {
             Kind::Constant(_) => {}
             Kind::Map(MapNode { input, .. })
             | Kind::MapRef(MapRefNode { input, .. })
@@ -1668,7 +1698,8 @@ impl<G: NodeGenerics> Node<G> {
 
     /// Only used for debug assertions. It's okay to be slow.
     fn slow_get_child(&self, child_index: i32) -> NodeRef {
-        match &self.kind {
+        let Some(kind) = self.kind() else { panic!() };
+        match kind {
             Kind::Expert(e) => e.children.borrow()[child_index as usize].packed(),
             Kind::ArrayFold(af) => af.children[child_index as usize].node.packed(),
             _ => {

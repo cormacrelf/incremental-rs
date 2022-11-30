@@ -54,15 +54,6 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Expert(ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
 }
 
-impl<G: NodeGenerics> Kind<G> {
-    pub(crate) fn expert(&self) -> Option<&ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>> {
-        match self {
-            Kind::Expert(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
 pub(crate) struct BindLhsId<G: NodeGenerics> {
     pub(crate) r_unit: Id<(), G::R>,
     pub(crate) input_lhs_i2: Id<Input<G::BindLhs>, Input<G::I2>>,
