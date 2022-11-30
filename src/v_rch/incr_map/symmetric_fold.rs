@@ -254,6 +254,15 @@ pub enum DiffElement<V> {
     Right(V),
 }
 
+impl<T> DiffElement<T> {
+    pub fn new_data(self) -> Option<T> {
+        match self {
+            DiffElement::Left(_) => None,
+            DiffElement::Right(r) | DiffElement::Unequal(_, r) => Some(r),
+        }
+    }
+}
+
 #[test]
 fn test_merge_once() {
     let i = [1i32, 2, 3][..].iter();

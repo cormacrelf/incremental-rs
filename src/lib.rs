@@ -4,8 +4,6 @@
 #![allow(clippy::type_complexity)]
 // #![allow(clippy::single_match)]
 
-mod order;
-mod v1;
 mod v_rch;
 
 use std::rc::{Rc, Weak};

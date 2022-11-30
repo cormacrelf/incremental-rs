@@ -1,5 +1,5 @@
 use super::adjust_heights_heap::AdjustHeightsHeap;
-use super::array_fold::ArrayFold;
+use super::kind;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
 use crate::{SubscriptionToken, WeakMap};
@@ -171,10 +171,10 @@ impl State {
         if vec.is_empty() {
             return self.constant(init);
         }
-        let node = Node::<ArrayFold<F, T, R>>::create_rc(
+        let node = Node::<kind::ArrayFold<F, T, R>>::create_rc(
             self.weak(),
             self.current_scope(),
-            Kind::ArrayFold(ArrayFold {
+            Kind::ArrayFold(kind::ArrayFold {
                 init,
                 fold: f.into(),
                 children: vec,

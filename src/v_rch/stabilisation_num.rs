@@ -1,5 +1,3 @@
-use crate::order::PartialOrder;
-
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct StabilisationNum(pub i32);
@@ -13,11 +11,5 @@ impl StabilisationNum {
     }
     pub fn is_never(&self) -> bool {
         self.0 == -1
-    }
-}
-
-impl PartialOrder for StabilisationNum {
-    fn less_equal(&self, other: &Self) -> bool {
-        self.0.less_than(&other.0)
     }
 }

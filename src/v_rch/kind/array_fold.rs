@@ -1,4 +1,4 @@
-use super::kind::NodeGenerics;
+use super::NodeGenerics;
 use super::{Incr, Value};
 use std::cell::RefCell;
 use std::fmt::{self, Debug};

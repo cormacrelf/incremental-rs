@@ -1,9 +1,10 @@
 use std::any::Any;
 
 use super::*;
-use crate::v_rch::expert::*;
+use crate::v_rch::kind;
 use crate::v_rch::node::Incremental;
 use crate::WeakIncr;
+use kind::expert::{IsEdge, PackedEdge};
 
 pub(crate) fn create<T, C, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
@@ -12,11 +13,13 @@ where
     F: FnMut() -> T + 'static,
     O: FnMut(bool) + 'static,
 {
-    let e = ExpertNode::new_obs(recompute, on_observability_change);
-    let node = Node::<ExpertNode<T, C, F, O>>::create_rc(
+    let node = Node::<kind::ExpertNode<T, C, F, O>>::create_rc(
         state.weak(),
         state.current_scope(),
-        Kind::Expert(e),
+        Kind::Expert(kind::ExpertNode::new_obs(
+            recompute,
+            on_observability_change,
+        )),
     );
 
     // if debug
@@ -44,11 +47,13 @@ where
     let node = Rc::<Node<_>>::new_cyclic(|weak| {
         let weak_incr = WeakIncr(weak.clone());
         let recompute = cyclic(weak_incr);
-        let e = ExpertNode::new_obs(recompute, on_observability_change);
-        let mut node = Node::<ExpertNode<T, C, F, O>>::create(
+        let mut node = Node::<kind::ExpertNode<T, C, F, O>>::create(
             state.weak(),
             state.current_scope(),
-            Kind::Expert(e),
+            Kind::Expert(kind::ExpertNode::new_obs(
+                recompute,
+                on_observability_change,
+            )),
         );
         node.weak_self = weak.clone();
         node

@@ -1,17 +1,15 @@
 use super::CellIncrement;
-use crate::v_rch::expert::Edge;
-use crate::v_rch::MapWithOld;
 use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
-use super::expert::{Invalid, IsEdge, MakeStale, PackedEdge};
 use super::internal_observer::{InternalObserver, ObserverId};
-use super::kind::{Kind, NodeGenerics};
+use super::kind::expert::{Edge, Invalid, IsEdge, MakeStale, PackedEdge};
+use super::kind::{self, Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
 use super::state::{IncrStatus, State};
-use super::{Incr, Map2Node, MapNode, MapRefNode, NodeRef, WeakNode};
+use super::{Incr, NodeRef, WeakNode};
 use core::fmt::Debug;
 use std::any::Any;
 use std::cell::Ref;
@@ -767,10 +765,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let Some(kind) = self.kind() else { return };
         match kind {
             Kind::Constant(_) => {}
-            Kind::Map(MapNode { input, .. })
-            | Kind::MapRef(MapRefNode { input, .. })
-            | Kind::MapWithOld(MapWithOld { input, .. }) => f(0, input.packed()),
-            Kind::Map2(Map2Node { one, two, .. }) => {
+            Kind::Map(kind::MapNode { input, .. })
+            | Kind::MapRef(kind::MapRefNode { input, .. })
+            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => f(0, input.packed()),
+            Kind::Map2(kind::Map2Node { one, two, .. }) => {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
@@ -1660,10 +1658,12 @@ impl<G: NodeGenerics> Node<G> {
         let Some(kind) = self.kind() else { return };
         match kind {
             Kind::Constant(_) => {}
-            Kind::Map(MapNode { input, .. })
-            | Kind::MapRef(MapRefNode { input, .. })
-            | Kind::MapWithOld(MapWithOld { input, .. }) => (f.i1)(0, input.clone().as_input()),
-            Kind::Map2(Map2Node { one, two, .. }) => {
+            Kind::Map(kind::MapNode { input, .. })
+            | Kind::MapRef(kind::MapRefNode { input, .. })
+            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => {
+                (f.i1)(0, input.clone().as_input())
+            }
+            Kind::Map2(kind::Map2Node { one, two, .. }) => {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());
             }

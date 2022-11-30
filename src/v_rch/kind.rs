@@ -1,15 +1,19 @@
 use std::fmt::Debug;
 use std::rc::Rc;
 
+use super::node::Node;
+use super::var::Var;
 use crate::{Incr, Value};
 
-use refl::Id;
+mod array_fold;
+mod bind;
+pub(crate) mod expert;
+mod map;
 
-use super::array_fold::ArrayFold;
-use super::expert::ExpertNode;
-use super::node::{Input, Node};
-use super::var::Var;
-use super::{BindLhsChangeNodeGenerics, BindNode, Map2Node, MapNode, MapRefNode, MapWithOld};
+pub(crate) use array_fold::*;
+pub(crate) use bind::*;
+pub(crate) use expert::ExpertNode;
+pub(crate) use map::*;
 
 pub(crate) trait NodeGenerics: 'static {
     type R: Value;
@@ -30,54 +34,24 @@ pub(crate) trait NodeGenerics: 'static {
 
 pub(crate) enum Kind<G: NodeGenerics> {
     Constant(G::R),
-    ArrayFold(ArrayFold<G::Fold, G::I1, G::R>),
+    ArrayFold(array_fold::ArrayFold<G::Fold, G::I1, G::R>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
-    Map(MapNode<G::F1, G::I1, G::R>),
-    MapWithOld(MapWithOld<G::WithOld, G::I1, G::R>),
-    MapRef(MapRefNode<G::FRef, G::I1, G::R>),
-    Map2(Map2Node<G::F2, G::I1, G::I2, G::R>),
+    Map(map::MapNode<G::F1, G::I1, G::R>),
+    MapWithOld(map::MapWithOld<G::WithOld, G::I1, G::R>),
+    MapRef(map::MapRefNode<G::FRef, G::I1, G::R>),
+    Map2(map::Map2Node<G::F2, G::I1, G::I2, G::R>),
     BindLhsChange(
-        BindLhsId<G>,
-        // Ownership goes
-        // a Kind::BindMain holds a BindNode & the BindLhsChange
-        // a Kind::BindLhsChange holds a BindNode
-        // BindNode holds weak refs to both
-        Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        bind::BindLhsId<G>,
+        Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
     ),
     BindMain(
-        BindMainId<G>,
-        Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
-        Rc<Node<BindLhsChangeNodeGenerics<G::B1, G::BindLhs, G::BindRhs>>>,
+        bind::BindMainId<G>,
+        Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
     ),
-    Expert(ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
-}
-
-pub(crate) struct BindLhsId<G: NodeGenerics> {
-    pub(crate) r_unit: Id<(), G::R>,
-    pub(crate) input_lhs_i2: Id<Input<G::BindLhs>, Input<G::I2>>,
-}
-
-impl<G: NodeGenerics> Debug for BindLhsId<G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindLhsId").finish()
-    }
-}
-
-pub(crate) struct BindMainId<G: NodeGenerics> {
-    pub(crate) rhs_r: Id<G::BindRhs, G::R>,
-    pub(crate) input_rhs_i1: Id<Input<G::BindRhs>, Input<G::I1>>,
-    pub(crate) input_lhs_i2: Id<Input<()>, Input<G::I2>>,
-}
-
-impl<G: NodeGenerics> Debug for BindMainId<G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindMainId")
-            .field("d_eq_r", &self.rhs_r)
-            .field("input_lhs_change_unit", &self.input_lhs_i2)
-            .finish()
-    }
+    Expert(expert::ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
 }
 
 impl<G: NodeGenerics> Debug for Kind<G> {

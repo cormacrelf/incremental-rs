@@ -1,0 +1,370 @@
+use std::cell::{Cell, RefCell};
+use std::fmt;
+use std::hash::Hash;
+use std::rc::{Rc, Weak};
+
+use super::kind::{self, Kind};
+use super::node::{Incremental, Input, Node, NodeId};
+use super::scope::{BindScope, Scope};
+use crate::{Cutoff, Observer, Value, WeakState};
+
+#[derive(Debug)]
+#[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
+pub struct Incr<T> {
+    pub(crate) node: Input<T>,
+}
+
+impl<T> Clone for Incr<T> {
+    fn clone(&self) -> Self {
+        Self {
+            node: self.node.clone(),
+        }
+    }
+}
+
+impl<T> From<Input<T>> for Incr<T> {
+    fn from(node: Input<T>) -> Self {
+        Self { node }
+    }
+}
+
+impl<T> PartialEq for Incr<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other)
+    }
+}
+
+impl<T> Eq for Incr<T> {}
+
+impl<T> Hash for Incr<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.node.id().hash(state)
+    }
+}
+
+impl<T> Incr<T> {
+    pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
+        crate::rc_thin_ptr_eq(&self.node, &other.node)
+    }
+    pub fn weak(&self) -> WeakIncr<T> {
+        WeakIncr(Rc::downgrade(&self.node))
+    }
+    pub fn set_graphviz_user_data(&self, data: impl fmt::Debug + 'static) {
+        self.node.set_graphviz_user_data(Box::new(data))
+    }
+    pub fn with_graphviz_user_data(self, data: impl fmt::Debug + 'static) -> Self {
+        self.node.set_graphviz_user_data(Box::new(data));
+        self
+    }
+    pub fn state(&self) -> WeakState {
+        self.node.state().public_weak()
+    }
+}
+
+/// Type for use in weak hash maps of incrementals
+#[derive(Debug)]
+pub struct WeakIncr<T>(pub(crate) Weak<dyn Incremental<T>>);
+impl<T> WeakIncr<T> {
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+    pub fn upgrade(&self) -> Option<Incr<T>> {
+        self.0.upgrade().map(Incr::from)
+    }
+    pub fn strong_count(&self) -> usize {
+        self.0.strong_count()
+    }
+    pub fn weak_count(&self) -> usize {
+        self.0.weak_count()
+    }
+}
+
+impl<T> Clone for WeakIncr<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Value> Incr<T> {
+    /// A convenience function for taking a function of type `fn(Incr<T>) -> Incr<R>` and
+    /// applying it to self. This enables you to put your own functions
+    /// into the middle of a chain of method calls on Incr.
+    #[inline]
+    pub fn pipe<R>(&self, mut f: impl FnMut(Incr<T>) -> Incr<R>) -> Incr<R> {
+        // clones are cheap.
+        f(self.clone())
+    }
+
+    pub fn pipe1<R, A1>(&self, mut f: impl FnMut(Incr<T>, A1) -> Incr<R>, arg1: A1) -> Incr<R> {
+        f(self.clone(), arg1)
+    }
+
+    pub fn pipe2<R, A1, A2>(
+        &self,
+        mut f: impl FnMut(Incr<T>, A1, A2) -> Incr<R>,
+        arg1: A1,
+        arg2: A2,
+    ) -> Incr<R> {
+        f(self.clone(), arg1, arg2)
+    }
+
+    /// A simple variation on `Incr::map` that tells you how many
+    /// times the incremental has recomputed before this time.
+    pub fn enumerate<R, F>(&self, mut f: F) -> Incr<R>
+    where
+        R: Value,
+        F: FnMut(usize, &T) -> R + 'static,
+    {
+        let mut counter = 0;
+        self.map(move |x| {
+            let v = f(counter, x);
+            counter += 1;
+            v
+        })
+    }
+
+    pub fn map<R: Value, F: FnMut(&T) -> R + 'static>(&self, f: F) -> Incr<R> {
+        let mapper = kind::MapNode {
+            input: self.clone().node,
+            mapper: f.into(),
+        };
+        let state = self.node.state();
+        let node = Node::<kind::MapNode<F, T, R>>::create_rc(
+            state.weak(),
+            state.current_scope.borrow().clone(),
+            Kind::Map(mapper),
+        );
+
+        Incr { node }
+    }
+
+    pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
+    where
+        F: for<'a> Fn(&'a T) -> &'a R + 'static,
+    {
+        let state = self.node.state();
+        let node = Node::<kind::MapRefNode<F, T, R>>::create_rc(
+            state.weak(),
+            state.current_scope(),
+            Kind::MapRef(kind::MapRefNode {
+                input: self.node.clone(),
+                did_change: true.into(),
+                mapper: f,
+            }),
+        );
+        Incr { node }
+    }
+
+    /// A version of map that gives you a (weak) reference to the map node you're making, in the
+    /// closure.
+    ///
+    /// Useful for advanced usage where you want to add manual dependencies with the
+    /// `incremental::expert` constructs.
+    pub fn map_cyclic<R: Value>(
+        &self,
+        mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static,
+    ) -> Incr<R> {
+        let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
+            let f = {
+                let weak = WeakIncr(node_weak.clone());
+                move |t: &T| cyclic(weak.clone(), t)
+            };
+            let mapper = kind::MapNode {
+                input: self.clone().node,
+                mapper: f.into(),
+            };
+            let state = self.node.state();
+            let mut node = Node::<kind::MapNode<_, T, R>>::create(
+                state.weak(),
+                state.current_scope.borrow().clone(),
+                Kind::Map(mapper),
+            );
+            node.weak_self = node_weak.clone();
+            node
+        });
+        node.created_in.add_node(node.clone());
+
+        Incr { node }
+    }
+
+    /// A version of `Incr::map` that allows reuse of the old
+    /// value. You can use it to produce a new value. The main
+    /// use case is avoiding allocation.
+    ///
+    /// The return type of the closure is `(R, bool)`. The boolean
+    /// value is a replacement for the `Cutoff` system, because
+    /// the `Cutoff` functions require access to an old value and
+    /// a new value. With `map_with_old`, you must figure out yourself
+    /// (without relying on PartialEq, for example) whether the
+    /// incremental node should propagate its changes.
+    ///
+    pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
+    where
+        R: Value,
+        F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
+    {
+        let state = self.node.state();
+        let node = Node::<kind::MapWithOld<F, T, R>>::create_rc(
+            state.weak(),
+            state.current_scope(),
+            Kind::MapWithOld(kind::MapWithOld::new(self.node.clone(), f)),
+        );
+        Incr { node }
+    }
+
+    pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
+    where
+        T2: Value,
+        R: Value,
+        F: FnMut(&T, &T2) -> R + 'static,
+    {
+        let mapper = kind::Map2Node {
+            one: self.clone().node,
+            two: other.clone().node,
+            mapper: f.into(),
+        };
+        let state = self.node.state();
+        let node = Node::<kind::Map2Node<F, T, T2, R>>::create_rc(
+            state.weak(),
+            state.current_scope.borrow().clone(),
+            Kind::Map2(mapper),
+        );
+
+        Incr { node }
+    }
+
+    /// A version of bind that includes a copy of the `incremental::State`
+    /// to help you construct new incrementals within the bind.
+    pub fn binds<F, R>(&self, mut f: F) -> Incr<R>
+    where
+        R: Value,
+        F: FnMut(&WeakState, &T) -> Incr<R> + 'static,
+    {
+        let cloned = self.node.state().public_weak();
+        self.bind(move |value: &T| f(&cloned, value))
+    }
+
+    pub fn bind<F, R>(&self, f: F) -> Incr<R>
+    where
+        R: Value,
+        F: FnMut(&T) -> Incr<R> + 'static,
+    {
+        let state = self.node.state();
+        let bind = Rc::new_cyclic(|weak| kind::BindNode {
+            lhs: self.clone().node,
+            mapper: f.into(),
+            rhs: RefCell::new(None),
+            rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
+            all_nodes_created_on_rhs: RefCell::new(vec![]),
+            lhs_change: Weak::new().into(),
+            id_lhs_change: Cell::new(NodeId(0)),
+            main: Weak::new().into(),
+        });
+        let lhs_change = Node::<kind::BindLhsChangeGen<F, T, R>>::create_rc(
+            state.weak(),
+            state.current_scope(),
+            Kind::BindLhsChange(
+                kind::BindLhsId {
+                    input_lhs_i2: refl::refl(),
+                    r_unit: refl::refl(),
+                },
+                bind.clone(),
+            ),
+        );
+        let main = Node::<kind::BindNodeMainGen<F, T, R>>::create_rc(
+            state.weak(),
+            state.current_scope(),
+            Kind::BindMain(
+                kind::BindMainId {
+                    rhs_r: refl::refl(),
+                    input_rhs_i1: refl::refl(),
+                    input_lhs_i2: refl::refl(),
+                },
+                bind.clone(),
+                lhs_change.clone(),
+            ),
+        );
+        {
+            let mut bind_lhs_change = bind.lhs_change.borrow_mut();
+            let mut bind_main = bind.main.borrow_mut();
+            *bind_lhs_change = Rc::downgrade(&lhs_change);
+            *bind_main = Rc::downgrade(&main);
+            bind.id_lhs_change.set(lhs_change.id);
+        }
+
+        /* We set [lhs_change] to never cutoff so that whenever [lhs] changes, [main] is
+        recomputed.  This is necessary to handle cases where [f] returns an existing stable
+        node, in which case the [lhs_change] would be the only thing causing [main] to be
+        stale. */
+        lhs_change.set_cutoff(Cutoff::Never);
+        Incr { node: main }
+    }
+
+    /// Creates an observer for this incremental.
+    ///
+    /// Observers are the primary way to get data out of the computation.
+    /// Their creation and lifetime inform Incremental which parts of the
+    /// computation graph are necessary, such that if you create many
+    /// variables and computations based on them, but only hook up some of
+    /// that to an observer, only the parts transitively necessary to
+    /// supply the observer with values are queued to be recomputed.
+    ///
+    /// That means, without an observer, `var.set(new_value)` does essentially
+    /// nothing, even if you have created incrementals like
+    /// `var.map(...).bind(...).map(...)`. In this fashion, you can safely
+    /// set up computation graphs before you need them, or refuse to dismantle
+    /// them, knowing the expensive computations they contain will not
+    /// grace the CPU until they're explicitly put back under the purview
+    /// of an Observer.
+    ///
+    /// Calling this multiple times on the same node produces multiple
+    /// observers. Only one is necessary to keep a part of a computation
+    /// graph alive and ticking.
+    pub fn observe(&self) -> Observer<T> {
+        let incr = self.clone();
+        let internal = incr.node.state().observe(incr);
+        Observer::new(internal)
+    }
+
+    /// Sets the cutoff function that determines (if it returns true)
+    /// whether to stop (cut off) propagating changes through the graph.
+    /// Note that this method can be called on `Var` as well as any
+    /// other `Incr`.
+    ///
+    /// The default is `Cutoff::PartialEq`. So if your values do not change,
+    /// they will cut off propagation. There is a bound on all T in
+    /// `Incr<T>` used in incremental-rs, all values you pass around
+    /// must be PartialEq.
+    ///
+    /// You can also supply your own comparison function. This will chiefly
+    /// be useful for types like Rc<T>, not to avoid T: PartialEq (you
+    /// can't avoid that) but rather to avoid comparing a large structure
+    /// and simply compare the allocation's pointer value instead.
+    /// In that case, you can:
+    ///
+    /// ```
+    /// use std::rc::Rc;
+    /// use incremental::{IncrState, Cutoff};
+    /// let incr = IncrState::new();
+    /// let var = incr.var(Rc::new(5));
+    /// var.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+    /// // but note that doing this will now cause the change below
+    /// // to propagate, whereas before it would not as the two
+    /// // numbers are == equal:
+    /// var.set(Rc::new(5));
+    /// ```
+    ///
+    pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
+        self.node.set_cutoff(cutoff.boxed());
+    }
+    pub fn set_cutoff_custom_boxed<F>(&self, cutoff_fn: F)
+    where
+        F: FnMut(&T, &T) -> bool + 'static,
+    {
+        self.node.set_cutoff(Cutoff::Custom(cutoff_fn).boxed());
+    }
+
+    pub fn save_dot_to_file(&self, named: &str) {
+        super::node::save_dot_to_file(&mut core::iter::once(self.node.erased()), named).unwrap()
+    }
+}

@@ -1,7 +1,15 @@
 use core::fmt;
 use std::rc::Weak;
 
-use super::{BindScope, NodeRef};
+use super::{node::NodeId, NodeRef, WeakNode};
+
+pub(crate) trait BindScope: fmt::Debug {
+    fn id(&self) -> NodeId;
+    fn is_valid(&self) -> bool;
+    fn is_necessary(&self) -> bool;
+    fn height(&self) -> i32;
+    fn add_node(&self, node: WeakNode);
+}
 
 #[derive(Clone)]
 pub(crate) enum Scope {

@@ -7,13 +7,12 @@ use std::ops::{Deref, Sub};
 use std::rc::{Rc, Weak};
 
 pub use super::cutoff::Cutoff;
-pub use super::expert::public as expert;
+pub use super::incr::{Incr, WeakIncr};
 pub use super::incr_map::symmetric_fold::DiffElement;
 pub use super::incr_map::symmetric_fold::MergeElement;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
-pub use super::Incr;
+pub use super::kind::expert::public as expert;
 pub use super::Value;
-pub use super::WeakIncr;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
