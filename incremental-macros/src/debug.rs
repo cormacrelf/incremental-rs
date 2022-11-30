@@ -1,5 +1,5 @@
 // Lifted directly from salsa-2022, under the MIT license.
-// https://github.com/salsa-rs/salsa/blob/30b5e9760aadc3570dc2ba176f4d74448c4152ed/components/salsa-2022/src/debug.rs
+// <https://github.com/salsa-rs/salsa/blob/30b5e9760aadc3570dc2ba176f4d74448c4152ed/components/salsa-2022/src/debug.rs>
 
 use std::{
     collections::{HashMap, HashSet},
@@ -71,9 +71,9 @@ pub trait DebugWithDb<Db: ?Sized> {
     }
 
     /// if `include_all_fields` is `false` only identity fields should be read, which means:
-    ///     - for [#\[salsa::input\]](salsa_2022_macros::input) no fields
-    ///     - for [#\[salsa::tracked\]](salsa_2022_macros::tracked) only fields with `#[id]` attribute
-    ///     - for [#\[salsa::interned\]](salsa_2022_macros::interned) any field
+    ///     - for `#\[salsa::input\]` no fields
+    ///     - for `#\[salsa::tracked\]` only fields with `#[id]` attribute
+    ///     - for `#\[salsa::interned\]` any field
     fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Db, include_all_fields: bool) -> fmt::Result;
 }
 
@@ -217,7 +217,7 @@ where
 
 /// This is used by the macro generated code.
 /// If the field type implements `DebugWithDb`, uses that, otherwise, uses `Debug`.
-/// That's the "has impl" trick (https://github.com/nvzqz/impls#how-it-works)
+/// That's the "has impl" trick (<https://github.com/nvzqz/impls#how-it-works>)
 #[doc(hidden)]
 pub mod helper {
     use super::{DebugWith, DebugWithDb};

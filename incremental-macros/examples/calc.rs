@@ -15,7 +15,8 @@ db! {
         /// We are using a HashMap for this basic example, but Incremental will take a clone each
         /// time you modify + stabilise, in order to help determine whether it changed or not and
         /// avoid spurious recomputation. So using an immutable shared-structure `im_rc::HashMap`
-        /// is generally a better choice.
+        /// is generally a better choice. Or `im_rc::OrdMap`, which can also be used with
+        /// incremental-map.
         ///
         /// (note, could be good to have a version of Var that does not do this, same way MapRef
         /// does not do this.)
