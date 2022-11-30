@@ -195,7 +195,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
                                     prev_map.get(&key_).unwrap().clone()
                                 }
                             });
-                            if let Some(cutoff) = cutoff {
+                            if let Some(cutoff) = cutoff.clone() {
                                 node.watch().set_cutoff(cutoff);
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();

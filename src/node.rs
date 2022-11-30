@@ -67,7 +67,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
-    pub cutoff: RefCell<Cutoff<G::R, Box<dyn FnMut(&G::R, &G::R) -> bool>>>,
+    pub cutoff: RefCell<Cutoff<G::R>>,
     /// The time at which our value changed. -1 if never.
     ///
     /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
@@ -133,7 +133,7 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
     );
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<R>, state: &State);
     fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
-    fn set_cutoff(&self, cutoff: Cutoff<R, Box<dyn FnMut(&R, &R) -> bool>>);
+    fn set_cutoff(&self, cutoff: Cutoff<R>);
     fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
@@ -248,7 +248,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         child_parents.swap_remove(parent_index as usize);
     }
 
-    fn set_cutoff(&self, cutoff: Cutoff<G::R, Box<dyn FnMut(&G::R, &G::R) -> bool>>) {
+    fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.replace(cutoff);
     }
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
@@ -594,9 +594,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             /* If multiple children are invalid, they will push us as many times on the
             propagation stack, so we count them right. */
             Kind::Expert(expert) => expert.incr_invalid_children(),
-            kind => {
+            _kind => {
                 #[cfg(debug_assertions)]
-                match kind {
+                match _kind {
                     Kind::BindMain { .. } => (), // and IfThenElse, JoinMain
                     _ => panic!("nodes with no children are never pushed on the stack"),
                 }

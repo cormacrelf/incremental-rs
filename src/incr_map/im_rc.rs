@@ -180,10 +180,10 @@ fn hashmap_fast_eq<K: Hash + Eq, V: Eq>(
     a.ptr_eq(b) || a.eq(b)
 }
 pub fn im_ordmap_cutoff<K: Ord + Eq, V: Eq>() -> Cutoff<OrdMap<K, V>> {
-    Cutoff::Custom(ordmap_fast_eq)
+    Cutoff::Fn(ordmap_fast_eq)
 }
 pub fn im_hashmap_cutoff<K: Hash + Eq, V: Eq>() -> Cutoff<im_rc::HashMap<K, V>> {
-    Cutoff::Custom(hashmap_fast_eq)
+    Cutoff::Fn(hashmap_fast_eq)
 }
 
 pub(crate) fn merge_shared_impl<
@@ -374,7 +374,7 @@ impl<K: Value + Ord, V: Value> Incr<OrdMap<K, V>> {
                                     prev_map.get(&key_).unwrap().clone()
                                 }
                             });
-                            if let Some(cutoff) = cutoff {
+                            if let Some(cutoff) = cutoff.clone() {
                                 node.watch().set_cutoff(cutoff);
                             }
                             let lhs_change = lhs_change.upgrade().unwrap();

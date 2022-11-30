@@ -129,7 +129,7 @@ fn using_cutoff<T: Value>(
 
     // Do not trigger a recompute until our value is stable.
     let v_cutoff = var.clone();
-    output.set_cutoff_custom_boxed(move |_, _| {
+    output.set_cutoff_fn_boxed(move |_, _| {
         let was_changed = v_cutoff.was_changed_during_stabilisation();
         println!("cutoff function ran; was it changed during stab? {was_changed:?}");
         was_changed
@@ -338,7 +338,7 @@ where
         output
     });
     let v_cutoff = var.clone();
-    output.set_cutoff_custom_boxed(move |_, _| {
+    output.set_cutoff_fn_boxed(move |_, _| {
         let was_changed = v_cutoff.was_changed_during_stabilisation();
         println!("cutoff function ran; was it changed during stab? {was_changed:?}");
         was_changed

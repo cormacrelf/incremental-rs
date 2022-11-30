@@ -347,7 +347,7 @@ impl<T: Value> Incr<T> {
     /// use incremental::{IncrState, Cutoff};
     /// let incr = IncrState::new();
     /// let var = incr.var(Rc::new(5));
-    /// var.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+    /// var.set_cutoff(Cutoff::Fn(Rc::ptr_eq));
     /// // but note that doing this will now cause the change below
     /// // to propagate, whereas before it would not as the two
     /// // numbers are == equal:
@@ -355,13 +355,44 @@ impl<T: Value> Incr<T> {
     /// ```
     ///
     pub fn set_cutoff(&self, cutoff: Cutoff<T>) {
-        self.node.set_cutoff(cutoff.boxed());
+        self.node.set_cutoff(cutoff);
     }
-    pub fn set_cutoff_custom_boxed<F>(&self, cutoff_fn: F)
+
+    /// A shorthand for using [Incr::set_cutoff] with a function pointer,
+    /// i.e. with [Cutoff::Fn]. Most comparison functions, including
+    /// closures, can be cast to a function pointer because they won't
+    /// capture any values.
+    ///
+    /// ```
+    /// use incremental::IncrState;
+    /// let incr = IncrState::new();
+    /// let var = incr.var(5);
+    /// var.set_cutoff_fn(|a, b| a == b);
+    /// var.set_cutoff_fn(i32::eq);
+    /// var.set_cutoff_fn(PartialEq::eq);
+    /// // ...
+    /// ```
+    pub fn set_cutoff_fn(&self, cutoff_fn: fn(&T, &T) -> bool) {
+        self.node.set_cutoff(Cutoff::Fn(cutoff_fn));
+    }
+
+    /// A shorthand for using [Incr::set_cutoff] with [Cutoff::FnBoxed] and
+    /// a closure that may capture its environment and mutate its captures.
+    ///
+    /// ```
+    /// # use std::cell::Cell;
+    /// # use std::rc::Rc;
+    /// use incremental::IncrState;
+    /// let incr = IncrState::new();
+    /// let var = incr.var(5);
+    /// let capture = Rc::new(Cell::new(false));
+    /// var.set_cutoff_fn_boxed(move |_, _| capture.get());
+    /// ```
+    pub fn set_cutoff_fn_boxed<F>(&self, cutoff_fn: F)
     where
-        F: FnMut(&T, &T) -> bool + 'static,
+        F: FnMut(&T, &T) -> bool + Clone + 'static,
     {
-        self.node.set_cutoff(Cutoff::Custom(cutoff_fn).boxed());
+        self.node.set_cutoff(Cutoff::FnBoxed(Box::new(cutoff_fn)));
     }
 
     pub fn save_dot_to_file(&self, named: &str) {

@@ -1,47 +1,43 @@
-use std::marker::PhantomData;
-
-#[non_exhaustive]
 #[derive(Clone)]
-pub enum Cutoff<T, F = fn(&T, &T) -> bool> {
+#[non_exhaustive]
+pub enum Cutoff<T> {
     Always,
     Never,
     PartialEq,
-    Custom(F),
-    #[doc(hidden)]
-    __Phantom(PhantomData<T>),
+    Fn(fn(&T, &T) -> bool),
+    FnBoxed(Box<dyn CutoffClosure<T>>),
 }
 
-impl<T, F> Copy for Cutoff<T, F>
+pub trait CutoffClosure<T>: FnMut(&T, &T) -> bool {
+    fn clone_box(&self) -> Box<dyn CutoffClosure<T>>;
+}
+
+impl<T, F> CutoffClosure<T> for F
 where
-    F: Copy,
-    T: Clone,
+    F: FnMut(&T, &T) -> bool + Clone + 'static,
 {
+    fn clone_box(&self) -> Box<dyn CutoffClosure<T>> {
+        Box::new(self.clone())
+    }
 }
 
-impl<T, F> Cutoff<T, F>
+impl<T> Clone for Box<dyn CutoffClosure<T>> {
+    fn clone(&self) -> Self {
+        (**self).clone_box()
+    }
+}
+
+impl<T> Cutoff<T>
 where
     T: PartialEq,
-    F: FnMut(&T, &T) -> bool,
 {
-    pub fn boxed(self) -> Cutoff<T, Box<dyn FnMut(&T, &T) -> bool>>
-    where
-        F: 'static,
-    {
-        match self {
-            Self::Always => Cutoff::Always,
-            Self::Never => Cutoff::Never,
-            Self::PartialEq => Cutoff::PartialEq,
-            Self::Custom(comparator) => Cutoff::Custom(Box::new(comparator)),
-            Self::__Phantom(_) => Cutoff::__Phantom(PhantomData),
-        }
-    }
     pub fn should_cutoff(&mut self, a: &T, b: &T) -> bool {
         match self {
             Self::Always => true,
             Self::Never => false,
             Self::PartialEq => a.eq(b),
-            Self::Custom(comparator) => comparator(a, b),
-            Self::__Phantom(_) => unreachable!(),
+            Self::Fn(comparator) => comparator(a, b),
+            Self::FnBoxed(comparator) => comparator(a, b),
         }
     }
 }

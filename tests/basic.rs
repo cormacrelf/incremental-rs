@@ -753,7 +753,7 @@ fn cutoff_rc_ptr_eq() {
 
     // And we're using Rc::ptr_eq! Without any fancy specialization tricks!
     // Because v already knows what its T is!
-    v.set_cutoff(Cutoff::Custom(Rc::ptr_eq));
+    v.set_cutoff(Cutoff::Fn(Rc::ptr_eq));
 
     // The default is of course PartialEq.
 
