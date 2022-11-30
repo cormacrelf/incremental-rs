@@ -40,6 +40,15 @@ impl Scope {
             }
         }
     }
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::Top => true,
+            Self::Bind(weak) => {
+                let strong = weak.upgrade().unwrap();
+                strong.is_valid()
+            }
+        }
+    }
     pub(crate) fn is_necessary(&self) -> bool {
         match self {
             Self::Top => true,

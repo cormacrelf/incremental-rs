@@ -19,7 +19,7 @@ pub use super::WeakIncr;
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
-use super::scope::Scope;
+use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
 
@@ -260,8 +260,8 @@ impl IncrState {
 
     pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static, T: Value>(
         &self,
-        f: impl Fn(I) -> Incr<T> + Clone,
-    ) -> impl Fn(I) -> Incr<T> + Clone {
+        mut f: impl FnMut(I) -> Incr<T> + Clone,
+    ) -> impl FnMut(I) -> Incr<T> + Clone {
         // // we define this inside the generic function.
         // // so it's a new type for every T!
         // slotmap::new_key_type! { struct TKey; }
@@ -269,6 +269,11 @@ impl IncrState {
         let storage: WeakHashMap<I, T> = WeakHashMap::default();
         let storage: Rc<RefCell<WeakHashMap<I, T>>> = Rc::new(RefCell::new(storage));
         self.add_weak_map(storage.clone());
+
+        let weak_state = self.weak();
+
+        // Function f is run in the scope you called weak_memoize_fn in.
+        let creation_scope = self.inner.current_scope();
 
         move |i| {
             let storage_ = storage.borrow();
@@ -281,7 +286,10 @@ impl IncrState {
             }
             // don't want f to get a BorrowMutError if it's recursive
             drop(storage_);
-            let val = f(i.clone());
+            let val = weak_state
+                .upgrade()
+                .unwrap()
+                .within_scope(creation_scope.clone(), || f(i.clone()));
             let mut storage_ = storage.borrow_mut();
             storage_.insert(i, val.weak());
             val
@@ -311,7 +319,7 @@ impl IncrState {
     }
 
     pub fn var<T: Value>(&self, value: T) -> Var<T> {
-        self.inner.var_in_scope(value, Scope::Top)
+        self.inner.var_in_scope(value, scope::Scope::Top)
     }
 
     pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
@@ -324,6 +332,10 @@ impl IncrState {
 
     pub fn set_max_height_allowed(&self, new_max_height: usize) {
         self.inner.set_max_height_allowed(new_max_height)
+    }
+
+    pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
+        self.inner.within_scope(scope.0, f)
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
@@ -385,7 +397,7 @@ impl WeakState {
         self.inner
             .upgrade()
             .unwrap()
-            .var_in_scope(value, Scope::Top)
+            .var_in_scope(value, scope::Scope::Top)
     }
 
     pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
@@ -393,6 +405,10 @@ impl WeakState {
             .upgrade()
             .unwrap()
             .var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
+    }
+
+    pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
+        self.inner.upgrade().unwrap().within_scope(scope.0, f)
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
@@ -538,5 +554,20 @@ impl<K: slotmap::Key, V> WeakMap for WeakSlotMap<K, V> {
     }
     fn capacity(&self) -> usize {
         slotmap::HopSlotMap::capacity(self)
+    }
+}
+
+#[derive(Clone)]
+pub struct Scope(scope::Scope);
+
+impl Debug for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Scope {
+    pub const fn top() -> Self {
+        Scope(scope::Scope::Top)
     }
 }

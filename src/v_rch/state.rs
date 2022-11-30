@@ -96,6 +96,17 @@ impl State {
     pub(crate) fn current_scope(&self) -> Scope {
         self.current_scope.borrow().clone()
     }
+
+    pub(crate) fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
+        if !scope.is_valid() {
+            panic!("Attempted to run a closure within an invalid scope");
+        }
+        let old = self.current_scope.replace(scope);
+        let r = f();
+        self.current_scope.replace(old);
+        r
+    }
+
     pub(crate) fn new() -> Rc<Self> {
         const DEFAULT_MAX_HEIGHT_ALLOWED: usize = 128;
         Self::new_with_height(DEFAULT_MAX_HEIGHT_ALLOWED)
