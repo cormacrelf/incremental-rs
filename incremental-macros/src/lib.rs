@@ -5,6 +5,7 @@ pub use debug::DebugWithDb;
 pub mod re_export {
     pub use incremental;
     pub use slotmap;
+    #[cfg(feature = "string-interner")]
     pub use string_interner;
 }
 
@@ -22,31 +23,38 @@ pub trait ProviderFor<T: Indexed> {
     fn __storage__(&self) -> &::std::cell::RefCell<T::Storage>;
 }
 
-use string_interner::{DefaultSymbol, StringInterner};
+#[cfg(feature = "string-interner")]
+pub use string::InternedString;
 
-pub struct InternedString(DefaultSymbol);
+#[cfg(feature = "string-interner")]
+mod string {
+    use super::ProviderFor;
+    use crate::DebugWithDb;
+    use string_interner::{DefaultSymbol, StringInterner};
 
-impl Indexed for InternedString {
-    type Storage = StringInterner;
-}
+    pub struct InternedString(DefaultSymbol);
 
-impl InternedString {
-    pub fn new(db: &impl ProviderFor<Self>, string: impl AsRef<str>) -> Self {
-        let mut interner = db.__storage__().borrow_mut();
-        Self(interner.get_or_intern(string.as_ref()))
+    impl super::Indexed for InternedString {
+        type Storage = StringInterner;
     }
-}
 
-impl<Db: ProviderFor<Self>> DebugWithDb<Db> for InternedString {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-        db: &Db,
-        _include_all_fields: bool,
-    ) -> std::fmt::Result {
-        let storage = db.__storage__().borrow();
-        let string = storage.resolve(self.0);
-        write!(f, "{:?}", string)
+    impl InternedString {
+        pub fn new(db: &impl ProviderFor<Self>, string: impl AsRef<str>) -> Self {
+            let mut interner = db.__storage__().borrow_mut();
+            Self(interner.get_or_intern(string.as_ref()))
+        }
+    }
+    impl<Db: ProviderFor<Self>> DebugWithDb<Db> for InternedString {
+        fn fmt(
+            &self,
+            f: &mut std::fmt::Formatter<'_>,
+            db: &Db,
+            _include_all_fields: bool,
+        ) -> std::fmt::Result {
+            let storage = db.__storage__().borrow();
+            let string = storage.resolve(self.0);
+            write!(f, "{:?}", string)
+        }
     }
 }
 

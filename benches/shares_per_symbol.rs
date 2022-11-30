@@ -2,8 +2,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use im_rc::{ordmap::Entry, OrdMap};
 use incremental::{Incr, IncrState, Value};
+use incremental_map::im_rc::IncrOrdMap;
+use incremental_map::Symmetric;
 use tracing::Level;
-use tracing_subscriber::fmt::format::FmtSpan;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Dir {
@@ -144,7 +145,7 @@ fn shares(orders: Incr<OrdMap<Oid, Order>>) -> Incr<u32> {
 fn shares_per_symbol(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
     orders
         .pipe1(index_by, |x| x.sym)
-        .incr_mapi_(|_k, v| shares(v), None)
+        .incr_mapi_(|_k, v| shares(v))
 }
 
 fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
@@ -223,9 +224,10 @@ fn setup(
 
 #[tracing::instrument(skip_all)]
 fn bench_update(c: &mut Criterion) {
+    // use tracing_subscriber::fmt::format::FmtSpan;
     tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_span_events(FmtSpan::ENTER)
+        .with_max_level(Level::WARN)
+        // .with_span_events(FmtSpan::ENTER)
         .init();
 
     let size = 1_000_000;

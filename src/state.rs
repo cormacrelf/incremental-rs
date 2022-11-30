@@ -344,7 +344,7 @@ impl State {
         self.stabilise_debug(None)
     }
 
-    pub(crate) fn stabilise_debug(&self, prefix: Option<&str>) {
+    pub(crate) fn stabilise_debug(&self, _prefix: Option<&str>) {
         let span = tracing::info_span!("stabilise");
         span.in_scope(|| {
             #[cfg(debug_assertions)]
@@ -353,7 +353,7 @@ impl State {
                 let mut buf = String::new();
                 move || {
                     if tracing::enabled!(tracing::Level::INFO) {
-                        if let Some(prefix) = prefix {
+                        if let Some(prefix) = _prefix {
                             iterations += 1;
                             use std::fmt::Write;
                             buf.clear();

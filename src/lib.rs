@@ -7,7 +7,6 @@
 mod adjust_heights_heap;
 mod cutoff;
 mod incr;
-mod incr_map;
 mod internal_observer;
 mod kind;
 mod node;

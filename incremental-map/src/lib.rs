@@ -1,13 +1,15 @@
 use std::{cell::RefCell, marker::PhantomData};
 
-use crate::{Incr, Value};
+use incremental::{Incr, Value};
 
-pub(crate) mod btree_map;
+pub mod btree_map;
 #[cfg(feature = "im-rc")]
-pub(crate) mod im_rc;
+pub mod im_rc;
 pub(crate) mod symmetric_fold;
 
-use symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
+pub use self::symmetric_fold::{DiffElement, MergeElement};
+
+use symmetric_fold::{GenericMap, SymmetricFoldMap, SymmetricMapMap};
 
 trait Operator<K, V, V2> {
     type Output;
@@ -19,6 +21,7 @@ trait Operator<K, V, V2> {
 struct MapOperator<K, V, V2, F>(F, PhantomData<(K, V, V2)>)
 where
     F: FnMut(&K, Incr<V>) -> Incr<V2>;
+
 impl<K, V, V2, F> Operator<K, V, V2> for MapOperator<K, V, V2, F>
 where
     F: FnMut(&K, Incr<V>) -> Incr<V2>,
@@ -38,6 +41,7 @@ where
 struct FilterMapOperator<K, V, V2, F>(F, PhantomData<(K, V, V2)>)
 where
     F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>;
+
 impl<K, V, V2, F> Operator<K, V, V2> for FilterMapOperator<K, V, V2, F>
 where
     F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>,
@@ -54,7 +58,20 @@ where
     }
 }
 
-impl<T: Value> Incr<T> {
+pub(crate) trait WithOldIO<T> {
+    fn with_old_input_output<R, F>(&self, f: F) -> Incr<R>
+    where
+        R: Value,
+        F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static;
+
+    fn with_old_input_output2<R, T2, F>(&self, other: &Incr<T2>, f: F) -> Incr<R>
+    where
+        R: Value,
+        T2: Value,
+        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static;
+}
+
+impl<T: Value> WithOldIO<T> for Incr<T> {
     fn with_old_input_output<R, F>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
@@ -91,9 +108,62 @@ impl<T: Value> Incr<T> {
     }
 }
 
-impl<T: Value> Incr<T> {
+pub trait Symmetric<T> {
+    fn incr_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        V2: Value,
+        F: FnMut(&V) -> V2 + 'static,
+        T::OutputMap<V2>: Value;
+
+    fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        V2: Value,
+        F: FnMut(&V) -> Option<V2> + 'static,
+        T::OutputMap<V2>: Value;
+
+    fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        V2: Value,
+        F: FnMut(&K, &V) -> V2 + 'static,
+        T::OutputMap<V2>: Value;
+
+    fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    where
+        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        V2: Value,
+        F: FnMut(&K, &V) -> Option<V2> + 'static,
+        T::OutputMap<V2>: Value;
+
+    fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
+        &self,
+        init: R,
+        add: FAdd,
+        remove: FRemove,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<R>
+    where
+        T: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        FAdd: FnMut(R, &K, &V) -> R + 'static,
+        FRemove: FnMut(R, &K, &V) -> R + 'static;
+}
+
+impl<T: Value> Symmetric<T> for Incr<T> {
     #[inline]
-    pub fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
     where
         T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
@@ -104,7 +174,7 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!(
+        i.set_graphviz_user_data(Box::new(format!(
             "incr_map -> {}",
             std::any::type_name::<T::OutputMap<V2>>()
         )));
@@ -112,7 +182,7 @@ impl<T: Value> Incr<T> {
     }
 
     #[inline]
-    pub fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
     where
         T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
@@ -123,7 +193,7 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!(
+        i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_map -> {}",
             std::any::type_name::<T::OutputMap<V2>>()
         )));
@@ -131,7 +201,7 @@ impl<T: Value> Incr<T> {
     }
 
     #[inline]
-    pub fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
     where
         T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
@@ -142,14 +212,14 @@ impl<T: Value> Incr<T> {
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!(
+        i.set_graphviz_user_data(Box::new(format!(
             "incr_mapi -> {}",
             std::any::type_name::<T::OutputMap<V2>>()
         )));
         i
     }
 
-    pub fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
     where
         T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
@@ -191,14 +261,14 @@ impl<T: Value> Incr<T> {
             }
         });
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!(
+        i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_mapi -> {}",
             std::any::type_name::<T::OutputMap<V2>>()
         )));
         i
     }
 
-    pub fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
+    fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
         init: R,
         mut add: FAdd,
@@ -239,7 +309,7 @@ impl<T: Value> Incr<T> {
             }
         });
         #[cfg(debug_assertions)]
-        i.node.set_graphviz_user_data(Box::new(format!(
+        i.set_graphviz_user_data(Box::new(format!(
             "incr_unordered_fold -> {}",
             std::any::type_name::<R>()
         )));

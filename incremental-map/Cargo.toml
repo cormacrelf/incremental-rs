@@ -1,19 +1,16 @@
 [package]
-name = "incremental-macros"
+name = "incremental-map"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = ["string-interner"]
-
 [dependencies]
-incremental = { path = "..", features = ["slotmap"] }
-slotmap = "1.0.6"
-string-interner = { version = "0.14.0", optional = true }
-paste = { version = "1.0.9" }
+im-rc = { workspace = true, optional = true }
+incremental = { path = ".." }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
+criterion = { workspace = true }
+test-log = { workspace = true }
