@@ -17,7 +17,6 @@ pub use super::Value;
 pub use super::WeakIncr;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
-use super::node::GraphvizDot;
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
 use super::scope::Scope;
@@ -59,7 +58,7 @@ impl<T: Value> Observer<T> {
         let now = state.stabilisation_num.get();
         let handler = OnUpdateHandler::new(now, handler_fn);
         let token = self.internal.subscribe(handler)?;
-        let node = self.internal.observing();
+        let node = self.internal.observing_erased();
         let state = node.state();
         node.handle_after_stabilisation(&state);
         Ok(token)
@@ -71,9 +70,8 @@ impl<T: Value> Observer<T> {
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
-        GraphvizDot::new_erased(self.internal.observing())
-            .save_to_file(named)
-            .unwrap();
+        let node = self.internal.observing_erased();
+        super::node::save_dot_to_file(&mut core::iter::once(node), named).unwrap();
     }
 }
 

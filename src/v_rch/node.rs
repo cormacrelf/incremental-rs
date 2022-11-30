@@ -16,7 +16,7 @@ use core::fmt::Debug;
 use std::any::Any;
 use std::cell::Ref;
 use std::collections::HashMap;
-use std::fmt::{self, Display, Write};
+use std::fmt::{self, Write};
 use std::rc::Weak;
 
 use super::stabilisation_num::StabilisationNum;
@@ -447,7 +447,6 @@ pub(crate) trait ErasedNode: Debug {
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result;
-    fn dot_write(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
     fn dot_was_recomputed(&self, state: &State) -> bool;
     fn dot_was_changed(&self) -> bool;
@@ -495,6 +494,7 @@ pub(crate) trait ErasedNode: Debug {
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
     fn packed(&self) -> NodeRef;
+    fn erased(&self) -> &dyn ErasedNode;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
     fn iter_descendants_internal_one(
         &self,
@@ -552,6 +552,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn packed(&self) -> NodeRef {
         self.weak_self.upgrade().unwrap() as NodeRef
+    }
+    fn erased(&self) -> &dyn ErasedNode {
+        self
     }
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices> {
         &self.parent_child_indices
@@ -1232,10 +1235,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         Ok(())
     }
 
-    fn dot_write(&self, f: &mut dyn Write) -> fmt::Result {
-        save_dot(f, core::iter::once(self.packed()))
-    }
-
     // Expert
 
     /* Note that the two following functions are not symmetric of one another: in [let y =
@@ -1748,7 +1747,7 @@ fn test_node_size() {
 }
 
 fn iter_descendants_internal(
-    i: impl IntoIterator<Item = NodeRef>,
+    i: &mut dyn Iterator<Item = &dyn ErasedNode>,
     f: &mut dyn FnMut(&NodeRef),
 ) -> HashMap<NodeId, i32> {
     let mut seen = HashMap::new();
@@ -1758,7 +1757,30 @@ fn iter_descendants_internal(
     seen
 }
 
-pub(crate) fn save_dot(f: &mut dyn Write, nodes: impl IntoIterator<Item = NodeRef>) -> fmt::Result {
+pub(crate) fn save_dot_to_file(
+    nodes: &mut dyn Iterator<Item = &dyn ErasedNode>,
+    named: &str,
+) -> std::io::Result<()> {
+    let buf = &mut String::new();
+    save_dot(buf, nodes).unwrap();
+
+    use std::fs::File;
+    use std::io::Write;
+
+    let mut file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(named)
+        .unwrap();
+    file.write_all(buf.as_bytes())
+}
+
+pub(crate) fn save_dot(
+    f: &mut dyn Write,
+    nodes: &mut dyn Iterator<Item = &dyn ErasedNode>,
+) -> fmt::Result {
     fn node_name(node: &NodeRef) -> String {
         node.id().0.to_string()
     }
@@ -1814,34 +1836,6 @@ pub(crate) fn save_dot(f: &mut dyn Write, nodes: impl IntoIterator<Item = NodeRe
     }
     writeln!(f, "}}")?;
     Ok(())
-}
-
-pub(crate) struct GraphvizDot(NodeRef);
-
-impl GraphvizDot {
-    pub(crate) fn new_erased(erased: NodeRef) -> Self {
-        Self(erased)
-    }
-    pub fn new<T>(incr: &Incr<T>) -> Self {
-        Self::new_erased(incr.node.packed())
-    }
-    pub fn save_to_file(&self, named: &str) -> std::io::Result<()> {
-        use std::fs::File;
-        use std::io::Write;
-        let mut file = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(named)?;
-        write!(file, "{}", self)
-    }
-}
-
-impl Display for GraphvizDot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.dot_write(f)
-    }
 }
 
 #[cfg(debug_assertions)]

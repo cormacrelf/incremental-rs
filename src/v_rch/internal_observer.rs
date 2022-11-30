@@ -1,4 +1,4 @@
-use super::node::Input;
+use super::node::{ErasedNode, Input};
 use super::node_update::{NodeUpdateDelayed, OnUpdateHandler};
 use super::stabilisation_num::StabilisationNum;
 use super::state::{IncrStatus, State};
@@ -46,7 +46,8 @@ pub(crate) trait ErasedObserver: Debug {
     fn id(&self) -> ObserverId;
     fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<ObserverState>;
-    fn observing(&self) -> NodeRef;
+    fn observing_packed(&self) -> NodeRef;
+    fn observing_erased(&self) -> &dyn ErasedNode;
     fn disallow_future_use(&self, state: &State);
     fn num_handlers(&self) -> i32;
     fn add_to_observed_node(&self);
@@ -67,8 +68,11 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
     fn state(&self) -> &Cell<ObserverState> {
         &self.state
     }
-    fn observing(&self) -> NodeRef {
+    fn observing_packed(&self) -> NodeRef {
         self.observing.node.clone().packed()
+    }
+    fn observing_erased(&self) -> &dyn ErasedNode {
+        self.observing.node.erased()
     }
     fn disallow_future_use(&self, state: &State) {
         match self.state.get() {
@@ -128,7 +132,7 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
                         Ok(())
                     }
                     InUse => {
-                        let observing = self.observing();
+                        let observing = self.observing_erased();
                         let num = observing.num_on_update_handlers();
                         num.increment();
                         Ok(())
@@ -204,7 +208,7 @@ impl<T: Value> InternalObserver<T> {
                         [observing.observers] at the start of the next stabilization. */
                     }
                     InUse => {
-                        let observing = self.observing();
+                        let observing = self.observing_erased();
                         let num = observing.num_on_update_handlers();
                         num.set(num.get() + 1);
                     }
@@ -283,7 +287,7 @@ impl std::error::Error for ObserverError {}
 impl<T> Drop for InternalObserver<T> {
     fn drop(&mut self) {
         let count = Rc::strong_count(&self.observing.node);
-        tracing::warn!(
+        tracing::info!(
             "dropping InternalObserver with id {:?}, observing node with strong_count {count}",
             self.id
         );

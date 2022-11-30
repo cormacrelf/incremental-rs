@@ -17,7 +17,6 @@ use super::{public, Incr};
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io::Write;
 use std::rc::{Rc, Weak};
 
 pub(crate) mod expert;
@@ -209,7 +208,7 @@ impl State {
                 ObserverState::Unlinked => {}
                 ObserverState::Created => {
                     obs.state().set(ObserverState::InUse);
-                    let node = obs.observing();
+                    let node = obs.observing_erased();
                     let was_necessary = node.is_necessary();
                     {
                         let mut ao = self.all_observers.borrow_mut();
@@ -239,7 +238,7 @@ impl State {
             debug_assert_eq!(obs.state().get(), ObserverState::Disallowed);
             obs.state().set(ObserverState::Unlinked);
             // get a strong ref to the node, before we drop its owning InternalObserver
-            let observing = obs.observing();
+            let observing = obs.observing_erased();
             {
                 obs.remove_from_observed_node();
                 // remove from all_observers (this finally drops the InternalObserver)
@@ -433,20 +432,8 @@ impl State {
 
     pub(crate) fn save_dot_to_file(&self, named: &str) {
         let observers = self.all_observers.borrow();
-        let all_observed = observers.iter().map(|(_id, o)| o.observing());
-
-        let buf = &mut String::new();
-        super::node::save_dot(buf, all_observed).unwrap();
-
-        use std::fs::File;
-        let mut file = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(named)
-            .unwrap();
-        file.write_all(buf.as_bytes()).unwrap();
+        let mut all_observed = observers.iter().map(|(_id, o)| o.observing_erased());
+        super::node::save_dot_to_file(&mut all_observed, named).unwrap();
     }
 
     #[tracing::instrument]

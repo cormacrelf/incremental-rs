@@ -22,7 +22,7 @@ use crate::WeakState;
 use self::cutoff::Cutoff;
 use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use self::kind::Kind;
-use self::node::{ErasedNode, GraphvizDot, Node, NodeId};
+use self::node::{ErasedNode, Node, NodeId};
 use self::scope::Scope;
 use fmt::Debug;
 use refl::refl;
@@ -703,7 +703,7 @@ impl<T: Value> Incr<T> {
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
-        GraphvizDot::new(self).save_to_file(named).unwrap();
+        self::node::save_dot_to_file(&mut core::iter::once(self.node.erased()), named).unwrap()
     }
 }
 
