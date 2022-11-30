@@ -1,4 +1,5 @@
-use super::{node::Input, stabilisation_num::StabilisationNum};
+use super::stabilisation_num::StabilisationNum;
+use crate::node::Incremental;
 use std::cell::Cell;
 
 pub(crate) type BoxedUpdateFn<T> = Box<dyn FnMut(NodeUpdate<&T>)>;
@@ -21,7 +22,7 @@ pub(crate) enum NodeUpdateDelayed {
 }
 
 #[derive(Debug)]
-pub(crate) enum NodeUpdate<T> {
+pub enum NodeUpdate<T> {
     Necessary(T),
     Changed(T),
     Invalidated,
@@ -42,7 +43,7 @@ impl<T> OnUpdateHandler<T> {
             previous_update_kind: Previously::NeverBeenUpdated.into(),
         }
     }
-    fn really_run(&mut self, node: &Input<T>, node_update: NodeUpdateDelayed) {
+    fn really_run(&mut self, node: &dyn Incremental<T>, node_update: NodeUpdateDelayed) {
         self.previous_update_kind.set(match &node_update {
             NodeUpdateDelayed::Changed => Previously::Changed,
             NodeUpdateDelayed::Necessary => Previously::Necessary,
@@ -66,7 +67,7 @@ impl<T> OnUpdateHandler<T> {
     }
     pub(crate) fn run(
         &mut self,
-        node: &Input<T>,
+        node: &dyn Incremental<T>,
         node_update: NodeUpdateDelayed,
         now: StabilisationNum,
     ) {

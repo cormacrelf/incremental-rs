@@ -2,7 +2,7 @@ use test_log::test;
 
 use std::{cell::Cell, rc::Rc};
 
-use incremental::{Cutoff, IncrState, ObserverError, StatsDiff, Var};
+use incremental::{Cutoff, IncrState, NodeUpdate, ObserverError, StatsDiff, Update, Var};
 
 #[test]
 fn testit() {
@@ -1033,4 +1033,63 @@ fn weak_memoize_fn() {
     assert_eq!(counter.count(), 2);
     let _six = memoized(6);
     assert_eq!(counter.count(), 3);
+}
+
+#[test]
+fn test_depend_on() {
+    let state = IncrState::new();
+    let x = state.var(13);
+    let y = state.var(14);
+    let d = x.depend_on(&y.watch());
+    let ox = d.observe();
+    let nx: Rc<Cell<i32>> = Default::default();
+    let nx_ = nx.clone();
+    let incr_nx = move |upd: Update<&_>| match upd {
+        Update::Invalidated => panic!(),
+        Update::Changed(_) | Update::Initialised(_) => nx_.set(nx_.get() + 1),
+    };
+    let _tok = ox.subscribe(incr_nx.clone());
+
+    let ny: Rc<Cell<i32>> = Default::default();
+    let ny_ = ny.clone();
+    y.on_update(move |upd| match upd {
+        NodeUpdate::Invalidated => panic!(),
+        NodeUpdate::Unnecessary => println!("y became unnecessary"),
+        NodeUpdate::Changed(_) | NodeUpdate::Necessary(_) => ny_.set(ny_.get() + 1),
+    });
+
+    macro_rules! check(($state:ident, $o:ident => $eo:expr, $nx:ident => $enx:expr, $ny:ident => $eny:expr) => {
+        $state.stabilise();
+        assert_eq!($o.expect_value(), $eo);
+        assert_eq!($nx.get(), $enx, stringify!($nx));
+        assert_eq!($ny.get(), $eny, stringify!($ny));
+    });
+
+    check!(state, ox => 13, nx => 1, ny => 1);
+    x.set(15);
+    check!(state, ox => 15, nx => 2, ny => 1);
+    y.set(16);
+    check!(state, ox => 15, nx => 2, ny => 2);
+    x.set(17);
+    y.set(18);
+    check!(state, ox => 17, nx => 3, ny => 3);
+    x.set(17);
+    check!(state, ox => 17, nx => 3, ny => 3);
+    y.set(18);
+    check!(state, ox => 17, nx => 3, ny => 3);
+    ox.disallow_future_use();
+
+    macro_rules! check(($state:ident, $nx:ident => $enx:expr, $ny:ident => $eny:expr) => {
+        $state.stabilise();
+        assert_eq!($nx.get(), $enx, stringify!($nx));
+        assert_eq!($ny.get(), $eny, stringify!($ny));
+    });
+
+    x.set(19);
+    y.set(20);
+    check!(state, nx => 3, ny => 3);
+    let o_ = d.observe();
+    let _ = o_.subscribe(incr_nx);
+    check!(state, nx => 4, ny => 4);
+    assert_eq!(o_.expect_value(), 19);
 }

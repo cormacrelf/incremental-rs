@@ -1,3 +1,6 @@
+// We have some really complicated types. Most of them can't be typedef'd to be any shorter.
+#![allow(clippy::type_complexity)]
+
 use std::{cell::RefCell, marker::PhantomData};
 
 use incremental::{Incr, Value};

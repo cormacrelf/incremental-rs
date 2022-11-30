@@ -10,12 +10,13 @@ pub use super::cutoff::Cutoff;
 pub use super::incr::{Incr, WeakIncr};
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
 pub use super::kind::expert::public as expert;
+pub use super::node_update::NodeUpdate;
 #[doc(inline)]
 pub use super::Value;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
-use super::node_update::{NodeUpdate, OnUpdateHandler};
+use super::node_update::OnUpdateHandler;
 use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
@@ -98,6 +99,11 @@ impl<T: Value> Observer<T> {
     pub fn save_dot_to_file(&self, named: &str) {
         let node = self.internal.observing_erased();
         super::node::save_dot_to_file(&mut core::iter::once(node), named).unwrap();
+    }
+
+    pub fn disallow_future_use(&self) {
+        let Some(state) = self.internal.incr_state() else { return };
+        self.internal.disallow_future_use(&state);
     }
 }
 

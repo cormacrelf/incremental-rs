@@ -1,7 +1,8 @@
-use super::node::{ErasedNode, Input};
+use super::node::ErasedNode;
 use super::node_update::{NodeUpdateDelayed, OnUpdateHandler};
 use super::stabilisation_num::StabilisationNum;
 use super::state::{IncrStatus, State};
+use crate::node::Incremental;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -220,14 +221,21 @@ impl<T: Value> InternalObserver<T> {
     }
     pub(crate) fn run_all(
         &self,
-        input: &Input<T>,
+        input: &dyn Incremental<T>,
         node_update: NodeUpdateDelayed,
         now: StabilisationNum,
     ) {
         let mut handlers = self.on_update_handlers.borrow_mut();
         for (id, handler) in handlers.iter_mut() {
             tracing::trace!("running update handler with id {id:?}");
-            handler.run(input, node_update, now);
+            /* We have to test [state] before each on-update handler, because an on-update
+            handler might disable its own observer, which should prevent other on-update
+            handlers in the same observer from running. */
+            match self.state.get() {
+                Created | Unlinked => panic!(),
+                Disallowed => (),
+                InUse => handler.run(input, node_update, now),
+            }
         }
     }
 }

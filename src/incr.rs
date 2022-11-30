@@ -6,7 +6,8 @@ use std::rc::{Rc, Weak};
 use super::kind::{self, Kind};
 use super::node::{Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
-use crate::{Cutoff, Observer, Value, WeakState};
+use crate::node_update::OnUpdateHandler;
+use crate::{Cutoff, NodeUpdate, Observer, Value, WeakState};
 
 #[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
@@ -136,6 +137,17 @@ impl<T: Value> Incr<T> {
         );
 
         Incr { node }
+    }
+
+    /// Turn two incrementals into a tuple incremental.
+    /// Aka `both` in OCaml. This is named `zip` to match [Option::zip] and [Iterator::zip].
+    pub fn zip<T2: Value>(&self, other: &Incr<T2>) -> Incr<(T, T2)> {
+        if let Some(a) = self.node.constant() {
+            if let Some(b) = other.node.constant() {
+                return self.state().constant((a.clone(), b.clone()));
+            }
+        }
+        self.map2(other, |a, b| (a.clone(), b.clone()))
     }
 
     pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
@@ -337,7 +349,7 @@ impl<T: Value> Incr<T> {
     /// must be PartialEq.
     ///
     /// You can also supply your own comparison function. This will chiefly
-    /// be useful for types like Rc<T>, not to avoid T: PartialEq (you
+    /// be useful for types like `Rc<T>`, not to avoid T: PartialEq (you
     /// can't avoid that) but rather to avoid comparing a large structure
     /// and simply compare the allocation's pointer value instead.
     /// In that case, you can:
@@ -398,4 +410,29 @@ impl<T: Value> Incr<T> {
     pub fn save_dot_to_file(&self, named: &str) {
         super::node::save_dot_to_file(&mut core::iter::once(self.node.erased()), named).unwrap()
     }
+
+    pub fn depend_on<T2: Value>(&self, on: &Incr<T2>) -> Incr<T> {
+        let output = self.map2(on, |a, _| a.clone());
+        preserve_cutoff(self, &output);
+        output
+    }
+
+    pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static) {
+        let state = self.node.state();
+        let now = state.stabilisation_num.get();
+        let handler = OnUpdateHandler::new(now, Box::new(f));
+        self.node.add_on_update_handler(handler);
+    }
+}
+
+fn preserve_cutoff<T: Value, O: Value>(input: &Incr<T>, output: &Incr<O>) {
+    let input_ = input.weak();
+    let output_ = output.weak();
+    output.set_cutoff_fn_boxed(move |_, _| {
+        if let Some((i, o)) = input_.upgrade().zip(output_.upgrade()) {
+            i.node.changed_at() == o.node.changed_at()
+        } else {
+            panic!("preserve_cutoff input or output was deallocated")
+        }
+    })
 }

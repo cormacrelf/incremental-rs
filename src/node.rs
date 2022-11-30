@@ -1,4 +1,5 @@
 use super::CellIncrement;
+use crate::node_update::OnUpdateHandler;
 use crate::Value;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
@@ -110,6 +111,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<G::R>>>>,
+    pub on_update_handlers: RefCell<Vec<OnUpdateHandler<G::R>>>,
     pub graphviz_user_data: RefCell<Option<Box<dyn Debug>>>,
 }
 
@@ -136,8 +138,10 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
     fn set_cutoff(&self, cutoff: Cutoff<R>);
     fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
+    fn constant(&self) -> Option<&R>;
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
     fn remove_observer(&self, id: ObserverId);
+    fn add_on_update_handler(&self, handler: OnUpdateHandler<R>);
 }
 
 impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
@@ -147,20 +151,9 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     fn latest(&self) -> G::R {
         self.value_opt().unwrap()
     }
-    fn value_as_ref(&self) -> Option<Ref<G::R>> {
-        if let Some(Kind::MapRef(mapref)) = self.kind() {
-            let mapper = &mapref.mapper;
-            let input = mapref.input.value_as_ref()?;
-            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
-            return mapped;
-        }
-        let v = self.value_opt.borrow();
-        Ref::filter_map(v, |o| o.as_ref()).ok()
-    }
     fn value_opt(&self) -> Option<G::R> {
         self.value_as_ref().map(|x| G::R::clone(&x))
     }
-
     // #[tracing::instrument]
     fn add_parent_without_adjusting_heights(
         &self,
@@ -183,7 +176,6 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             expert.run_edge_callback(child_index)
         }
     }
-
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>, state: &State) {
         let parent = parent_ref.erased();
         debug_assert!(parent.is_necessary());
@@ -251,18 +243,42 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
         self.cutoff.replace(cutoff);
     }
-    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
-        let mut os = self.observers.borrow_mut();
-        os.insert(id, weak);
-    }
-    fn remove_observer(&self, id: ObserverId) {
-        let mut os = self.observers.borrow_mut();
-        os.remove(&id);
-    }
 
     fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>) {
         let mut slot = self.graphviz_user_data.borrow_mut();
         slot.replace(user_data);
+    }
+
+    fn value_as_ref(&self) -> Option<Ref<G::R>> {
+        if let Some(Kind::MapRef(mapref)) = self.kind() {
+            let mapper = &mapref.mapper;
+            let input = mapref.input.value_as_ref()?;
+            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
+            return mapped;
+        }
+        let v = self.value_opt.borrow();
+        Ref::filter_map(v, |o| o.as_ref()).ok()
+    }
+    fn constant(&self) -> Option<&G::R> {
+        if let Some(Kind::Constant(value)) = self.kind() {
+            Some(value)
+        } else {
+            None
+        }
+    }
+    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
+        let mut os = self.observers.borrow_mut();
+        os.insert(id, weak);
+    }
+
+    fn remove_observer(&self, id: ObserverId) {
+        let mut os = self.observers.borrow_mut();
+        os.remove(&id);
+    }
+    fn add_on_update_handler(&self, handler: OnUpdateHandler<G::R>) {
+        self.num_on_update_handlers.increment();
+        let mut ouh = self.on_update_handlers.borrow_mut();
+        ouh.push(handler);
     }
 }
 
@@ -1100,11 +1116,17 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum) {
         let input = self.as_input();
+        let mut ouh = self.on_update_handlers.borrow_mut();
+        for handler in ouh.iter_mut() {
+            handler.run(self, node_update, now)
+        }
+        drop(ouh);
         let observers = self.observers.borrow();
         for (_id, obs) in observers.iter() {
             let Some(obs) = obs.upgrade() else { continue };
-            obs.run_all(&input, node_update, now)
+            obs.run_all(&*input, node_update, now)
         }
+        drop(observers);
     }
 
     #[inline]
@@ -1451,6 +1473,7 @@ impl<G: NodeGenerics> Node<G> {
             _kind: kind,
             parents: smallvec::smallvec![].into(),
             observers: HashMap::new().into(),
+            on_update_handlers: Default::default(),
             graphviz_user_data: None.into(),
             cutoff: Cutoff::PartialEq.into(),
             is_valid: true.into(),
