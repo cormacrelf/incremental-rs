@@ -1,11 +1,24 @@
+use core::fmt;
 use std::rc::Weak;
 
 use super::{BindScope, NodeRef};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum Scope {
     Top,
     Bind(Weak<dyn BindScope>),
+}
+
+impl fmt::Debug for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Scope::Top => write!(f, "Scope::Top"),
+            Scope::Bind(bind) => {
+                let Some(bind) = bind.upgrade() else { return write!(f, "Scope::Bind(weak, deallocated)") };
+                write!(f, "Scope::Bind({:?})", bind.id())
+            }
+        }
+    }
 }
 
 impl Scope {
