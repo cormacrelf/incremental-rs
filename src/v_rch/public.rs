@@ -333,6 +333,10 @@ impl IncrState {
         self.inner.stabilise();
     }
 
+    pub fn stabilise_debug(&self, dot_file_prefix: &str) {
+        self.inner.stabilise_debug(Some(dot_file_prefix));
+    }
+
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
         self.inner.constant(value)

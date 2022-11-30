@@ -42,15 +42,19 @@ pub(crate) enum Kind<G: NodeGenerics> {
     MapWithOld(map::MapWithOld<G::WithOld, G::I1, G::R>),
     MapRef(map::MapRefNode<G::FRef, G::I1, G::R>),
     Map2(map::Map2Node<G::F2, G::I1, G::I2, G::R>),
-    BindLhsChange(
-        bind::BindLhsId<G>,
-        Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
-    ),
-    BindMain(
-        bind::BindMainId<G>,
-        Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
-        Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
-    ),
+    BindLhsChange {
+        casts: bind::BindLhsId<G>,
+        bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+    },
+    BindMain {
+        casts: bind::BindMainId<G>,
+        bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        // Ownership goes
+        // a Kind::BindMain holds a BindNode & the BindLhsChange
+        // a Kind::BindLhsChange holds a BindNode
+        // BindNode holds weak refs to both
+        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
+    },
     Expert(expert::ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
 }
 
@@ -63,8 +67,8 @@ impl<G: NodeGenerics> Debug for Kind<G> {
             Kind::Map(map) => write!(f, "Map({:?})", map),
             Kind::MapWithOld(map) => write!(f, "MapWithOld({:?})", map),
             Kind::Map2(map2) => write!(f, "Map2({:?})", map2),
-            Kind::BindLhsChange(_, bind) => write!(f, "BindLhsChange({:?})", bind),
-            Kind::BindMain(_, bind, _) => write!(f, "BindMain({:?})", bind),
+            Kind::BindLhsChange { bind, .. } => write!(f, "BindLhsChange({:?})", bind),
+            Kind::BindMain { bind, .. } => write!(f, "BindMain({:?})", bind),
             Kind::MapRef(mapref) => write!(f, "MapRef({:?})", mapref),
             Kind::Expert(expert) => write!(f, "Expert({:?})", expert),
         }
@@ -80,8 +84,8 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Var(_) => 0,
             Self::Map(_) | Self::MapWithOld(_) | Self::MapRef(_) => 1,
             Self::Map2(_) => 2,
-            Self::BindLhsChange(..) => 1,
-            Self::BindMain(..) => 2,
+            Self::BindLhsChange { .. } => 1,
+            Self::BindMain { .. } => 2,
             Self::Expert(_) => 0,
         }
     }

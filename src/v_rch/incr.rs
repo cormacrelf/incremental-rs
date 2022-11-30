@@ -263,26 +263,26 @@ impl<T: Value> Incr<T> {
         let lhs_change = Node::<kind::BindLhsChangeGen<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
-            Kind::BindLhsChange(
-                kind::BindLhsId {
+            Kind::BindLhsChange {
+                casts: kind::BindLhsId {
                     input_lhs_i2: refl::refl(),
                     r_unit: refl::refl(),
                 },
-                bind.clone(),
-            ),
+                bind: bind.clone(),
+            },
         );
         let main = Node::<kind::BindNodeMainGen<F, T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
-            Kind::BindMain(
-                kind::BindMainId {
+            Kind::BindMain {
+                casts: kind::BindMainId {
                     rhs_r: refl::refl(),
                     input_rhs_i1: refl::refl(),
                     input_lhs_i2: refl::refl(),
                 },
-                bind.clone(),
-                lhs_change.clone(),
-            ),
+                bind: bind.clone(),
+                lhs_change: lhs_change.clone(),
+            },
         );
         {
             let mut bind_lhs_change = bind.lhs_change.borrow_mut();

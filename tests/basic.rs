@@ -361,8 +361,7 @@ fn bind_fold() {
     assert_eq!(obs.value(), Ok(60));
 
     v1.set(40);
-    incr.stabilise_debug(Some("bind_fold"));
-    obs.save_dot_to_file("bind_fold.dot");
+    incr.stabilise_debug("bind_fold");
 
     assert_eq!(obs.value(), Ok(90));
     vars.set(vec![v1.clone()]);

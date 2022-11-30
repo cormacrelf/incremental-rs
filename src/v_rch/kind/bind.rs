@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
+use std::rc::Weak;
 use std::{cell::Cell, fmt};
 
 use refl::Id;
@@ -9,21 +9,6 @@ use crate::v_rch::node::{ErasedNode, Input, Node, NodeId};
 use crate::v_rch::scope::{BindScope, Scope};
 use crate::v_rch::WeakNode;
 use crate::{Incr, Value};
-
-pub(crate) struct BindMain<G: NodeGenerics> {
-    pub types: BindMainId<G>,
-    pub node: Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
-    pub lhs_change: Rc<Node<BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
-}
-
-pub(crate) struct BindLhsChange<G: NodeGenerics> {
-    pub types: BindLhsId<G>,
-    // Ownership goes
-    // a Kind::BindMain holds a BindNode & the BindLhsChange
-    // a Kind::BindLhsChange holds a BindNode
-    // BindNode holds weak refs to both
-    pub node: Rc<BindNode<G::B1, G::BindLhs, G::BindRhs>>,
-}
 
 pub(crate) struct BindNode<F, T, R>
 where

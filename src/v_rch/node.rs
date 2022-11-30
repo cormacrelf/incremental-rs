@@ -577,11 +577,11 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             | Kind::Map2(..) => self.has_invalid_child(),
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
             reason as above).  This is equivalent to [has_invalid_child t]. */
-            Kind::BindLhsChange(_, bind) => !bind.lhs.is_valid(),
+            Kind::BindLhsChange { bind, .. } => !bind.lhs.is_valid(),
             /* [Bind_main], [If_then_else], and [Join_main] are invalid if their *_change child is,
             but not necessarily if their other children are -- the graph may be restructured to
             avoid the invalidity of those. */
-            Kind::BindMain(_, _, lhs_change) => !lhs_change.is_valid(),
+            Kind::BindMain { lhs_change, .. } => !lhs_change.is_valid(),
             /* This is similar to what we do for bind above, except that any invalid child can be
             removed, so we can only tell if an expert node becomes invalid when all its
             dependencies have fired (which in practice means when we are about to run it). */
@@ -597,7 +597,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             kind => {
                 #[cfg(debug_assertions)]
                 match kind {
-                    Kind::BindMain(..) => (), // and IfThenElse, JoinMain
+                    Kind::BindMain { .. } => (), // and IfThenElse, JoinMain
                     _ => panic!("nodes with no children are never pushed on the stack"),
                 }
             }
@@ -653,8 +653,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             | Kind::Map(_)
             | Kind::MapWithOld(_)
             | Kind::Map2(_)
-            | Kind::BindLhsChange(..)
-            | Kind::BindMain(..) => {
+            | Kind::BindLhsChange { .. }
+            | Kind::BindMain { .. } => {
                 // i.e. never recomputed, or a child has changed more recently than we have been
                 // recomputed
                 self.recomputed_at.get().is_never() || self.is_stale_with_respect_to_a_child()
@@ -772,8 +772,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
-            Kind::BindLhsChange(_, bind) => f(0, bind.lhs.packed()),
-            Kind::BindMain(_, bind, lhs_change) => {
+            Kind::BindLhsChange { bind, .. } => f(0, bind.lhs.packed()),
+            Kind::BindMain {
+                bind, lhs_change, ..
+            } => {
                 f(0, lhs_change.packed());
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
                     f(1, rhs.node.packed())
@@ -871,7 +873,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let new_value = f(&i1, &i2);
                 self.maybe_change_value(new_value, state)
             }
-            Kind::BindLhsChange(casts, bind) => {
+            Kind::BindLhsChange { casts, bind } => {
                 // leaves an empty vec for next time
                 // TODO: we could double-buffer this to save allocations.
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
@@ -930,7 +932,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 debug_assert!(self.is_valid());
                 self.maybe_change_value(casts.r_unit.cast(()), state)
             }
-            Kind::BindMain(casts, bind, _) => {
+            Kind::BindMain { casts, bind, .. } => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 self.copy_child_bindrhs(&rhs.node, casts.rhs_r, state)
             }
@@ -973,7 +975,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             before computing it.  If [parent] has a single child (i.e. [node]), then
             this amounts to checking that [parent] won't be invalidated, i.e. that
             [parent]'s scope has already stabilized. */
-            Kind::BindLhsChange(..) => child.height() > parent.created_in.height(),
+            Kind::BindLhsChange { .. } => child.height() > parent.created_in.height(),
             Kind::MapRef(_) | Kind::MapWithOld(_) | Kind::Map(_) => {
                 child.height() > parent.created_in.height()
             }
@@ -988,7 +990,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             {[
             node.height > Scope.height parent.created_in
             ]} */
-            Kind::BindMain(_, _, lhs_change) => child.height() > lhs_change.height(),
+            Kind::BindMain { lhs_change, .. } => child.height() > lhs_change.height(),
             // | Kind::If_then_else i -> node.height > i.test_change.height
             // | Join_main j -> node.height > j.lhs_change.height
         };
@@ -1056,7 +1058,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         //  | Bind_main bind -> invalidate_nodes_created_on_rhs bind.all_nodes_created_on_rhs
         //  | Step_function { alarm; clock; _ } -> remove_alarm clock alarm
         //  | _ -> ());
-        if let Some(Kind::BindMain(_, bind, _)) = self.kind() {
+        if let Some(Kind::BindMain { bind, .. }) = self.kind() {
             let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
             invalidate_nodes_created_on_rhs(&mut all, state);
         }
@@ -1079,7 +1081,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         oc: &NodeRef,
         op: &NodeRef,
     ) {
-        if let Some(Kind::BindLhsChange(_, bind)) = self.kind() {
+        if let Some(Kind::BindLhsChange { bind, .. }) = self.kind() {
             tracing::debug_span!("adjust_heights_bind_lhs_change").in_scope(|| {
                 let all = bind.all_nodes_created_on_rhs.borrow();
                 for rnode_weak in all.iter() {
@@ -1167,8 +1169,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::MapRef(_) => write!(f, "MapRef"),
             Kind::MapWithOld(_) => write!(f, "MapWithOld"),
             Kind::Map2(_) => write!(f, "Map2"),
-            Kind::BindLhsChange(_, _) => return write!(f, "BindLhsChange({id:?}) @ {h}"),
-            Kind::BindMain(..) => write!(f, "BindMain"),
+            Kind::BindLhsChange { .. } => return write!(f, "BindLhsChange({id:?}) @ {h}"),
+            Kind::BindMain { .. } => write!(f, "BindMain"),
             Kind::Expert(..) => write!(f, "Expert"),
         }?;
         write!(f, "({id:?})")?;
@@ -1180,7 +1182,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>) {
-        if let Some(Kind::BindLhsChange(_, bind)) = self.kind() {
+        if let Some(Kind::BindLhsChange { bind, .. }) = self.kind() {
             let all = bind.all_nodes_created_on_rhs.borrow();
             for rhs in all.iter().filter_map(Weak::upgrade) {
                 bind_edges.push((self.packed(), rhs.clone()));
@@ -1224,7 +1226,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Some(Kind::Var(..)) => {
                 write!(f, ", shape=note")?;
             }
-            Some(Kind::BindLhsChange(..)) => {
+            Some(Kind::BindLhsChange { .. }) => {
                 write!(f, ", shape=box3d, bgcolor=grey")?;
             }
             _ => {}
@@ -1571,7 +1573,7 @@ impl<G: NodeGenerics> Node<G> {
         state: &State,
     ) {
         let bind_main = self;
-        let Some(Kind::BindMain(id, ..)) = bind_main.kind() else { return };
+        let Some(Kind::BindMain { casts: id, .. }) = bind_main.kind() else { return };
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
         match old_child {
             None => {
@@ -1667,15 +1669,19 @@ impl<G: NodeGenerics> Node<G> {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());
             }
-            Kind::BindLhsChange(id, bind) => {
-                let input = id.input_lhs_i2.cast(bind.lhs.as_input());
+            Kind::BindLhsChange { casts, bind } => {
+                let input = casts.input_lhs_i2.cast(bind.lhs.as_input());
                 (f.i2)(0, input)
             }
-            Kind::BindMain(id, bind, lhs_change) => {
-                let input = id.input_lhs_i2.cast(lhs_change.as_input());
+            Kind::BindMain {
+                casts,
+                bind,
+                lhs_change,
+            } => {
+                let input = casts.input_lhs_i2.cast(lhs_change.as_input());
                 (f.i2)(0, input);
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
-                    let input = id.input_rhs_i1.cast(rhs.node.as_input());
+                    let input = casts.input_rhs_i1.cast(rhs.node.as_input());
                     (f.i1)(1, input)
                 }
             }
