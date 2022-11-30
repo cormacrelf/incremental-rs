@@ -824,7 +824,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
         state.num_nodes_recomputed.increment();
         self.recomputed_at.set(state.stabilisation_num.get());
-        let Some(kind) = self.kind() else { return None };
+
+        let Some(kind) = self.kind() else {
+            // We should not be invalidating nodes that have already been queued for recompute.
+            // invalidate_nodes_created_on_rhs should only invalidate a node higher than the 
+            // current one. So removing such nodes from the recompute heap should work.
+            panic!("recomputing invalid node {:?}", self.id);
+        };
+
         match kind {
             Kind::Map(map) => {
                 let new_value = {
