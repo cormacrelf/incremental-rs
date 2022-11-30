@@ -361,8 +361,7 @@ fn bind_fold() {
     assert_eq!(obs.value(), Ok(60));
 
     v1.set(40);
-    obs.debug_stabilise(&incr, "bind_fold");
-    incr.stabilise();
+    incr.stabilise_debug(Some("bind_fold"));
     obs.save_dot_to_file("bind_fold.dot");
 
     assert_eq!(obs.value(), Ok(90));
@@ -845,12 +844,10 @@ fn observer_subscribe_drop() {
     let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
-    observer
-        .subscribe(move |value| {
-            tracing::info!("received update: {:?}", value);
-            call_count_.increment();
-        })
-        .unwrap();
+    observer.subscribe(move |value| {
+        tracing::info!("received update: {:?}", value);
+        call_count_.increment();
+    });
     incr.stabilise();
     assert_eq!(*call_count, 1);
     incr.stabilise();
@@ -872,12 +869,10 @@ fn observer_unsubscribe() {
     let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
-    let token = observer
-        .subscribe(move |value| {
-            tracing::debug!("received update: {:?}", value);
-            call_count_.increment();
-        })
-        .unwrap();
+    let token = observer.subscribe(move |value| {
+        tracing::debug!("received update: {:?}", value);
+        call_count_.increment();
+    });
     incr.stabilise();
     assert_eq!(*call_count, 1);
     var.set(11);
@@ -895,12 +890,10 @@ fn state_unsubscribe_after_observer_dropped() {
     let incr = IncrState::new();
     let var = incr.var(10);
     let observer = var.observe();
-    let token = observer
-        .subscribe(|value| {
-            tracing::debug!("received update: {:?}", value);
-        })
-        .unwrap();
-    let second = observer.subscribe(|_| ()).unwrap();
+    let token = observer.subscribe(|value| {
+        tracing::debug!("received update: {:?}", value);
+    });
+    let second = observer.subscribe(|_| ());
     incr.stabilise();
     var.set(11);
     incr.stabilise();
@@ -1105,11 +1098,9 @@ fn test_map_ref() {
     });
     let string = var.map_ref(|thing| &thing.string).observe();
 
-    string
-        .subscribe(|change| {
-            println!("changed: {change:?}");
-        })
-        .unwrap();
+    string.subscribe(|change| {
+        println!("changed: {change:?}");
+    });
 
     incr.stabilise();
 
@@ -1197,7 +1188,7 @@ fn weak_memoize_fn() {
             incr.constant(x)
         }
     };
-    let memoized = incr.weak_memoize_fn(function);
+    let mut memoized = incr.weak_memoize_fn(function);
     let five = memoized(5);
     let another_five = memoized(5);
     assert_eq!(counter.count(), 1);

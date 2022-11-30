@@ -21,7 +21,7 @@ pub(crate) enum NodeUpdateDelayed {
 }
 
 #[derive(Debug)]
-pub enum NodeUpdate<T> {
+pub(crate) enum NodeUpdate<T> {
     Necessary(T),
     Changed(T),
     Invalidated,

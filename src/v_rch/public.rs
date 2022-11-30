@@ -11,14 +11,13 @@ pub use super::expert::public as expert;
 pub use super::incr_map::symmetric_fold::DiffElement;
 pub use super::incr_map::symmetric_fold::MergeElement;
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
-pub use super::node_update::NodeUpdate;
 pub use super::Incr;
 pub use super::Value;
 pub use super::WeakIncr;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
 use super::node::NodeId;
-use super::node_update::OnUpdateHandler;
+use super::node_update::{NodeUpdate, OnUpdateHandler};
 use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
@@ -27,6 +26,22 @@ use super::var::{ErasedVariable, Var as InternalVar};
 pub struct Observer<T: Value> {
     internal: Rc<InternalObserver<T>>,
     sentinel: Rc<()>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Update<T> {
+    Initialised(T),
+    Changed(T),
+    Invalidated,
+}
+impl<T> Update<T> {
+    pub fn value(self) -> Option<T> {
+        match self {
+            Self::Initialised(t) => Some(t),
+            Self::Changed(t) => Some(t),
+            _ => None,
+        }
+    }
 }
 
 impl<T: Value> Observer<T> {
@@ -45,12 +60,25 @@ impl<T: Value> Observer<T> {
         self.internal.value().unwrap()
     }
 
-    /// Equivalent of `observer_on_update_exn`
-    pub fn subscribe(
+    pub fn subscribe(&self, on_update: impl FnMut(Update<&T>) + 'static) -> SubscriptionToken {
+        self.try_subscribe(on_update).unwrap()
+    }
+
+    pub fn try_subscribe(
         &self,
-        on_update: impl FnMut(NodeUpdate<&T>) + 'static,
+        mut on_update: impl FnMut(Update<&T>) + 'static,
     ) -> Result<SubscriptionToken, ObserverError> {
-        let handler_fn = Box::new(on_update);
+        let handler_fn = Box::new(move |node_update: NodeUpdate<&T>| {
+            let update = match node_update {
+                NodeUpdate::Necessary(t) => Update::Initialised(t),
+                NodeUpdate::Changed(t) => Update::Changed(t),
+                NodeUpdate::Invalidated => Update::Invalidated,
+                NodeUpdate::Unnecessary => {
+                    panic!("Incremental bug -- Observer subscription got NodeUpdate::Unnecessary")
+                }
+            };
+            on_update(update)
+        });
         let state = self
             .internal
             .incr_state()

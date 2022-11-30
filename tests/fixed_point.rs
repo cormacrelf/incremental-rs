@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
-use incremental::{Incr, IncrState, NodeUpdate, Observer, SubscriptionToken, Value, WeakState};
+use incremental::{Incr, IncrState, Observer, SubscriptionToken, Update, Value, WeakState};
 use test_log::test;
 
 // fn fixed_point(f: impl FnMut (Vec<Incr<T>>) -> Vec<Incr<T>>)
@@ -11,9 +11,6 @@ fn fixed_point<T: Value>(
     mut f: impl FnMut(&mut T) -> T + 'static,
 ) -> Incr<T> {
     let var = state.var(init);
-    // TODO: Cloning var and using it in a node may make  a ref cycle.
-    // prefer var.weak() (but we need to override this for Var so it
-    // is not a bare Incr<T>).
     let v = var.clone();
 
     // now, mapping var. if var is set during stabilisation, then
@@ -32,11 +29,9 @@ fn fixed_point<T: Value>(
 fn one_node() {
     let incr = IncrState::new();
     let observer = fixed_point(&incr.weak(), 10_u32, |x| x.saturating_sub(1)).observe();
-    observer
-        .subscribe(|t| {
-            println!("observed {:?}", t);
-        })
-        .unwrap();
+    observer.subscribe(|t| {
+        println!("observed {:?}", t);
+    });
     while !incr.is_stable() {
         incr.stabilise();
     }
@@ -54,12 +49,10 @@ impl<'a, T: Value> FixedPointIter<'a, T> {
     fn new(state: &'a IncrState, observer: Observer<T>) -> Self {
         let cycle_count = Rc::new(Cell::new(0i32));
         let weak = Rc::downgrade(&cycle_count);
-        let token = observer
-            .subscribe(move |_val| {
-                let count = weak.upgrade().unwrap();
-                count.set(count.get() + 1);
-            })
-            .unwrap();
+        let token = observer.subscribe(move |_val| {
+            let count = weak.upgrade().unwrap();
+            count.set(count.get() + 1);
+        });
         Self {
             cycle_count,
             token,
@@ -103,11 +96,9 @@ fn dependencies() {
     let tillzero = fixed_point(&incr.weak(), 10_u32, |x| x.saturating_sub(1));
     let mapped = tillzero.map(|x| x + 1);
     let observer = mapped.observe();
-    observer
-        .subscribe(|t| {
-            println!("observed {:?}", t);
-        })
-        .unwrap();
+    observer.subscribe(|t| {
+        println!("observed {:?}", t);
+    });
     while !incr.is_stable() {
         incr.stabilise();
     }
@@ -155,14 +146,12 @@ fn dependencies_using_cutoff() {
     // add a dependency and observe that
     let map_observer = tillzero.map(|x| x + 1).observe();
     let o_cell = cell.clone();
-    map_observer
-        .subscribe(move |t| {
-            println!("observed {:?}", t);
-            if let NodeUpdate::Changed(_) = t {
-                o_cell.set(o_cell.get() + 1);
-            }
-        })
-        .unwrap();
+    map_observer.subscribe(move |t| {
+        println!("observed {:?}", t);
+        if let Update::Changed(_) = t {
+            o_cell.set(o_cell.get() + 1);
+        }
+    });
     while !incr.is_stable() {
         incr.stabilise();
     }
@@ -181,13 +170,11 @@ impl<T: Value> UntilStableValue<T> {
     fn new(observer: Observer<T>) -> Self {
         let change_count = Rc::new(Cell::new(0i32));
         let count = change_count.clone();
-        let token = observer
-            .subscribe(move |_val| {
-                if let NodeUpdate::Changed(_) = _val {
-                    count.set(count.get() + 1);
-                }
-            })
-            .unwrap();
+        let token = observer.subscribe(move |_val| {
+            if let Update::Changed(_) = _val {
+                count.set(count.get() + 1);
+            }
+        });
         Self {
             change_count,
             token,
@@ -220,14 +207,12 @@ fn dependencies_using_cutoff_iterated() {
     // add a dependency and observe that
     let map_observer = tillzero.map(|x| x + 1).observe();
     let o_cell = cell.clone();
-    map_observer
-        .subscribe(move |t| {
-            println!("observed {:?}", t);
-            if let NodeUpdate::Changed(_) = t {
-                o_cell.set(o_cell.get() + 1);
-            }
-        })
-        .unwrap();
+    map_observer.subscribe(move |t| {
+        println!("observed {:?}", t);
+        if let Update::Changed(_) = t {
+            o_cell.set(o_cell.get() + 1);
+        }
+    });
     until_stable.iterate(&incr);
     assert_eq!(map_observer.expect_value(), 1);
     // this time we didn't fire until tillzero had settled.
@@ -237,10 +222,9 @@ fn dependencies_using_cutoff_iterated() {
 #[test]
 fn two_fixedpoints_iterated() {
     let incr = IncrState::new();
-    let cell = Rc::new(Cell::new(0i32));
 
-    let (from_10, until_stable_10) = using_cutoff(&incr.weak(), 10_u32, |x| x.saturating_sub(1));
-    let (from_20, ____________) = using_cutoff(&incr.weak(), 20_u32, |x| x.saturating_sub(1));
+    let (_from_10, until_stable_10) = using_cutoff(&incr.weak(), 10_u32, |x| x.saturating_sub(1));
+    let (from_20, ________________) = using_cutoff(&incr.weak(), 20_u32, |x| x.saturating_sub(1));
     let still_20 = from_20.map(|&x| x);
 
     let o_from_20 = from_20.observe();
@@ -327,6 +311,7 @@ fn transitive_closure() {
     )
 }
 
+#[allow(dead_code)]
 fn using_cutoff_bind<T: Value, F>(init: Incr<T>, f: F) -> (Incr<T>, UntilStableValue<T>)
 where
     T: Default,
@@ -334,9 +319,6 @@ where
 {
     let state = init.state();
     let var = state.var(T::default());
-    // TODO: Cloning var and using it in a node may make  a ref cycle.
-    // prefer var.weak() (but we need to override this for Var so it
-    // is not a bare Incr<T>).
     let v_mapped = var.clone();
 
     // now, mapping var. if var is set during stabilisation, then

@@ -147,6 +147,10 @@ impl State {
     }
 
     pub(crate) fn constant<T: Value>(self: &Rc<Self>, value: T) -> Incr<T> {
+        // TODO: - store the constant value directly in the Node.value_opt
+        //       - make recompute a noop instead of a clone
+        //       - set recomputed_at/changed_at to avoid queueing for recompute at all?
+        //       to save the single clone that constant currently does.
         let node = Node::<Constant<T>>::create_rc(
             self.weak(),
             self.current_scope(),
@@ -164,6 +168,9 @@ impl State {
     where
         F: FnMut(R, &T) -> R + 'static,
     {
+        if vec.is_empty() {
+            return self.constant(init);
+        }
         let node = Node::<ArrayFold<F, T, R>>::create_rc(
             self.weak(),
             self.current_scope(),

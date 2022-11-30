@@ -262,8 +262,11 @@ macro_rules! memoized {
 ///
 /// ```
 /// # use incremental_macros::db;
+/// use incremental_macros::InternedString;
 /// db! {
-///     pub struct Db
+///     pub struct Db provides {
+///         InternedString
+///     }
 /// }
 /// ```
 ///
