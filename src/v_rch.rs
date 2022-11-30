@@ -19,12 +19,12 @@ mod var;
 
 use crate::v_rch::kind::{BindLhsId, BindMainId};
 use crate::v_rch::node::Incremental;
-use crate::{GraphvizDot, WeakState};
+use crate::WeakState;
 
 use self::cutoff::Cutoff;
 use self::incr_map::symmetric_fold::{DiffElement, GenericMap, SymmetricFoldMap, SymmetricMapMap};
 use self::kind::Kind;
-use self::node::{ErasedNode, Node};
+use self::node::{ErasedNode, GraphvizDot, Node, NodeId};
 use self::scope::Scope;
 use fmt::Debug;
 use refl::refl;
@@ -284,6 +284,7 @@ where
     T: Value,
     F: FnMut(&T) -> Incr<R> + 'static,
 {
+    id_lhs_change: Cell<NodeId>,
     lhs_change: RefCell<Weak<Node<BindLhsChangeNodeGenerics<F, T, R>>>>,
     main: RefCell<Weak<Node<BindNodeMainGenerics<F, T, R>>>>,
     lhs: Input<T>,
@@ -294,6 +295,7 @@ where
 }
 
 pub(crate) trait BindScope: Debug {
+    fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn is_necessary(&self) -> bool;
     fn height(&self) -> i32;
@@ -306,6 +308,9 @@ where
     T: Value,
     F: FnMut(&T) -> Incr<R>,
 {
+    fn id(&self) -> NodeId {
+        self.id_lhs_change.get()
+    }
     fn is_valid(&self) -> bool {
         let main_ = self.main.borrow();
         let Some(main) = main_.upgrade() else { return false };
@@ -592,6 +597,7 @@ impl<T: Value> Incr<T> {
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
             lhs_change: Weak::new().into(),
+            id_lhs_change: Cell::new(NodeId(0)),
             main: Weak::new().into(),
         });
         let lhs_change = Node::<BindLhsChangeNodeGenerics<F, T, R>>::create_rc(
@@ -623,6 +629,7 @@ impl<T: Value> Incr<T> {
             let mut bind_main = bind.main.borrow_mut();
             *bind_lhs_change = Rc::downgrade(&lhs_change);
             *bind_main = Rc::downgrade(&main);
+            bind.id_lhs_change.set(lhs_change.id);
         }
 
         /* We set [lhs_change] to never cutoff so that whenever [lhs] changes, [main] is
