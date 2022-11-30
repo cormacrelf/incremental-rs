@@ -1022,7 +1022,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             return;
         }
         self.maybe_handle_after_stabilisation(state);
-        *self.value_opt.borrow_mut() = None;
+        self.value_opt.take();
         // this was for node-level subscriptions. we don't have those
         // debug_assert!(self.old_value_opt.borrow().is_none());
         self.changed_at.set(state.stabilisation_num.get());
@@ -1052,7 +1052,17 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             let mut all = bind.all_nodes_created_on_rhs.borrow_mut();
             invalidate_nodes_created_on_rhs(&mut all, state);
         }
-        self.is_valid.set(false)
+        self.is_valid.set(false);
+        let mut prop_stack = state.propagate_invalidity.borrow_mut();
+        for parent in self.parents.borrow().iter() {
+            let Some(parent) = parent.upgrade_erased() else { continue };
+            prop_stack.push(parent.weak());
+        }
+        drop(prop_stack);
+        debug_assert!(!self.needs_to_be_computed());
+        if self.is_in_recompute_heap() {
+            state.recompute_heap.remove(self.packed());
+        }
     }
 
     fn adjust_heights_bind_lhs_change(
@@ -1579,10 +1589,10 @@ impl<G: NodeGenerics> Node<G> {
                 mistakenly think it is unnecessary and transition it to necessary (which would
                 add duplicate edges and break things horribly). */
                 old_child_node.force_necessary().set(true);
-                {
-                    new_child_node.state_add_parent(child_index, bind_main.as_parent_ref(), state);
-                }
+                new_child_node.state_add_parent(child_index, bind_main.as_parent_ref(), state);
                 old_child_node.force_necessary().set(false);
+                /* We [check_if_unnecessary] after [add_parent], so that we don't unnecessarily
+                transition nodes from necessary to unnecessary and then back again. */
                 old_child_node.check_if_unnecessary(state);
             }
         }
