@@ -801,7 +801,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         &self.recomputed_at
     }
 
-    #[tracing::instrument(skip_all)]
     fn recompute(&self, state: &State) {
         // This is a flattened version of the original recursion, which OCaml could probably tail-call
         // optimise. First recompute self
@@ -813,6 +812,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
+    #[tracing::instrument(skip(state))]
     fn recompute_one(&self, state: &State) -> Option<NodeRef> {
         #[cfg(debug_assertions)]
         {

@@ -8,7 +8,7 @@ use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
 };
 use super::kind::{Constant, Kind};
-use super::node::{GraphvizDot, Node, NodeId};
+use super::node::{Node, NodeId};
 use super::recompute_heap::RecomputeHeap;
 use super::scope::Scope;
 use super::stabilisation_num::StabilisationNum;
@@ -324,39 +324,49 @@ impl State {
     }
 
     pub(crate) fn stabilise(&self) {
-        self.stabilise_debug(None, "")
+        self.stabilise_debug(None)
     }
 
-    pub(crate) fn stabilise_debug(&self, root_node: Option<NodeRef>, prefix: &str) {
+    pub(crate) fn stabilise_debug(&self, prefix: Option<&str>) {
         let span = tracing::info_span!("stabilise");
         span.in_scope(|| {
-            assert_eq!(self.status.get(), IncrStatus::NotStabilising);
-            let mut stdout = std::io::stdout();
-            stdout.flush().unwrap();
-            self.stabilise_start();
-            let mut iterations = 0;
-            let buf = &mut String::new();
-            let debug_node = root_node.map(GraphvizDot::new_erased);
-            let mut do_debug = move || {
-                if tracing::enabled!(tracing::Level::INFO) {
-                    if let Some(node) = &debug_node {
-                        iterations += 1;
-                        use std::fmt::Write;
-                        buf.clear();
-                        write!(buf, "{prefix}-stabilise-{iterations}.dot").unwrap();
-                        node.save_to_file(buf).unwrap();
+            #[cfg(debug_assertions)]
+            let mut do_debug = {
+                let mut iterations = 0;
+                let mut buf = String::new();
+                move || {
+                    if tracing::enabled!(tracing::Level::INFO) {
+                        if let Some(prefix) = prefix {
+                            iterations += 1;
+                            use std::fmt::Write;
+                            buf.clear();
+                            write!(&mut buf, "{prefix}-stabilise-{iterations}.dot").unwrap();
+                            self.save_dot_to_file(&buf);
+                        }
                     }
                 }
             };
-            while let Some(mut min_layer) = self.recompute_heap.remove_min_layer() {
-                do_debug();
-                for node in min_layer.drain(..) {
+
+            #[cfg(not(debug_assertions))]
+            fn do_debug() {}
+
+            assert_eq!(self.status.get(), IncrStatus::NotStabilising);
+
+            self.stabilise_start();
+
+            while let Some(mut frontier) = self.recompute_heap.remove_min_layer() {
+                let frontier_len = frontier.len();
+                for (ix, node) in frontier.drain(..).enumerate() {
+                    if ix + 1 == frontier_len {
+                        self.recompute_heap.raise_min_height();
+                    }
+                    do_debug();
                     node.recompute(self);
-                    node.height_in_recompute_heap().set(-1);
                 }
             }
-            do_debug();
+
             self.stabilise_end();
+            do_debug();
         });
     }
 
@@ -441,7 +451,6 @@ impl State {
 
     #[tracing::instrument]
     pub(crate) fn destroy(&self) {
-        tracing::warn!("destroying State");
         let mut dead_vars = self.dead_vars.take();
         for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {
             var.break_rc_cycle();

@@ -132,23 +132,36 @@ impl RecomputeHeap {
     }
 
     pub fn min_height(&self) -> i32 {
-        // using remove_min, this code would work.
-        // but for us, we remove a whole layer at a time, and those nodes are gone.
-        // so doing this will cause min_height to skip forward, and to
-        // recompute_now some nodes that shouldn't be.
+        // This function is used for determining whether the coast is clear to recompute a parent
+        // node _now_ instead of enqueueing it in the RCH. See [Node::parent_iter_can_recompute_now]
         //
-        // if self.length.get() == 0 {
-        //     self.height_lower_bound.set(self.queues.len() as i32);
-        // } else {
-        //     while {
-        //         let q = self
-        //             .queues[self.height_lower_bound.get() as usize].borrow();
-        //         q.is_empty()
-        //     } {
-        //         self.height_lower_bound.set(self.height_lower_bound.get() + 1);
-        //     }
-        // }
+        // If we were using remove_min() (singular) for enqueueing recomputes, we would run
+        // self.raise_min_height() first.
+        //
+        // But since we remove a whole layer at a time, and those nodes are gone from the RCH, we
+        // still need to be aware of them when determining whether the coast is clear.
+        // So raising the height _here_ would cause min_height to skip forward, and recompute_now
+        // some nodes that shouldn't be.
+        //
+        // Instead, we can call raise_min_height just before we recompute the last node of a frontier.
+        // That way we know there are no others in this layer. Not doing so is also fine, we would
+        // just miss out on some recompute_now optimisation.
         self.height_lower_bound.get()
+    }
+
+    pub fn raise_min_height(&self) {
+        let queues = self.queues.borrow();
+        let max = queues.len() as i32;
+        if self.length.get() == 0 {
+            self.height_lower_bound.set(max);
+        } else {
+            while queues
+                .get(self.height_lower_bound.get() as usize)
+                .map_or(false, |q| q.borrow().is_empty())
+            {
+                self.height_lower_bound.increment();
+            }
+        }
     }
 
     pub(crate) fn increase_height(&self, node: &NodeRef) {
