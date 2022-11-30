@@ -1,8 +1,8 @@
 use std::any::Any;
 
 use super::*;
-use crate::v_rch::kind;
-use crate::v_rch::node::Incremental;
+use crate::kind;
+use crate::node::Incremental;
 use crate::WeakIncr;
 use kind::expert::{IsEdge, PackedEdge};
 

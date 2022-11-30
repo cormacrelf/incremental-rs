@@ -1,6 +1,5 @@
-use crate::v_rch::CellIncrement;
-
-use super::NodeRef;
+use crate::CellIncrement;
+use crate::NodeRef;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::VecDeque;
 use std::fmt;

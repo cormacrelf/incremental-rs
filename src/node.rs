@@ -1727,7 +1727,7 @@ impl<G: NodeGenerics> Node<G> {
             _ => {
                 let mut found = None;
                 self.foreach_child(&mut |ix, child| {
-                    if ix as i32 == child_index {
+                    if ix == child_index {
                         found.replace(child);
                     }
                 });
@@ -1757,7 +1757,7 @@ fn iter_descendants_internal(
     f: &mut dyn FnMut(&NodeRef),
 ) -> HashMap<NodeId, i32> {
     let mut seen = HashMap::new();
-    for node in i.into_iter() {
+    for node in i {
         node.iter_descendants_internal_one(&mut seen, f);
     }
     seen

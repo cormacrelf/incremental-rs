@@ -4,7 +4,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use super::symmetric_fold::{DiffElement, MergeElement, MergeOnceWith, SymmetricDiffMap};
 use super::{FilterMapOperator, MapOperator, Operator};
 use crate::expert::WeakNode;
-use crate::{v_rch::incr_map::symmetric_fold::SymmetricFoldMap, Cutoff, Incr, Value};
+use crate::{incr_map::symmetric_fold::SymmetricFoldMap, Cutoff, Incr, Value};
 
 pub(crate) fn merge_shared_impl<
     K: Clone + Ord,
@@ -134,7 +134,7 @@ impl<K: Value + Ord, V: Value> Incr<BTreeMap<K, V>> {
         O::Output: Value,
         V2: Value,
     {
-        use crate::expert::{Dependency, Node};
+        use crate::public::expert::{Dependency, Node};
         let state = self.state();
         let lhs = self;
         let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));

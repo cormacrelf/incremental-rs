@@ -8,6 +8,7 @@ use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
 use super::state::State;
 use super::{CellIncrement, Incr};
+
 use core::fmt::Debug;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};

@@ -5,13 +5,9 @@ use std::{
     rc::Rc,
 };
 
-use crate::v_rch::node::Input;
-use crate::{
-    v_rch::{CellIncrement, NodeRef},
-    Incr, Value,
-};
-
 use super::NodeGenerics;
+use crate::node::Input;
+use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any {
     fn on_change(&self);
@@ -268,7 +264,7 @@ pub mod public {
     //     }
     // }
 
-    use crate::v_rch::state::expert;
+    use crate::state::expert;
     impl<T: Value, C: Value> Node<T, C> {
         pub fn weak(&self) -> WeakNode<T, C> {
             WeakNode {

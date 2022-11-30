@@ -5,9 +5,9 @@ use std::{cell::Cell, fmt};
 use refl::Id;
 
 use super::NodeGenerics;
-use crate::v_rch::node::{ErasedNode, Input, Node, NodeId};
-use crate::v_rch::scope::{BindScope, Scope};
-use crate::v_rch::WeakNode;
+use crate::node::{ErasedNode, Input, Node, NodeId};
+use crate::scope::{BindScope, Scope};
+use crate::WeakNode;
 use crate::{Incr, Value};
 
 pub(crate) struct BindNode<F, T, R>

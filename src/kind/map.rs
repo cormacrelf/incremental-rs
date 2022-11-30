@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::{cell::Cell, fmt};
 
 use super::NodeGenerics;
-use crate::v_rch::node::Input;
+use crate::node::Input;
 use crate::{Incr, Value};
 
 pub(crate) struct MapNode<F, T, R>
