@@ -8,6 +8,14 @@ A port of Jane Street's [Incremental][jane] library.
 
 [jane]: https://github.com/janestreet/incremental
 
+### Install
+
+```sh
+cargo add incremental
+```
+
+### Examples
+
 Basic usage:
 
 ```rust
