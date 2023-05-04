@@ -67,7 +67,7 @@ impl<T: Value> Observer<T> {
         self.internal.try_get_value()
     }
     #[inline]
-    pub fn expect_value(&self) -> T {
+    pub fn value(&self) -> T {
         self.internal.try_get_value().unwrap()
     }
 

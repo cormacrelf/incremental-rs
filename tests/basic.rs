@@ -320,10 +320,10 @@ fn mutable_string() {
         .observe();
     incr.stabilise();
     incr.stabilise();
-    assert_eq!(o.expect_value(), "hello");
+    assert_eq!(o.value(), "hello");
     v.set(", world");
     incr.stabilise();
-    assert_eq!(o.expect_value(), "hello, world");
+    assert_eq!(o.value(), "hello, world");
 }
 
 #[test]
@@ -334,11 +334,11 @@ fn fold() {
     let sum = incr.fold(watches, 0, |acc, x| acc + x);
     let obs = sum.observe();
     incr.stabilise();
-    assert_eq!(obs.expect_value(), 60);
+    assert_eq!(obs.value(), 60);
     vars[0].set(30);
     vars[0].set(40);
     incr.stabilise();
-    assert_eq!(obs.expect_value(), 90);
+    assert_eq!(obs.value(), 90);
 }
 
 #[test]
@@ -720,10 +720,10 @@ fn map_with_old_reuse() {
         .observe();
 
     incr.stabilise();
-    assert_eq!(o.expect_value().to_string(), "100".to_string());
+    assert_eq!(o.value().to_string(), "100".to_string());
     v.set(200);
     incr.stabilise();
-    assert_eq!(o.expect_value().to_string(), "200".to_string());
+    assert_eq!(o.value().to_string(), "200".to_string());
 }
 
 #[test]
@@ -1060,7 +1060,7 @@ fn test_depend_on() {
 
     macro_rules! check(($state:ident, $o:ident => $eo:expr, $nx:ident => $enx:expr, $ny:ident => $eny:expr) => {
         $state.stabilise();
-        assert_eq!($o.expect_value(), $eo);
+        assert_eq!($o.value(), $eo);
         assert_eq!($nx.get(), $enx, stringify!($nx));
         assert_eq!($ny.get(), $eny, stringify!($ny));
     });
@@ -1091,5 +1091,5 @@ fn test_depend_on() {
     let o_ = d.observe();
     let _ = o_.subscribe(incr_nx);
     check!(state, nx => 4, ny => 4);
-    assert_eq!(o_.expect_value(), 19);
+    assert_eq!(o_.value(), 19);
 }

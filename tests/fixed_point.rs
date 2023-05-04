@@ -35,7 +35,7 @@ fn one_node() {
     while !incr.is_stable() {
         incr.stabilise();
     }
-    assert_eq!(observer.expect_value(), 0);
+    assert_eq!(observer.value(), 0);
 }
 
 struct FixedPointIter<'a, T: Value> {
@@ -69,7 +69,7 @@ impl<'a, T: Value> FixedPointIter<'a, T> {
             // if it doesn't, it's because the observed node did not emit a change event.
             self.state.stabilise();
         }
-        self.observer.expect_value()
+        self.observer.value()
     }
 }
 
@@ -102,7 +102,7 @@ fn dependencies() {
     while !incr.is_stable() {
         incr.stabilise();
     }
-    assert_eq!(observer.expect_value(), 1);
+    assert_eq!(observer.value(), 1);
 }
 
 fn using_cutoff<T: Value>(
@@ -155,7 +155,7 @@ fn dependencies_using_cutoff() {
     while !incr.is_stable() {
         incr.stabilise();
     }
-    assert_eq!(map_observer.expect_value(), 1);
+    assert_eq!(map_observer.value(), 1);
     // this time we didn't fire until tillzero had settled.
     assert_eq!(cell.get(), 1);
 }
@@ -189,7 +189,7 @@ impl<T: Value> UntilStableValue<T> {
             // if it doesn't, it's because the observed node did not emit a change event.
             state.stabilise();
         }
-        self.observer.expect_value()
+        self.observer.value()
     }
 }
 
@@ -214,7 +214,7 @@ fn dependencies_using_cutoff_iterated() {
         }
     });
     until_stable.iterate(&incr);
-    assert_eq!(map_observer.expect_value(), 1);
+    assert_eq!(map_observer.value(), 1);
     // this time we didn't fire until tillzero had settled.
     assert_eq!(cell.get(), 1);
 }
@@ -230,12 +230,12 @@ fn two_fixedpoints_iterated() {
     let o_from_20 = from_20.observe();
     let o_still_20 = still_20.observe();
     assert_eq!(until_stable_10.iterate(&incr), 0);
-    assert_eq!(o_from_20.expect_value(), 10);
+    assert_eq!(o_from_20.value(), 10);
 
     // until_stable_10 only did 10 stabilise()s.
     // so from_20 hasn't gotten to a fixed point yet, and so any
     // downstream nodes have still not been queued for a recompute.
-    assert_eq!(o_still_20.expect_value(), 20);
+    assert_eq!(o_still_20.value(), 20);
 }
 
 #[test]
@@ -256,18 +256,18 @@ fn two_fixedpoints_combined() {
         .observe();
 
     assert_eq!(until_stable_10.iterate(&incr), 0);
-    assert_eq!(o_from_20.expect_value(), 10);
+    assert_eq!(o_from_20.value(), 10);
 
     // combined was only recomputed once
     assert_eq!(counter.get(), 2);
-    assert_eq!(combined.expect_value(), 10);
+    assert_eq!(combined.value(), 10);
 
     // blast the rest of the way.
     while !incr.is_stable() {
         incr.stabilise();
     }
     assert_eq!(counter.get(), 3);
-    assert_eq!(combined.expect_value(), 0);
+    assert_eq!(combined.value(), 0);
 }
 
 #[cfg(feature = "im-rc")]
@@ -395,15 +395,15 @@ mod transitive_closure {
 
         query.set((2, 1));
         incr.stabilise();
-        assert_eq!(is_in_set.expect_value(), false);
+        assert_eq!(is_in_set.value(), false);
         query.set((1, 3));
         incr.stabilise();
-        assert_eq!(is_in_set.expect_value(), true);
+        assert_eq!(is_in_set.value(), true);
         map.modify(|m| {
             m.entry(3).or_default().insert(1);
         });
         until_stable.iterate(&incr);
-        assert_eq!(is_in_set.expect_value(), true);
+        assert_eq!(is_in_set.value(), true);
     }
 
     #[test]

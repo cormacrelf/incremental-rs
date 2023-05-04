@@ -79,7 +79,7 @@ fn test_index_by() {
             map.insert(k, val.to_string());
         });
         incr.stabilise();
-        o.expect_value()
+        o.value()
     };
     use im_rc::ordmap;
     assert_eq!(
@@ -218,7 +218,7 @@ fn setup(
         let random = random_order(&mut rng);
         var.set(init_orders.update(random.id, random));
         incr.stabilise();
-        drop(shares.expect_value());
+        drop(shares.value());
     }
 }
 

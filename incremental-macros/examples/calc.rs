@@ -117,7 +117,7 @@ fn main() {
     // has never propagated its changes. Both alpha.calc and beta.calc
     // are new and will be computed for the first time..
     incr.stabilise();
-    assert_eq!(alpha_obs.expect_value(), 7);
+    assert_eq!(alpha_obs.value(), 7);
 
     // A cache hit.
     //
@@ -138,7 +138,7 @@ fn main() {
         fs.insert(gamma_calc, "42".into());
     });
     incr.stabilise();
-    assert_eq!(alpha_obs.expect_value(), 7);
+    assert_eq!(alpha_obs.value(), 7);
 
     // Now beta.calc will depend on gamma.calc
     db.files.modify(|fs| {
@@ -148,7 +148,7 @@ fn main() {
 
     // Alpha and beta both have to recompute, because beta.calc was referenced by alpha.calc.
     // There is now a computation for gamma.calc in the mix, because it is referenced now.
-    assert_eq!(alpha_obs.expect_value(), 48);
+    assert_eq!(alpha_obs.value(), 48);
 
     // Observers and the computation graph
 
@@ -164,7 +164,7 @@ fn main() {
     });
 
     incr.stabilise();
-    assert_eq!(alpha_obs.expect_value(), 45);
+    assert_eq!(alpha_obs.value(), 45);
     incr.save_dot_to_file("gamma-hanging-around.dot");
 
     // The gamma observer is now the only thing hanging onto the evaluated gamma.calc computation.

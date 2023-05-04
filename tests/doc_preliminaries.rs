@@ -76,7 +76,7 @@ mod projections_and_cutoffs {
                 ..
             }
         ));
-        assert_eq!(result.expect_value(), 10);
+        assert_eq!(result.value(), 10);
 
         // We don't have the problem with "newly allocated tuples" having
         // different pointer addresses. The default cutoff comparator in
@@ -94,7 +94,7 @@ mod projections_and_cutoffs {
             }
         ));
 
-        assert_eq!(result.expect_value(), 10);
+        assert_eq!(result.value(), 10);
         z.modify(|z| z.b = (5, 6));
 
         let diff = stabilise_diff(&incr, "after updating z.b");
@@ -106,7 +106,7 @@ mod projections_and_cutoffs {
                 ..
             }
         ));
-        assert_eq!(result.expect_value(), 36);
+        assert_eq!(result.value(), 36);
     }
 
     /// ```ignore
@@ -165,6 +165,6 @@ mod projections_and_cutoffs {
             }
         ));
 
-        assert_eq!(result.expect_value(), 36);
+        assert_eq!(result.value(), 36);
     }
 }

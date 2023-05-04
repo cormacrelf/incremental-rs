@@ -20,7 +20,7 @@ let observer = times_10.observe();
 
 // stabilise will propagate any changes
 state.stabilise();
-let value = observer.expect_value();
+let value = observer.value();
 assert_eq!(value, 50);
 
 // now mutate
@@ -28,7 +28,7 @@ variable.set(10);
 state.stabilise();
 
 // watch as var was propagated through the tree, and reached our observer
-assert_eq!(observer.expect_value(), 100);
+assert_eq!(observer.value(), 100);
 ```
 
 Subscriptions, and an illustration of how propagation stops when nodes produce
@@ -55,7 +55,7 @@ let subscription_token = observer.subscribe(move |update| {
 
 // initial stabilisation
 state.stabilise();
-assert_eq!(observer.expect_value(), 5);
+assert_eq!(observer.value(), 5);
 assert_eq!(latest.borrow().clone(), Some(Update::Initialised(5)));
 
 // now mutate, but such that the output of abs() won't change
@@ -64,14 +64,14 @@ state.stabilise();
 // The subscription function was not called, because the `absolute` node
 // produced the same value as last time we stabilised.
 assert_eq!(latest.borrow().clone(), Some(Update::Initialised(5)));
-assert_eq!(observer.expect_value(), 5);
+assert_eq!(observer.value(), 5);
 
 // now mutate such that the output changes too
 variable.set(-10);
 state.stabilise();
 // The observer did get a new value, and did call the subscription function
 assert_eq!(latest.borrow().clone(), Some(Update::Changed(10)));
-assert_eq!(observer.expect_value(), 10);
+assert_eq!(observer.value(), 10);
 
 // now unsubscribe. this also implicitly happens if you drop the observer,
 // but you can individually unsubscribe particular subscriptions if you wish.

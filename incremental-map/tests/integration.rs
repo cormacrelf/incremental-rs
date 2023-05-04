@@ -76,7 +76,7 @@ fn incr_map_filter_mapi() {
         .observe();
     incr.stabilise();
     let x = IntoIterator::into_iter([("five", 5i32)]);
-    assert_eq!(filtered.expect_value(), x.collect());
+    assert_eq!(filtered.value(), x.collect());
 }
 
 #[test]
@@ -94,14 +94,14 @@ fn incr_map_primes() {
 
     incr.stabilise();
     let x = BTreeMap::from([("five", 5), ("seven", 7)]);
-    assert_eq!(filtered.expect_value(), x);
+    assert_eq!(filtered.value(), x);
 
     b.remove("seven");
     b.insert("971", 971);
     v.set(b.clone());
     incr.stabilise();
     let x = BTreeMap::from([("971", 971), ("five", 5)]);
-    assert_eq!(filtered.expect_value(), x);
+    assert_eq!(filtered.value(), x);
 }
 
 // https://gist.github.com/glebm/440bbe2fc95e7abee40eb260ec82f85c
@@ -152,7 +152,7 @@ fn incr_map_rc() {
         .observe();
     incr.stabilise();
     assert_eq!(*counter, 2);
-    let greetings = observer.expect_value();
+    let greetings = observer.value();
     assert_eq!(greetings.get(&5), Some(&String::from("hello, world")));
     incr.stabilise();
     assert_eq!(*counter, 2);
@@ -182,7 +182,7 @@ fn incr_filter_mapi() {
         .observe();
     incr.stabilise();
     assert_eq!(*counter, 2);
-    let greetings = observer.expect_value();
+    let greetings = observer.value();
     tracing::debug!("greetings were: {greetings:?}");
     assert_eq!(greetings.get(&5), None);
     assert_eq!(greetings.get(&10), Some(&"goodbye, world".to_string()));
