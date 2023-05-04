@@ -104,6 +104,13 @@ impl<T: Value> Observer<T> {
     }
 
     #[inline]
+    pub fn state(&self) -> WeakState {
+        self.internal
+            .incr_state()
+            .map_or_else(|| WeakState { inner: Weak::new() }, |s| s.public_weak())
+    }
+
+    #[inline]
     pub fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError> {
         self.internal.unsubscribe(token)
     }
@@ -449,10 +456,8 @@ impl WeakState {
     }
 
     pub fn var_current_scope<T: Value>(&self, value: T) -> Var<T> {
-        self.inner
-            .upgrade()
-            .unwrap()
-            .var_in_scope(value, self.inner.upgrade().unwrap().current_scope())
+        let inner = self.inner.upgrade().unwrap();
+        inner.var_in_scope(value, inner.current_scope())
     }
 
     pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
@@ -463,9 +468,9 @@ impl WeakState {
         self.inner.upgrade().unwrap().save_dot_to_file(named)
     }
 
-    // pub fn unsubscribe(&self, token: SubscriptionToken) {
-    //     self.inner.upgrade().unwrap().unsubscribe(token)
-    // }
+    pub fn unsubscribe(&self, token: SubscriptionToken) {
+        self.inner.upgrade().unwrap().unsubscribe(token)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
