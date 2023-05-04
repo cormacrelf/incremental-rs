@@ -1,6 +1,6 @@
 [package]
 name = "incremental"
-version = "0.1.0"
+version = "0.0.0"
 authors = ["Cormac Relf <web@cormacrelf.net>"]
 edition = "2021"
 
