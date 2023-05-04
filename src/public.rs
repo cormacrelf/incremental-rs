@@ -27,7 +27,7 @@ pub struct Observer<T: Value> {
     sentinel: Rc<()>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Update<T> {
     Initialised(T),
     Changed(T),
@@ -39,6 +39,18 @@ impl<T> Update<T> {
             Self::Initialised(t) => Some(t),
             Self::Changed(t) => Some(t),
             _ => None,
+        }
+    }
+}
+impl<T> Update<&T> {
+    pub fn cloned(&self) -> Update<T>
+    where
+        T: Clone,
+    {
+        match *self {
+            Self::Initialised(t) => Update::Initialised(t.clone()),
+            Self::Changed(t) => Update::Changed(t.clone()),
+            Self::Invalidated => Update::Invalidated,
         }
     }
 }

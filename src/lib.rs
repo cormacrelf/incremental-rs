@@ -1,4 +1,5 @@
 // #![feature(type_alias_impl_trait)]
+#![doc = include_str!("../README.md")]
 
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
