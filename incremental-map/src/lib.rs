@@ -6,7 +6,7 @@ use std::{cell::RefCell, marker::PhantomData};
 use incremental::{Incr, Value};
 
 pub mod btree_map;
-#[cfg(feature = "im-rc")]
+#[cfg(feature = "im")]
 pub mod im_rc;
 pub(crate) mod symmetric_fold;
 

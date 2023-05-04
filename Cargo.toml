@@ -39,7 +39,7 @@ tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 criterion = { workspace = true }
 test-log = { workspace = true }
-incremental-map = { path = "incremental-map", features = ["im-rc"] }
+incremental-map = { path = "incremental-map", features = ["im"] }
 rand = "0.8.5"
 im-rc = { workspace = true }
 
