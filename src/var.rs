@@ -270,7 +270,7 @@ fn var_drop() {
         println!("watch created, public::Var dropped");
         let o = w.observe();
         incr.stabilise();
-        assert_eq!(o.value(), Ok(10));
+        assert_eq!(o.try_get_value(), Ok(10));
     }
     assert_eq!(DID_DROP.with(|cell| cell.get()), 1);
 }
@@ -288,9 +288,9 @@ fn var_drop_delayed() {
         });
         let o = c.observe();
         incr.stabilise();
-        assert_eq!(o.value(), Ok(10));
+        assert_eq!(o.try_get_value(), Ok(10));
         incr.stabilise();
-        assert_eq!(o.value(), Ok(99));
+        assert_eq!(o.try_get_value(), Ok(99));
     }
     assert_eq!(DID_DROP.with(|cell| cell.get()), 1);
 }

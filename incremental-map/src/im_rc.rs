@@ -134,7 +134,7 @@ fn test_merge() {
     incr.stabilise();
     use MergeElement::*;
     assert_eq!(
-        obs.value(),
+        obs.try_get_value(),
         Ok(ordmap! {
             1 => Both("a", "one"), 2 => Both("b", "two"), 3 => Both("c", "three")
         })
@@ -147,7 +147,7 @@ fn test_merge() {
     });
     incr.stabilise();
     assert_eq!(
-        dbg!(obs.value()),
+        dbg!(obs.try_get_value()),
         Ok(ordmap! {
             1 => Both("a", "one"), 2 => Right("two"), 3 => Both("replaced", "three"),
             4 => Left("added")

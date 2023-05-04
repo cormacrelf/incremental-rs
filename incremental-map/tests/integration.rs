@@ -45,22 +45,22 @@ fn incr_map_uf() {
     let o = sum.observe();
 
     incr.stabilise();
-    assert_eq!(o.value(), Ok(13));
+    assert_eq!(o.try_get_value(), Ok(13));
 
     b.remove("five");
     setter.set(b.clone());
     incr.stabilise();
-    assert_eq!(o.value(), Ok(8));
+    assert_eq!(o.try_get_value(), Ok(8));
 
     b.insert("five", 100);
     setter.set(b.clone());
     incr.stabilise();
-    assert_eq!(o.value(), Ok(108));
+    assert_eq!(o.try_get_value(), Ok(108));
 
     b.insert("five", 105);
     setter.set(b.clone());
     incr.stabilise();
-    assert_eq!(o.value(), Ok(113));
+    assert_eq!(o.try_get_value(), Ok(113));
     o.save_dot_to_file("incr_map_uf.dot");
 }
 

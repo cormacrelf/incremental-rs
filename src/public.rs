@@ -63,12 +63,12 @@ impl<T: Value> Observer<T> {
         }
     }
     #[inline]
-    pub fn value(&self) -> Result<T, ObserverError> {
-        self.internal.value()
+    pub fn try_get_value(&self) -> Result<T, ObserverError> {
+        self.internal.try_get_value()
     }
     #[inline]
     pub fn expect_value(&self) -> T {
-        self.internal.value().unwrap()
+        self.internal.try_get_value().unwrap()
     }
 
     pub fn subscribe(&self, on_update: impl FnMut(Update<&T>) + 'static) -> SubscriptionToken {

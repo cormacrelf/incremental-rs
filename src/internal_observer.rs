@@ -149,7 +149,7 @@ impl<T: Value> Debug for InternalObserver<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalObserver")
             .field("state", &self.state.get())
-            .field("value", &self.value())
+            .field("value", &self.try_get_value())
             .finish()
     }
 }
@@ -169,7 +169,7 @@ impl<T: Value> InternalObserver<T> {
             next_subscriber: SubscriptionToken(id, 1).into(),
         })
     }
-    pub(crate) fn value(&self) -> Result<T, ObserverError> {
+    pub(crate) fn try_get_value(&self) -> Result<T, ObserverError> {
         let t = self.incr_state();
         match t {
             Some(t) => match t.status.get() {

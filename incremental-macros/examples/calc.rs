@@ -126,10 +126,10 @@ fn main() {
     //
     // Nevertheless we must call incr.stabilise(), as observers can't give
     // you their value until they have been stabilised. If you remove the call,
-    // you'll notice `beta.value()` returns `Err(ObserverError::NeverStabilised)`.
+    // you'll notice `beta.try_get_value()` returns `Err(ObserverError::NeverStabilised)`.
     let beta = eval_file(db, beta_calc).observe();
     incr.stabilise();
-    assert_eq!(beta.value(), Ok(5));
+    assert_eq!(beta.try_get_value(), Ok(5));
 
     // Modify the gamma file. Nothing depends on gamma.calc. This will simply
     // propagate the new value of `files` to the caching nodes for alpha & beta,

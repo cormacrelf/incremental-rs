@@ -11,7 +11,7 @@ fn testit() {
     var.set(10);
     let observer = var.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(10));
+    assert_eq!(observer.try_get_value(), Ok(10));
 }
 
 #[test]
@@ -21,10 +21,10 @@ fn test_map() {
     let mapped = var.map(|x| dbg!(dbg!(x) * 10));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(50));
+    assert_eq!(observer.try_get_value(), Ok(50));
     var.set(3);
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(30));
+    assert_eq!(observer.try_get_value(), Ok(30));
 }
 
 #[test]
@@ -35,13 +35,13 @@ fn test_map2() {
     let mapped = a.map2(&b, |a, b| dbg!(dbg!(a) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(13));
+    assert_eq!(observer.try_get_value(), Ok(13));
     // each of these queues up the watch node into the recompute heap.
     a.set(3);
     b.set(9);
     // during stabilisation the map node gets inserted into the recompute heap
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(12));
+    assert_eq!(observer.try_get_value(), Ok(12));
 }
 #[test]
 fn test_map_map2() {
@@ -52,13 +52,13 @@ fn test_map_map2() {
     let mapped = map_left.map2(&b, |left, b| dbg!(dbg!(left) + dbg!(b)));
     let observer = mapped.observe();
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(58));
+    assert_eq!(observer.try_get_value(), Ok(58));
     // each of these queues up the watch node into the recompute heap.
     a.set(3);
     b.set(9);
     // during stabilisation the map node gets inserted into the recompute heap
     incr.stabilise();
-    assert_eq!(observer.value(), Ok(39));
+    assert_eq!(observer.try_get_value(), Ok(39));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn test_bind_existing() {
     });
     let obs = bound.observe();
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), Ok(5));
+    assert_eq!(dbg!(obs.try_get_value()), Ok(5));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -94,7 +94,7 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     b.set(50);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), Ok(50));
+    assert_eq!(dbg!(obs.try_get_value()), Ok(50));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -102,7 +102,7 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     c.set(99);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), Ok(50));
+    assert_eq!(dbg!(obs.try_get_value()), Ok(50));
 
     println!("");
     println!("------------------------------------------------------------------");
@@ -111,7 +111,7 @@ fn test_bind_existing() {
     println!("------------------------------------------------------------------");
     choose.set(Choose::C);
     incr.stabilise();
-    assert_eq!(dbg!(obs.value()), Ok(99));
+    assert_eq!(dbg!(obs.try_get_value()), Ok(99));
     tracing::warn!("{:?}", incr.stats());
     assert_eq!(incr.stats().became_unnecessary, 1);
 }
@@ -163,7 +163,7 @@ fn create_var_in_bind() {
     incr.stabilise();
     lhs.set(false);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(9));
+    assert_eq!(o.try_get_value(), Ok(9));
     o.save_dot_to_file("create_var_in_bind.dot");
 }
 
@@ -187,14 +187,14 @@ fn bind_changing_heights_outside() {
         .observe();
     println!("------------------------------------------------------------------");
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(5));
+    assert_eq!(obs.try_get_value(), Ok(5));
     println!("------------------------------------------------------------------");
     println!("set long");
     println!("------------------------------------------------------------------");
     // BindMain's height is bumped up to 5.
     is_short.set(false);
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(10));
+    assert_eq!(obs.try_get_value(), Ok(10));
     println!("------------------------------------------------------------------");
     println!("return to short");
     println!("------------------------------------------------------------------");
@@ -204,7 +204,7 @@ fn bind_changing_heights_outside() {
     // capable of setting a height lower than the previous one.
     is_short.set(true);
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(5));
+    assert_eq!(obs.try_get_value(), Ok(5));
 }
 
 #[test]
@@ -223,19 +223,19 @@ fn bind_changing_heights_inside() {
         .observe();
     println!("------------------------------------------------------------------");
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(5));
+    assert_eq!(obs.try_get_value(), Ok(5));
     println!("------------------------------------------------------------------");
     println!("set long");
     println!("------------------------------------------------------------------");
     is_short.set(false);
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(10));
+    assert_eq!(obs.try_get_value(), Ok(10));
     println!("------------------------------------------------------------------");
     println!("return to short");
     println!("------------------------------------------------------------------");
     is_short.set(true);
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(5));
+    assert_eq!(obs.try_get_value(), Ok(5));
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn observer_ugly() {
     let o = bound.observe();
 
     incr.stabilise();
-    assert_eq!(o.value(), Ok(9));
+    assert_eq!(o.try_get_value(), Ok(9));
 
     let unrelated = incr.var(100);
     // make sure to add unrelated to recompute heap first
@@ -258,21 +258,21 @@ fn observer_ugly() {
 
     let var = incr.var(10);
     let o1 = var.map(|a| a + 10).observe();
-    assert_eq!(o1.value(), Err(ObserverError::NeverStabilised));
+    assert_eq!(o1.try_get_value(), Err(ObserverError::NeverStabilised));
 
-    let map = unrelated.map(move |_x| o.value());
+    let map = unrelated.map(move |_x| o.try_get_value());
     let o2 = map.observe();
 
     incr.stabilise();
     // ok none of this is guaranteed to work but i'm just trying to break it
     lhs.set(false);
     unused.set(700);
-    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
     unrelated.set(99);
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
 }
 
 #[test]
@@ -358,15 +358,15 @@ fn bind_fold() {
 
     let obs = sum.observe();
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(60));
+    assert_eq!(obs.try_get_value(), Ok(60));
 
     v1.set(40);
     incr.stabilise_debug("bind_fold");
 
-    assert_eq!(obs.value(), Ok(90));
+    assert_eq!(obs.try_get_value(), Ok(90));
     vars.set(vec![v1.clone()]);
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(40));
+    assert_eq!(obs.try_get_value(), Ok(40));
 }
 
 // #[test]
@@ -393,17 +393,17 @@ fn bind_fold() {
 //     let obs = sum.observe();
 //     incr.stabilise();
 //     obs.save_dot_to_file("unordered_fold-1.dot");
-//     assert_eq!(obs.value(), Ok(60));
+//     assert_eq!(obs.try_get_value(), Ok(60));
 //
 //     v1.set(40);
 //     incr.stabilise();
 //     obs.save_dot_to_file("unordered_fold-2.dot");
 //
-//     assert_eq!(obs.value(), Ok(90));
+//     assert_eq!(obs.try_get_value(), Ok(90));
 //     vars.set(vec![v1.clone()]);
 //     incr.stabilise();
 //     obs.save_dot_to_file("unordered_fold-3.dot");
-//     assert_eq!(obs.value(), Ok(40));
+//     assert_eq!(obs.try_get_value(), Ok(40));
 //
 //     vars.set(vec![]);
 //     incr.stabilise();
@@ -482,19 +482,19 @@ impl PartialEq<u32> for CallCounter {
 //     });
 //     let obs = sum.observe();
 //     incr.stabilise();
-//     assert_eq!(obs.value(), Ok(60));
+//     assert_eq!(obs.try_get_value(), Ok(60));
 //     assert_eq!(*f, 3);
 //     assert_eq!(*finv, 0);
 //
 //     v1.set(40);
 //     incr.stabilise();
-//     assert_eq!(obs.value(), Ok(90));
+//     assert_eq!(obs.try_get_value(), Ok(90));
 //     assert_eq!(*f, 4);
 //     assert_eq!(*finv, 1);
 //
 //     vars.set(vec![v1.clone()]);
 //     incr.stabilise();
-//     assert_eq!(obs.value(), Ok(40));
+//     assert_eq!(obs.try_get_value(), Ok(40));
 //     assert_eq!(*f, 5);
 //     // we create a new UnorderedArrayFold in the bind.
 //     // Hence finv was not needed, fold_value was zero
@@ -515,11 +515,11 @@ fn var_set_during_stabilisation() {
         .observe();
 
     incr.stabilise();
-    assert_eq!(o.value(), Ok(10));
+    assert_eq!(o.try_get_value(), Ok(10));
     incr.stabilise();
-    assert_eq!(o.value(), Ok(20));
+    assert_eq!(o.try_get_value(), Ok(20));
     incr.stabilise();
-    assert_eq!(o.value(), Ok(30));
+    assert_eq!(o.try_get_value(), Ok(30));
 }
 
 #[test]
@@ -528,24 +528,24 @@ fn var_update_simple() {
     let var = incr.var(10);
     let o = var.observe();
     incr.stabilise();
-    assert_eq!(o.value(), Ok(10));
+    assert_eq!(o.try_get_value(), Ok(10));
     var.update(|x| x + 10);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(20));
+    assert_eq!(o.try_get_value(), Ok(20));
     var.modify(|x| *x += 10);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(30));
+    assert_eq!(o.try_get_value(), Ok(30));
     let old = var.replace(40);
     incr.stabilise();
     assert_eq!(old, 30);
-    assert_eq!(o.value(), Ok(40));
+    assert_eq!(o.try_get_value(), Ok(40));
     let old = var.replace_with(|old| {
         *old += 5;
         *old + 5
     });
     incr.stabilise();
     assert_eq!(old, 45);
-    assert_eq!(o.value(), Ok(50));
+    assert_eq!(o.try_get_value(), Ok(50));
 }
 
 #[test]
@@ -560,14 +560,14 @@ fn var_update_during_stabilisation() {
         })
         .observe();
     incr.stabilise();
-    assert_eq!(o.value(), Ok(10));
+    assert_eq!(o.try_get_value(), Ok(10));
     incr.stabilise();
-    assert_eq!(o.value(), Ok(11));
+    assert_eq!(o.try_get_value(), Ok(11));
     var.set(5);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(5));
+    assert_eq!(o.try_get_value(), Ok(5));
     incr.stabilise();
-    assert_eq!(o.value(), Ok(6));
+    assert_eq!(o.try_get_value(), Ok(6));
     o.save_dot_to_file("var_update_during_stabilisation.dot");
 }
 
@@ -584,9 +584,9 @@ fn var_update_before_set_during_stabilisation() {
         .observe();
     var.modify(|x| *x += 1);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(11));
+    assert_eq!(o.try_get_value(), Ok(11));
     incr.stabilise();
-    assert_eq!(o.value(), Ok(99));
+    assert_eq!(o.try_get_value(), Ok(99));
 }
 
 #[test]
@@ -596,7 +596,7 @@ fn test_constant() {
     let m = c.map(|x| x + 10);
     let o = m.observe();
     incr.stabilise();
-    assert_eq!(o.value(), Ok(15));
+    assert_eq!(o.try_get_value(), Ok(15));
     let flip = incr.var(true);
     let o2 = flip
         .binds(|incr, &t| {
@@ -608,10 +608,10 @@ fn test_constant() {
         })
         .observe();
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(5));
+    assert_eq!(o2.try_get_value(), Ok(5));
     flip.set(!flip.get());
     incr.stabilise();
-    assert_eq!(o2.value(), Ok(10));
+    assert_eq!(o2.try_get_value(), Ok(10));
     o2.save_dot_to_file("test_constant.dot");
 }
 
@@ -661,12 +661,12 @@ fn cutoff_rc_ptr_eq() {
     var.set(rc.clone());
     incr.stabilise();
     assert_eq!(*sum_counter, 1);
-    assert_eq!(o.value(), Ok(6));
+    assert_eq!(o.try_get_value(), Ok(6));
 
     var.set(Rc::new(vec![1, 2, 3, 4]));
     incr.stabilise();
     assert_eq!(*sum_counter, 2);
-    assert_eq!(o.value(), Ok(10));
+    assert_eq!(o.try_get_value(), Ok(10));
 }
 
 #[test]
@@ -685,17 +685,17 @@ fn cutoff_sum() {
 
     incr.stabilise();
     assert_eq!(*add10_counter, 1);
-    assert_eq!(o.value(), Ok(16));
+    assert_eq!(o.try_get_value(), Ok(16));
 
     v.set(vec![6]);
     incr.stabilise();
     assert_eq!(*add10_counter, 1); // the crux
-    assert_eq!(o.value(), Ok(16));
+    assert_eq!(o.try_get_value(), Ok(16));
 
     v.set(vec![9, 1]);
     incr.stabilise();
     assert_eq!(*add10_counter, 2); // the crux again
-    assert_eq!(o.value(), Ok(20));
+    assert_eq!(o.try_get_value(), Ok(20));
 }
 
 #[test]
@@ -881,7 +881,7 @@ fn becomes_unnecessary() {
         }
     ));
     assert_eq!(incr.stats().necessary, 4);
-    assert_eq!(obs.value(), Ok(5));
+    assert_eq!(obs.try_get_value(), Ok(5));
 
     // Now we swap the bind's output from a constant to the three-node map
     useit.set(true);
@@ -896,7 +896,7 @@ fn becomes_unnecessary() {
         }
     ));
     assert_eq!(incr.stats().necessary, 6);
-    assert_eq!(obs.value(), Ok(10));
+    assert_eq!(obs.try_get_value(), Ok(10));
 
     drop(obs);
     let diff = stabilise_diff(&incr, "after dropping bind observer");

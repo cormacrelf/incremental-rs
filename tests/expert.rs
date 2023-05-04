@@ -30,10 +30,10 @@ fn test_join() {
     let joined = join(outer.watch());
     let o = joined.observe();
     incr.stabilise();
-    assert_eq!(o.value(), Ok(10));
+    assert_eq!(o.try_get_value(), Ok(10));
     inner.set(20);
     incr.stabilise();
-    assert_eq!(o.value(), Ok(20));
+    assert_eq!(o.try_get_value(), Ok(20));
 }
 
 #[allow(dead_code)]

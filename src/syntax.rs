@@ -47,5 +47,5 @@ fn test_syntax() {
     let out = (i1 % i2 % i3).map(|&a, &b, &c| a * b * c);
     let obs = out.observe();
     incr.stabilise();
-    assert_eq!(obs.value(), Ok(450));
+    assert_eq!(obs.try_get_value(), Ok(450));
 }

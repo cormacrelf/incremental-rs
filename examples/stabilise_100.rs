@@ -26,7 +26,7 @@ fn main() {
     let o = first_num.pipe(using_map).observe();
     incr.stabilise();
     // o.save_dot_to_file("stabilise_100.dot");
-    assert_eq!(o.value(), Ok(NODE_COUNT));
+    assert_eq!(o.try_get_value(), Ok(NODE_COUNT));
 
     let prev_stats = incr.stats();
     let start = Instant::now();
@@ -53,6 +53,6 @@ fn iter(node: Observer<u64>, incr: &IncrState, set_first_num: Var<u64>) {
         update_number += 1;
         set_first_num.set(update_number);
         incr.stabilise();
-        assert_eq!(node.value(), Ok(update_number + NODE_COUNT));
+        assert_eq!(node.try_get_value(), Ok(update_number + NODE_COUNT));
     }
 }
