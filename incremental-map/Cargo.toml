@@ -1,6 +1,6 @@
 [package]
 name = "incremental-map"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 description = "combinators for incremental immutable maps (see crate `incremental`)"
 license = "MIT"
