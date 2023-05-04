@@ -3,6 +3,8 @@ name = "incremental"
 version = "0.0.0"
 authors = ["Cormac Relf <web@cormacrelf.net>"]
 edition = "2021"
+description = "incremental computations, based on Jane Street's incremental"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
