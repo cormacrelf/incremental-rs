@@ -249,7 +249,7 @@ impl<T: Value> Drop for Var<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IncrState {
     pub(crate) inner: Rc<State>,
 }
