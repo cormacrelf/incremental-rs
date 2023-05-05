@@ -195,3 +195,27 @@ fn incr_filter_mapi() {
     incr.stabilise();
     assert_eq!(*counter, 3);
 }
+
+#[cfg(feature = "im")]
+#[test]
+fn incr_partition_mapi() {
+    use im_rc::ordmap;
+    use incremental_map::im_rc::IncrOrdMap;
+
+    let incr = IncrState::new();
+    let var = incr.var(ordmap! { 2i32 => "Hello", 3 => "three", 4 => "four", 5 => "five" });
+    let partitioned = var.watch().incr_partition_mapi(|key, value| {
+        if *key < 4 {
+            Either::Left(*value)
+        } else {
+            Either::Right(*value)
+        }
+    });
+
+    let left_ = partitioned.map_ref(|(a, _)| a).observe();
+    let right = partitioned.map_ref(|(_, b)| b).observe();
+
+    incr.stabilise();
+    assert_eq!(left_.value(), ordmap! { 2i32 => "Hello", 3 => "three" });
+    assert_eq!(right.value(), ordmap! { 4i32 => "four", 5 => "five" });
+}

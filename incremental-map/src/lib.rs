@@ -1,7 +1,7 @@
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
 
-use std::{cell::RefCell, marker::PhantomData};
+use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
 use incremental::incrsan::NotObserver;
 use incremental::{Incr, Value};
@@ -163,6 +163,23 @@ pub trait Symmetric<T> {
         R: Value,
         FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver;
+
+    fn incr_unordered_fold_update<FAdd, FRemove, FUpdate, K, V, R>(
+        &self,
+        init: R,
+        add: FAdd,
+        remove: FRemove,
+        update: FUpdate,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<R>
+    where
+        T: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver;
 }
 
 impl<T: Value> Symmetric<T> for Incr<T> {
@@ -275,8 +292,8 @@ impl<T: Value> Symmetric<T> for Incr<T> {
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
         init: R,
-        mut add: FAdd,
-        mut remove: FRemove,
+        add: FAdd,
+        remove: FRemove,
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
@@ -286,6 +303,39 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         R: Value,
         FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+    {
+        let add = Rc::new(RefCell::new(add));
+        let add2 = add.clone();
+        let remove = Rc::new(RefCell::new(remove));
+        let remove2 = remove.clone();
+        self.incr_unordered_fold_update(
+            init,
+            move |acc, key, data| add.borrow_mut()(acc, key, data),
+            move |acc, key, data| remove.borrow_mut()(acc, key, data),
+            move |acc, key, old, new| {
+                let acc = remove2.borrow_mut()(acc, key, old);
+                add2.borrow_mut()(acc, key, new)
+            },
+            revert_to_init_when_empty,
+        )
+    }
+
+    fn incr_unordered_fold_update<FAdd, FRemove, FUpdate, K, V, R>(
+        &self,
+        init: R,
+        mut add: FAdd,
+        mut remove: FRemove,
+        mut update: FUpdate,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<R>
+    where
+        T: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver,
     {
         let i = self.with_old_input_output(move |old, new_in| match old {
             None => {
@@ -297,18 +347,14 @@ impl<T: Value> Symmetric<T> for Incr<T> {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded: R =
-                    old_in.symmetric_fold(new_in, old_out, |mut acc, (key, difference)| {
-                        did_change = true;
-                        match difference {
-                            DiffElement::Left(value) => remove(acc, key, value),
-                            DiffElement::Right(value) => add(acc, key, value),
-                            DiffElement::Unequal(lv, rv) => {
-                                acc = remove(acc, key, lv);
-                                add(acc, key, rv)
-                            }
-                        }
-                    });
+                let folded: R = old_in.symmetric_fold(new_in, old_out, |acc, (key, difference)| {
+                    did_change = true;
+                    match difference {
+                        DiffElement::Left(value) => remove(acc, key, value),
+                        DiffElement::Right(value) => add(acc, key, value),
+                        DiffElement::Unequal(lv, rv) => update(acc, key, lv, rv),
+                    }
+                });
                 (folded, did_change)
             }
         });

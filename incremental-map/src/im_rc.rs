@@ -11,7 +11,7 @@ use crate::symmetric_fold::{
     SymmetricMapMap,
 };
 
-use crate::{FilterMapOperator, MapOperator, Operator, WithOldIO};
+use crate::{FilterMapOperator, MapOperator, Operator, Symmetric, WithOldIO};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -242,6 +242,13 @@ macro_rules! doc {
     };
 }
 
+/// Used for [IncrOrdMap::incr_partition_mapi]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
 /// Incremental map and filter_map for `im_rc::OrdMap`.
 
 pub trait IncrOrdMap<K: Value + Ord, V: Value> {
@@ -274,6 +281,12 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         V2: Value,
         R: Value,
         F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static + NotObserver;
+
+    fn incr_partition_mapi<F, A, B>(&self, f: F) -> Incr<(OrdMap<K, A>, OrdMap<K, B>)>
+    where
+        A: Value,
+        B: Value,
+        F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver;
 }
 
 impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {
@@ -352,6 +365,39 @@ impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {
             std::any::type_name::<OrdMap<K, R>>()
         )));
         i
+    }
+
+    fn incr_partition_mapi<F, A, B>(&self, f: F) -> Incr<(OrdMap<K, A>, OrdMap<K, B>)>
+    where
+        A: Value,
+        B: Value,
+        F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver,
+    {
+        let empty = OrdMap::new();
+        let empty2 = OrdMap::new();
+        let f1 = Rc::new(RefCell::new(f));
+        let f2 = f1.clone();
+        self.incr_unordered_fold_update(
+            (empty, empty2),
+            move |(first, second), key, data| match f1.borrow_mut()(key, data) {
+                Either::Left(data) => (OrdMap::update(&first, key.clone(), data), second),
+                Either::Right(data) => (first, OrdMap::update(&second, key.clone(), data)),
+            },
+            move |(first, second), key, _| {
+                (OrdMap::without(&first, key), OrdMap::without(&second, key))
+            },
+            move |(first, second), key, _old_data, data| match f2.borrow_mut()(key, data) {
+                Either::Left(data) => (
+                    OrdMap::update(&first, key.clone(), data),
+                    OrdMap::without(&second, key),
+                ),
+                Either::Right(data) => (
+                    OrdMap::without(&first, key),
+                    OrdMap::update(&second, key.clone(), data),
+                ),
+            },
+            true,
+        )
     }
 }
 
