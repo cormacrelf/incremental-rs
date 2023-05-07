@@ -2,7 +2,7 @@ use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
 use test_log::test;
 
-use incremental::IncrState;
+use incremental::{Incr, IncrState};
 use incremental_map::Symmetric;
 
 #[derive(Debug)]
@@ -213,4 +213,65 @@ fn incr_partition_mapi() {
     assert_eq!(left_.value(), ordmap! { 2i32 => "Hello", 3 => "three" });
     assert_eq!(right.value(), ordmap! { 4i32 => "four", 5 => "five" });
     left_.save_dot_to_file("/tmp/incr_partition_mapi.dot");
+}
+
+use incremental::Value;
+use incremental_map::{IncrUnorderedFoldWith, UnorderedFold};
+struct SumFold;
+impl<K: Value + Ord> UnorderedFold<K, i32, i32> for SumFold {
+    fn add(&mut self, acc: i32, _key: &K, value: &i32) -> i32 {
+        acc + value
+    }
+
+    fn remove(&mut self, acc: i32, _key: &K, value: &i32) -> i32 {
+        acc - value
+    }
+    fn revert_to_init_when_empty(&self) -> bool {
+        true
+    }
+    fn initial_fold(&mut self, init: i32, input: &im_rc::OrdMap<K, i32>) -> i32 {
+        input.iter().fold(init, |acc, (_k, v)| acc + v)
+    }
+}
+
+// #[cfg(feature = "im")]
+#[test]
+fn incr_unordered_fold_struct() {
+    use im_rc::ordmap;
+    let state = IncrState::new();
+    let var = state.var(ordmap! { 1 => 1, 2 => 3 });
+
+    let folded: Incr<i32> = var.watch().incr_unordered_fold_with(0, SumFold);
+    let obs = folded.observe();
+    state.stabilise();
+    assert_eq!(obs.value(), 4);
+
+    var.modify(|omap| {
+        omap.insert(100, 7);
+    });
+    state.stabilise();
+    assert_eq!(obs.value(), 11);
+    var.modify(|omap| {
+        omap.insert(100, 7);
+    });
+    state.stabilise();
+    assert_eq!(obs.value(), 11);
+}
+
+#[test]
+fn test_types() {
+    use ::im_rc::ordmap;
+    use incremental::IncrState;
+    use incremental_map::ClosureFold;
+
+    let state = IncrState::new();
+    let var = state.var(ordmap! { 1 => 2, 2 => 4, 3 => 6 });
+    let fold = ClosureFold::new()
+        .add(|acc, _k, v| acc + v)
+        .remove(|acc, _k, v| acc - v)
+        .update(|acc, _k, old, new| acc - old + new);
+    let folded = var.watch().incr_unordered_fold_with(0, fold);
+    let obs = folded.observe();
+    state.stabilise();
+    assert_eq!(obs.value(), 12);
 }

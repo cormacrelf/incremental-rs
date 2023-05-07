@@ -366,3 +366,239 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         i
     }
 }
+
+pub trait IncrUnorderedFoldWith<K: Value + Ord, V: Value> {
+    fn incr_unordered_fold_with<R, F>(&self, init: R, fold: F) -> Incr<R>
+    where
+        R: Value,
+        F: UnorderedFold<K, V, R> + 'static + NotObserver;
+}
+
+impl<K: Value + Ord, V: Value> IncrUnorderedFoldWith<K, V> for Incr<::im_rc::OrdMap<K, V>> {
+    fn incr_unordered_fold_with<R, F>(&self, init: R, mut fold: F) -> Incr<R>
+    where
+        R: Value,
+        F: UnorderedFold<K, V, R> + 'static + NotObserver,
+    {
+        let i = self.with_old_input_output(move |old, new_in| match old {
+            None => {
+                let newmap = fold.initial_fold(init.clone(), new_in);
+                (newmap, true)
+            }
+            Some((old_in, old_out)) => {
+                if fold.revert_to_init_when_empty() && new_in.is_empty() {
+                    return (init.clone(), !old_in.is_empty());
+                }
+                let mut did_change = false;
+                let folded: R = old_in.symmetric_fold(new_in, old_out, |acc, (key, difference)| {
+                    did_change = true;
+                    match difference {
+                        DiffElement::Left(value) => fold.remove(acc, key, value),
+                        DiffElement::Right(value) => fold.add(acc, key, value),
+                        DiffElement::Unequal(lv, rv) => fold.update(acc, key, lv, rv),
+                    }
+                });
+                (folded, did_change)
+            }
+        });
+        #[cfg(debug_assertions)]
+        i.set_graphviz_user_data(Box::new(format!(
+            "incr_unordered_fold -> {}",
+            std::any::type_name::<R>()
+        )));
+        i
+    }
+}
+
+pub trait UnorderedFold<K, V, R>
+where
+    K: Value + Ord,
+    V: Value,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R;
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R;
+    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
+        let r = self.remove(acc, key, old);
+        let r = self.add(r, key, new);
+        r
+    }
+    #[inline]
+    fn revert_to_init_when_empty(&self) -> bool {
+        false
+    }
+    fn initial_fold(&mut self, acc: R, input: &::im_rc::OrdMap<K, V>) -> R {
+        input.iter().fold(acc, |acc, (k, v)| self.add(acc, k, v))
+    }
+}
+
+/// An implementation of [UnorderedFold] using a builder pattern and closures.
+pub struct ClosureFold<K, V, R, FAdd, FRemove, FUpdate, FInitial> {
+    add: FAdd,
+    remove: FRemove,
+    update: Option<FUpdate>,
+    specialized_initial: Option<FInitial>,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(K, V, R)>,
+}
+
+impl ClosureFold<(), (), (), (), (), (), ()> {
+    pub fn new<K, V, R>(
+    ) -> ClosureFold<K, V, R, (), (), fn(R, &K, &V, &V) -> R, fn(R, &::im_rc::OrdMap<K, V>) -> R>
+where {
+        ClosureFold {
+            add: (),
+            remove: (),
+            update: None,
+            specialized_initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn new_add_remove<K, V, R, FAdd, FRemove>(
+        add: FAdd,
+        remove: FRemove,
+    ) -> ClosureFold<
+        K,
+        V,
+        R,
+        FAdd,
+        FRemove,
+        fn(R, &K, &V, &V) -> R,
+        fn(R, &::im_rc::OrdMap<K, V>) -> R,
+    >
+    where
+        FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+        FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add,
+            remove,
+            update: None,
+            specialized_initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+    ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+{
+    pub fn add<FAdd>(self, add: FAdd) -> ClosureFold<K, V, R, FAdd, FRemove_, FUpdate_, FInitial_>
+    where
+        FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add,
+            remove: self.remove,
+            update: None,
+            specialized_initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+    pub fn remove<FRemove>(
+        self,
+        remove: FRemove,
+    ) -> ClosureFold<K, V, R, FAdd_, FRemove, FUpdate_, FInitial_>
+    where
+        FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove,
+            update: None,
+            specialized_initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+    pub fn update<FUpdate>(
+        self,
+        update: FUpdate,
+    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate, FInitial_>
+    where
+        FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: Some(update),
+            specialized_initial: self.specialized_initial,
+            revert_to_init_when_empty: self.revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+    pub fn specialized_initial<FInitial>(
+        self,
+        specialized_initial: FInitial,
+    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial>
+    where
+        FInitial: for<'a> FnMut(R, &'a ::im_rc::OrdMap<K, V>) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: self.update,
+            specialized_initial: Some(specialized_initial),
+            revert_to_init_when_empty: self.revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+    pub fn revert_to_init_when_empty(
+        self,
+        revert_to_init_when_empty: bool,
+    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_> {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: self.update,
+            specialized_initial: self.specialized_initial,
+            revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+}
+
+impl<K, V, R, FAdd, FRemove, FUpdate, FInitial> UnorderedFold<K, V, R>
+    for ClosureFold<K, V, R, FAdd, FRemove, FUpdate, FInitial>
+where
+    K: Value + Ord,
+    V: Value,
+    R: Value,
+    FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
+    FInitial: for<'a> FnMut(R, &'a ::im_rc::OrdMap<K, V>) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+
+    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
+        if let Some(closure) = &mut self.update {
+            closure(acc, key, old, new)
+        } else {
+            let r = self.remove(acc, key, old);
+            let r = self.add(r, key, new);
+            r
+        }
+    }
+
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+
+    fn initial_fold(&mut self, init: R, input: &::im_rc::OrdMap<K, V>) -> R {
+        if let Some(closure) = &mut self.specialized_initial {
+            closure(init, input)
+        } else {
+            input.iter().fold(init, |acc, (k, v)| self.add(acc, k, v))
+        }
+    }
+}
