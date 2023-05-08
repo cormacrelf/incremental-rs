@@ -460,6 +460,13 @@ impl State {
         for var in dead_vars.drain(..).filter_map(|x| x.upgrade()) {
             var.break_rc_cycle();
         }
+        for (_id, obs) in self.all_observers.borrow().iter() {
+            let state = obs.state().get();
+            if state == ObserverState::InUse || state == ObserverState::Created {
+                obs.disallow_future_use(self);
+            }
+        }
+        self.unlink_disallowed_observers();
         self.all_observers.take().clear();
         self.disallowed_observers.take().clear();
         self.weak_maps.take().clear();
