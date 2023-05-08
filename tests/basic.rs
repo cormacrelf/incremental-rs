@@ -1093,3 +1093,22 @@ fn test_depend_on() {
     check!(state, nx => 4, ny => 4);
     assert_eq!(o_.value(), 19);
 }
+
+#[test]
+fn test_duplicate_incrstate_drop() {
+    let incr = IncrState::new();
+    let obs = incr.var(5).observe();
+
+    incr.stabilise();
+    assert_eq!(obs.value(), 5);
+
+    // I previously left an accidental `inner.destroy()` in the
+    // Drop impl of IncrState.
+    let cloned = incr.clone();
+    drop(cloned);
+
+    assert_eq!(obs.value(), 5);
+
+    drop(obs);
+    drop(incr);
+}

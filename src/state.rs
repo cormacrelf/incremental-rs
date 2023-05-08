@@ -470,6 +470,7 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
+        tracing::debug!("destroying internal State object");
         self.destroy();
     }
 }
