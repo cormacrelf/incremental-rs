@@ -256,12 +256,13 @@ impl State {
             debug_assert_eq!(obs.state().get(), ObserverState::Disallowed);
             obs.state().set(ObserverState::Unlinked);
             // get a strong ref to the node, before we drop its owning InternalObserver
-            let observing = obs.observing_erased();
+            let observing = obs.observing_packed();
             {
                 obs.remove_from_observed_node();
                 // remove from all_observers (this finally drops the InternalObserver)
                 let mut ao = self.all_observers.borrow_mut();
                 ao.remove(&obs.id());
+                drop(obs);
             }
             observing.check_if_unnecessary(self);
         }
