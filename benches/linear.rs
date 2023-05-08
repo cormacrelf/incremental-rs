@@ -9,6 +9,7 @@ use incremental::{Incr, IncrState, Observer, Var};
 enum SequenceKind {
     Trivial,
     TrivialBind,
+    Spokes,
     Recombine,
     Wide,
 }
@@ -21,6 +22,13 @@ fn sequence(node: Incr<u64>, kind: SequenceKind, size: u64) -> Incr<u64> {
         SequenceKind::TrivialBind => (0..size).into_iter().fold(node, |node, _| {
             node.binds(|incr, &val| incr.constant(val + 1))
         }),
+        SequenceKind::Spokes => {
+            let all = (0..size)
+                .into_iter()
+                .map(|_| node.map(|val| val + 1))
+                .collect::<Vec<_>>();
+            node.state().fold(all, 0, |a, b| a + b)
+        }
         SequenceKind::Recombine => (0..size).into_iter().fold(node, |node, _| {
             let a = node.map(|x| x + 1);
             let b = node.map(|x| x + 1);
@@ -91,6 +99,7 @@ impl From<SequenceKind> for String {
             SequenceKind::Wide => "wide",
             SequenceKind::Trivial => "trivial",
             SequenceKind::TrivialBind => "trivial-bind",
+            SequenceKind::Spokes => "spokes",
             SequenceKind::Recombine => "recombine",
         }
         .into()
@@ -102,12 +111,14 @@ fn bench_node(c: &mut Criterion, kind: SequenceKind, size: u64) {
         let (var, incr, obs, _recomputed) = setup(kind, size);
         b.iter_custom(|iters| {
             let start = Instant::now();
+            let recomputed = incr.stats().recomputed;
             for _ in 0..iters {
                 var.update(|x| x + 1);
                 incr.stabilise();
                 black_box(obs.value());
             }
-            start.elapsed()
+            let diff = incr.stats().recomputed - recomputed;
+            iters as u32 * start.elapsed() / diff as u32
         })
     });
 }
@@ -126,8 +137,9 @@ fn bench_stabilise(c: &mut Criterion, kind: SequenceKind, size: u64) {
 fn all(c: &mut Criterion) {
     tracing_subscriber::fmt().init();
     bench_node(c, SequenceKind::Recombine, 50);
-    bench_node(c, SequenceKind::Trivial, 50);
+    bench_node(c, SequenceKind::Trivial, 1000);
     bench_node(c, SequenceKind::TrivialBind, 50);
+    bench_node(c, SequenceKind::Spokes, 1000);
     bench_node(c, SequenceKind::Wide, 5);
     bench_node(c, SequenceKind::Wide, 10);
     bench_stabilise(c, SequenceKind::Recombine, 50);
