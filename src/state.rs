@@ -249,6 +249,7 @@ impl State {
     // not required. We don't have a GC with dead-but-still-participating objects to account for.
     // fn disallow_finalized_observers(&self) {}
 
+    #[tracing::instrument]
     fn unlink_disallowed_observers(&self) {
         let mut disallowed = self.disallowed_observers.borrow_mut();
         for obs_weak in disallowed.drain(..) {
@@ -268,12 +269,14 @@ impl State {
         }
     }
 
+    #[tracing::instrument]
     fn stabilise_start(&self) {
         self.status.set(IncrStatus::Stabilising);
         // self.disallow_finalized_observers();
         self.add_new_observers();
         self.unlink_disallowed_observers();
     }
+    #[tracing::instrument]
     fn stabilise_end(&self) {
         self.stabilisation_num
             .set(self.stabilisation_num.get().add1());
