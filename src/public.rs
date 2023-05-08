@@ -273,16 +273,6 @@ pub struct IncrState {
     pub(crate) inner: Rc<State>,
 }
 
-impl Drop for IncrState {
-    fn drop(&mut self) {
-        self.inner.destroy();
-        let strong_count = Rc::strong_count(&self.inner);
-        if strong_count > 1 {
-            tracing::error!("dropping IncrState; strong_count = {}", strong_count);
-        }
-    }
-}
-
 impl Default for IncrState {
     fn default() -> Self {
         Self::new()
