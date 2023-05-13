@@ -12,7 +12,7 @@ use super::scope::Scope;
 use super::state::{IncrStatus, State};
 use super::{Incr, NodeRef, WeakNode};
 use core::fmt::Debug;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::Ref;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
@@ -126,6 +126,8 @@ pub(crate) type ErasedInput = Rc<dyn ErasedIncremental>;
 
 pub(crate) trait ErasedIncremental: Debug {
     fn value_as_ref_any(&self) -> Option<Ref<dyn Any>>;
+    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn);
+    fn check_if_unnecessary(&self, state: &State);
 }
 
 impl<G: NodeGenerics> ErasedIncremental for Node<G> {
@@ -135,6 +137,14 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
             r
         }
         Some(Ref::map(ref_, g_r_as_any))
+    }
+    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn) {
+        // TODO: downcast the dynamic parent to a ParentRef<G::R> (our R),
+        // then call the non-erased version with it.
+    }
+
+    fn check_if_unnecessary(&self, state: &State) {
+        ErasedNode::check_if_unnecessary(self, state)
     }
 }
 
@@ -150,7 +160,7 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
         state: &State,
     );
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<R>, state: &State);
-    fn remove_parent(&self, child_index: i32, parent_weak: ParentRef<R>);
+    fn remove_parent(&self, child_index: i32, parent_ref: ParentRef<R>);
     fn set_cutoff(&self, cutoff: Cutoff<R>);
     fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
     fn value_as_ref(&self) -> Option<Ref<R>>;
@@ -307,6 +317,13 @@ pub(crate) enum ParentError {
     ParentInvalidated,
     ChildHasNoValue,
     ParentDeallocated,
+    IndexMismatch,
+}
+
+impl fmt::Display for ParentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 pub(crate) trait ParentNode<I> {
@@ -317,7 +334,7 @@ pub(crate) trait ParentNode<I> {
         old_value_opt: Option<&I>,
     ) -> Result<NodeRef, ParentError>;
 }
-pub(crate) trait ParentNodeDyn {
+pub(crate) trait ParentNodeDyn: Debug + Any {
     fn dyn_child_changed(
         &self,
         child: &dyn ErasedIncremental,
@@ -325,7 +342,15 @@ pub(crate) trait ParentNodeDyn {
         old_value_opt: Option<&dyn Any>,
     ) -> Result<(), ParentError>;
     fn dyn_packed(self: Rc<Self>) -> NodeRef;
+    fn dyn_erased(&self) -> &dyn ErasedNode;
+    fn input_type_id(&self, index_of_child_in_parent: i32) -> TypeId;
 }
+impl dyn ParentNodeDyn {
+    fn try_downcast_r_ref<R>(&self) -> Result<ParentRef<R>, ParentError> {
+        Err(ParentError::DowncastFailed)
+    }
+}
+
 pub(crate) trait Parent1<I>: Debug + ErasedNode {
     fn p1_child_changed(
         &self,
@@ -360,22 +385,27 @@ pub(crate) trait Parent2<I>: Debug + ErasedNode {
 /// `child_changed`. And we only need for eventually Expert. Lot of work
 /// for one method. But there you go.
 
+/// This is what's passed down to a child, when the parent knows what type the child sees it as.
+/// For child.remove_parent calls, basically.
 #[derive(Debug, Clone)]
 pub(crate) enum ParentRef<'a, T> {
     I1(&'a dyn Parent1<T>),
     I2(&'a dyn Parent2<T>),
+    Dyn(&'a dyn ParentNodeDyn, i32),
 }
 impl<T: Value> ParentRef<'_, T> {
     fn erased(&self) -> &dyn ErasedNode {
         match self {
             Self::I1(w) => w.p1_erased(),
             Self::I2(w) => w.p2_erased(),
+            Self::Dyn(w, _i) => w.dyn_erased(),
         }
     }
     fn weak(&self) -> ParentWeak<T> {
         match self {
             Self::I1(w) => w.p1_parent_weak(),
             Self::I2(w) => w.p2_parent_weak(),
+            Self::Dyn(w, _) => todo!(),
         }
     }
 }
@@ -384,7 +414,7 @@ impl<T: Value> ParentRef<'_, T> {
 pub(crate) enum ParentWeak<T> {
     I1(Weak<dyn Parent1<T>>),
     I2(Weak<dyn Parent2<T>>),
-    Dynamic(Weak<dyn ParentNodeDyn>),
+    Dynamic(Weak<dyn ParentNodeDyn>, i32),
 }
 
 impl<T: Value> ParentWeak<T> {
@@ -392,7 +422,7 @@ impl<T: Value> ParentWeak<T> {
         match self {
             Self::I1(w) => w.upgrade().map(|x| x.p1_packed()),
             Self::I2(w) => w.upgrade().map(|x| x.p2_packed()),
-            Self::Dynamic(w) => w.upgrade().map(|x| x.dyn_packed()),
+            Self::Dynamic(w, _index) => w.upgrade().map(|x| x.dyn_packed()),
         }
         .ok_or(ParentError::ParentDeallocated)
     }
@@ -400,7 +430,7 @@ impl<T: Value> ParentWeak<T> {
         match (self, other) {
             (Self::I1(a), Self::I1(b)) => a.ptr_eq(b),
             (Self::I2(a), Self::I2(b)) => a.ptr_eq(b),
-            (Self::Dynamic(a), Self::Dynamic(b)) => a.ptr_eq(b),
+            (Self::Dynamic(a, ix_a), Self::Dynamic(b, ix_b)) => ix_a == ix_b && a.ptr_eq(b),
             _ => false,
         }
     }
@@ -424,7 +454,15 @@ impl<T: Value> ParentNode<T> for ParentWeak<T> {
                 i2.p2_child_changed(child, child_index, old_value_opt)?;
                 Ok(i2.p2_packed())
             }
-            Self::Dynamic(idyn) => {
+            Self::Dynamic(idyn, index_of_child_in_parent) => {
+                // Maybe we don't actually need to store the index, since the child does know
+                // what index it is in the parent. Alternatively, storing the
+                // `index_of_child_in_parent` in the parent ref itself is probably more robust
+                // than the array manipulation in add/remove parent, which took many tries
+                // to get right.
+                if *index_of_child_in_parent != child_index {
+                    return Err(ParentError::IndexMismatch);
+                }
                 let dyn_parent = idyn.upgrade().ok_or(ParentError::ParentDeallocated)?;
                 dyn_parent.dyn_child_changed(
                     child.erased_input(),
@@ -437,15 +475,25 @@ impl<T: Value> ParentNode<T> for ParentWeak<T> {
     }
 }
 
-impl fmt::Display for ParentError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
-}
-
 impl<G: NodeGenerics> ParentNodeDyn for Node<G> {
     fn dyn_packed(self: Rc<Self>) -> NodeRef {
         self
+    }
+    fn dyn_erased(&self) -> &dyn ErasedNode {
+        self
+    }
+    fn input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
+        if let Some(Kind::Expert(..)) = self.kind() {
+            todo!("input_type_id for expert nodes")
+        }
+        match index_of_child_in_parent {
+            0 => TypeId::of::<G::I1>(),
+            1 => TypeId::of::<G::I2>(),
+            2 => TypeId::of::<G::I3>(),
+            3 => TypeId::of::<G::I4>(),
+            4 => TypeId::of::<G::I5>(),
+            _ => todo!("only implemented up to map5"),
+        }
     }
     fn dyn_child_changed(
         &self,
@@ -539,7 +587,7 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
                 let pci = self.parent_child_indices.borrow();
                 for (parent_index, parent) in self.parents.borrow().iter().enumerate() {
                     let child_index = pci.my_child_index_in_parent_at_index[parent_index];
-                    parent.child_changed(self, child_index, self_old);
+                    parent.child_changed(self, child_index, self_old)?;
                 }
             }
             _ => {}
@@ -842,6 +890,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let h = &Cell::new(self.height());
         let p1 = self.as_parent_ref();
         let p2 = self.as_parent2_ref();
+        let pdyn = self.as_parent_dyn_ref();
         self.foreach_child_typed(ForeachChild {
             i1: &mut move |index, child| {
                 child.add_parent_without_adjusting_heights(index, p1.clone(), state);
@@ -854,6 +903,13 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 if child.height() >= h.get() {
                     h.set(child.height() + 1);
                 }
+            },
+            idyn: &mut move |index, child| {
+                todo!("dynamic version of add_parent_without_adjusting_heights");
+                // child.add_parent_without_adjusting_heights(index, p2.clone(), state);
+                // if child.height() >= h.get() {
+                //     h.set(child.height() + 1);
+                // }
             },
         });
         state.set_height(self.packed(), h.get());
@@ -1871,6 +1927,9 @@ impl<G: NodeGenerics> Node<G> {
     fn as_parent2_ref(&self) -> ParentRef<G::I2> {
         ParentRef::I2(self)
     }
+    fn as_parent_dyn_ref(&self) -> &dyn ParentNodeDyn {
+        self
+    }
     fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b, G>) {
         let Some(kind) = self.kind() else { return };
         match kind {
@@ -1884,8 +1943,38 @@ impl<G: NodeGenerics> Node<G> {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());
             }
-            Kind::Map3(..) | Kind::Map4(..) | Kind::Map5(..) => {
-                todo!("foreach_child_typed needs a &dyn Any version")
+            Kind::Map3(kind::Map3Node {
+                one, two, three, ..
+            }) => {
+                (f.idyn)(0, one.clone().erased_input());
+                (f.idyn)(1, two.clone().erased_input());
+                (f.idyn)(2, three.clone().erased_input());
+            }
+            Kind::Map4(kind::Map4Node {
+                one,
+                two,
+                three,
+                four,
+                ..
+            }) => {
+                (f.idyn)(0, one.clone().erased_input());
+                (f.idyn)(1, two.clone().erased_input());
+                (f.idyn)(2, three.clone().erased_input());
+                (f.idyn)(3, four.clone().erased_input());
+            }
+            Kind::Map5(kind::Map5Node {
+                one,
+                two,
+                three,
+                four,
+                five,
+                ..
+            }) => {
+                (f.idyn)(0, one.clone().erased_input());
+                (f.idyn)(1, two.clone().erased_input());
+                (f.idyn)(2, three.clone().erased_input());
+                (f.idyn)(3, four.clone().erased_input());
+                (f.idyn)(4, five.clone().erased_input());
             }
             Kind::BindLhsChange { casts, bind } => {
                 let input = casts.input_lhs_i2.cast(bind.lhs.as_input());
@@ -1933,6 +2022,10 @@ impl<G: NodeGenerics> Node<G> {
                 child.remove_parent(index, self.as_parent2_ref());
                 child.check_if_unnecessary(state);
             },
+            idyn: &mut |index, child| {
+                child.remove_parent(index, self.as_parent_dyn_ref());
+                child.check_if_unnecessary(state);
+            },
         })
     }
 
@@ -1956,8 +2049,10 @@ impl<G: NodeGenerics> Node<G> {
 }
 
 struct ForeachChild<'a, G: NodeGenerics> {
+    // TODO: make these &dyn Incremental<G::I1> instead of a cloned Rc
     i1: &'a mut dyn FnMut(i32, Input<G::I1>),
     i2: &'a mut dyn FnMut(i32, Input<G::I2>),
+    idyn: &'a mut dyn FnMut(i32, &dyn ErasedIncremental),
 }
 
 #[test]
