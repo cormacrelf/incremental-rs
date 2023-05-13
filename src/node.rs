@@ -590,7 +590,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             | Kind::Map(..)
             | Kind::MapWithOld(..)
             | Kind::MapRef(..)
-            | Kind::Map2(..) => self.has_invalid_child(),
+            | Kind::Map2(..)
+            | Kind::Map3(..)
+            | Kind::Map4(..)
+            | Kind::Map5(..) => self.has_invalid_child(),
             /* A *_change node is invalid if the node it is watching for changes is invalid (same
             reason as above).  This is equivalent to [has_invalid_child t]. */
             Kind::BindLhsChange { bind, .. } => !bind.lhs.is_valid(),
@@ -669,6 +672,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             | Kind::Map(_)
             | Kind::MapWithOld(_)
             | Kind::Map2(_)
+            | Kind::Map3(_)
+            | Kind::Map4(_)
+            | Kind::Map5(_)
             | Kind::BindLhsChange { .. }
             | Kind::BindMain { .. } => {
                 // i.e. never recomputed, or a child has changed more recently than we have been
@@ -788,6 +794,39 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 f(0, one.clone().packed());
                 f(1, two.clone().packed());
             }
+            Kind::Map3(kind::Map3Node {
+                one, two, three, ..
+            }) => {
+                f(0, one.clone().packed());
+                f(1, two.clone().packed());
+                f(2, three.clone().packed());
+            }
+            Kind::Map4(kind::Map4Node {
+                one,
+                two,
+                three,
+                four,
+                ..
+            }) => {
+                f(0, one.clone().packed());
+                f(1, two.clone().packed());
+                f(2, three.clone().packed());
+                f(3, four.clone().packed());
+            }
+            Kind::Map5(kind::Map5Node {
+                one,
+                two,
+                three,
+                four,
+                five,
+                ..
+            }) => {
+                f(0, one.clone().packed());
+                f(1, two.clone().packed());
+                f(2, three.clone().packed());
+                f(3, four.clone().packed());
+                f(4, five.clone().packed());
+            }
             Kind::BindLhsChange { bind, .. } => f(0, bind.lhs.packed()),
             Kind::BindMain {
                 bind, lhs_change, ..
@@ -889,6 +928,33 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let new_value = f(&i1, &i2);
                 self.maybe_change_value(new_value, state)
             }
+            Kind::Map3(map) => {
+                let i1 = map.one.value_as_ref().unwrap();
+                let i2 = map.two.value_as_ref().unwrap();
+                let i3 = map.three.value_as_ref().unwrap();
+                let mut f = map.mapper.borrow_mut();
+                let new_value = f(&i1, &i2, &i3);
+                self.maybe_change_value(new_value, state)
+            }
+            Kind::Map4(map) => {
+                let i1 = map.one.value_as_ref().unwrap();
+                let i2 = map.two.value_as_ref().unwrap();
+                let i3 = map.three.value_as_ref().unwrap();
+                let i4 = map.four.value_as_ref().unwrap();
+                let mut f = map.mapper.borrow_mut();
+                let new_value = f(&i1, &i2, &i3, &i4);
+                self.maybe_change_value(new_value, state)
+            }
+            Kind::Map5(map) => {
+                let i1 = map.one.value_as_ref().unwrap();
+                let i2 = map.two.value_as_ref().unwrap();
+                let i3 = map.three.value_as_ref().unwrap();
+                let i4 = map.four.value_as_ref().unwrap();
+                let i5 = map.five.value_as_ref().unwrap();
+                let mut f = map.mapper.borrow_mut();
+                let new_value = f(&i1, &i2, &i3, &i4, &i5);
+                self.maybe_change_value(new_value, state)
+            }
             Kind::BindLhsChange { casts, bind } => {
                 // leaves an empty vec for next time
                 // TODO: we could double-buffer this to save allocations.
@@ -986,7 +1052,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             // these nodes aren't parents
             Kind::Constant(_) | Kind::Var(_) => panic!(),
             // These nodes have more than one child.
-            Kind::ArrayFold(_) | Kind::Map2(..) | Kind::Expert(..) => false,
+            Kind::ArrayFold(_)
+            | Kind::Map2(..)
+            | Kind::Map3(..)
+            | Kind::Map4(..)
+            | Kind::Map5(..)
+            | Kind::Expert(..) => false,
             /* We can immediately recompute [parent] if no other node needs to be stable
             before computing it.  If [parent] has a single child (i.e. [node]), then
             this amounts to checking that [parent] won't be invalidated, i.e. that
@@ -1191,6 +1262,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::MapRef(_) => write!(f, "MapRef"),
             Kind::MapWithOld(_) => write!(f, "MapWithOld"),
             Kind::Map2(_) => write!(f, "Map2"),
+            Kind::Map3(_) => write!(f, "Map3"),
+            Kind::Map4(_) => write!(f, "Map4"),
+            Kind::Map5(_) => write!(f, "Map5"),
             Kind::BindLhsChange { .. } => return write!(f, "BindLhsChange({id:?}) @ {h}"),
             Kind::BindMain { .. } => write!(f, "BindMain"),
             Kind::Expert(..) => write!(f, "Expert"),
@@ -1691,6 +1765,9 @@ impl<G: NodeGenerics> Node<G> {
             Kind::Map2(kind::Map2Node { one, two, .. }) => {
                 (f.i1)(0, one.clone().as_input());
                 (f.i2)(1, two.clone().as_input());
+            }
+            Kind::Map3(..) | Kind::Map4(..) | Kind::Map5(..) => {
+                todo!("foreach_child_typed needs a &dyn Any version")
             }
             Kind::BindLhsChange { casts, bind } => {
                 let input = casts.input_lhs_i2.cast(bind.lhs.as_input());

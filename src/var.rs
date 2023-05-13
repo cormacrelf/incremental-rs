@@ -1,4 +1,4 @@
-use crate::Value;
+use crate::{node_generics_default, Value};
 #[cfg(test)]
 use test_log::test;
 
@@ -16,19 +16,10 @@ use std::rc::{Rc, Weak};
 pub(crate) struct VarGenerics<T: Value>(std::marker::PhantomData<T>);
 impl<R: Value> NodeGenerics for VarGenerics<R> {
     type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = ();
-    type I2 = ();
-    type F1 = fn(&Self::I1) -> Self::R;
-    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
-    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
-    type Fold = fn(Self::R, &Self::I1) -> Self::R;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
-    type Recompute = fn() -> Self::R;
-    type ObsChange = fn(bool);
+    node_generics_default! { I1, I2, I3, I4, I5 }
+    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { B1, BindLhs, BindRhs }
+    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 // For the delayed variable set list (set_during_stabilisation).

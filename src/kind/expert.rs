@@ -200,19 +200,13 @@ where
     FObsChange: FnMut(bool) + 'static,
 {
     type R = T;
-    type BindLhs = ();
-    type BindRhs = ();
     type I1 = C;
     type I2 = ();
-    type F1 = fn(&Self::I1) -> Self::R;
-    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
-    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
-    type Fold = fn(Self::R, &Self::I1) -> Self::R;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = FRecompute;
     type ObsChange = FObsChange;
+    node_generics_default! { I3, I4, I5 }
+    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { B1, BindLhs, BindRhs, Fold, Update, WithOld, FRef }
 }
 
 pub mod public {

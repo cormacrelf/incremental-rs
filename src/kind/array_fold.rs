@@ -30,19 +30,11 @@ where
     F: FnMut(R, &I) -> R + 'static,
 {
     type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
     type I1 = I;
-    type I2 = ();
-    type F1 = fn(&Self::I1) -> R;
-    type F2 = fn(&Self::I1, &Self::I2) -> R;
-    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold = F;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
-    type Recompute = fn() -> Self::R;
-    type ObsChange = fn(bool);
+    node_generics_default! { I2, I3, I4, I5 }
+    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { B1, BindLhs, BindRhs, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 impl<F, I, R> Debug for ArrayFold<F, I, R>

@@ -74,15 +74,10 @@ where
     // swap order so we can use as_parent with I1
     type I1 = ();
     type I2 = T;
-    type F1 = fn(&Self::I1) -> Self::R;
-    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
     type B1 = F;
-    type Fold = fn(Self::R, &Self::I1) -> Self::R;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
-    type Recompute = fn() -> Self::R;
-    type ObsChange = fn(bool);
+    node_generics_default! { I3, I4, I5 }
+    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 pub(crate) struct BindNodeMainGen<F, T, R> {
@@ -103,15 +98,10 @@ where
     type I1 = R;
     /// BindLhsChange (a sentinel)
     type I2 = ();
-    type F1 = fn(&Self::I1) -> Self::R;
-    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
     type B1 = F;
-    type Fold = fn(Self::R, &Self::I1) -> Self::R;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
-    type Recompute = fn() -> Self::R;
-    type ObsChange = fn(bool);
+    node_generics_default! { I3, I4, I5 }
+    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 impl<F, T, R> fmt::Debug for BindNode<F, T, R>

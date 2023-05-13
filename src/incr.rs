@@ -241,7 +241,6 @@ impl<T: Value> Incr<T> {
             state.current_scope.borrow().clone(),
             Kind::Map2(mapper),
         );
-
         Incr { node }
     }
 
