@@ -559,8 +559,7 @@ impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
         child_index: i32,
         _old_value_opt: Option<&G::I2>,
     ) -> Result<(), ParentError> {
-        let kind = self.kind().ok_or(ParentError::ParentInvalidated)?;
-        if let Some(Kind::Expert(expert)) = self.kind() {
+        if let Kind::Expert(expert) = self.kind().ok_or(ParentError::ParentInvalidated)? {
             expert.run_edge_callback(child_index)
         }
         Ok(())
