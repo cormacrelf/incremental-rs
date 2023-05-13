@@ -543,7 +543,7 @@ impl<G: NodeGenerics> ParentNodeDyn for Node<G> {
                 let pci = self.parent_child_indices.borrow();
                 for (parent_index, parent) in self.parents.borrow().iter().enumerate() {
                     let child_index = pci.my_child_index_in_parent_at_index[parent_index];
-                    parent.child_changed(self, child_index, self_old);
+                    parent.child_changed(self, child_index, self_old)?;
                 }
             }
             _ => {}
