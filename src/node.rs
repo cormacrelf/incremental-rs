@@ -123,10 +123,15 @@ pub(crate) struct ParentChildIndices {
 
 pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
 
-pub(crate) trait ErasedIncremental: Debug {
+pub(crate) trait ErasedIncremental: Debug + ErasedNode {
     fn value_as_ref_any(&self) -> Option<Ref<dyn Any>>;
     fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn);
-    fn check_if_unnecessary(&self, state: &State);
+    fn dyn_add_parent_without_adjusting_heights(
+        &self,
+        index_of_child_in_parent: i32,
+        parent_ref: &dyn ParentNodeDyn,
+        state: &State,
+    );
 }
 
 impl<G: NodeGenerics> ErasedIncremental for Node<G> {
@@ -144,8 +149,21 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
         Incremental::remove_parent(self, index_of_child_in_parent, checked_ref)
     }
 
-    fn check_if_unnecessary(&self, state: &State) {
-        ErasedNode::check_if_unnecessary(self, state)
+    fn dyn_add_parent_without_adjusting_heights(
+        &self,
+        index_of_child_in_parent: i32,
+        parent_dyn: &dyn ParentNodeDyn,
+        state: &State,
+    ) {
+        let checked_ref: ParentRef<G::R> = parent_dyn
+            .try_downcast_r_ref::<G::R>(index_of_child_in_parent)
+            .unwrap();
+        Incremental::add_parent_without_adjusting_heights(
+            self,
+            index_of_child_in_parent,
+            checked_ref,
+            state,
+        )
     }
 }
 
@@ -920,11 +938,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 }
             },
             idyn: &mut move |index, child| {
-                todo!("dynamic version of add_parent_without_adjusting_heights");
-                // child.add_parent_without_adjusting_heights(index, p2.clone(), state);
-                // if child.height() >= h.get() {
-                //     h.set(child.height() + 1);
-                // }
+                child.dyn_add_parent_without_adjusting_heights(index, pdyn, state);
+                if child.height() >= h.get() {
+                    h.set(child.height() + 1);
+                }
             },
         });
         state.set_height(self.packed(), h.get());
