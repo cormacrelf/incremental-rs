@@ -14,11 +14,23 @@ impl<I1, I2> Rem<Incr<I2>> for Incr<I1> {
         MapBuilder2(self, rhs)
     }
 }
+impl<I1, I2> Rem<&Incr<I2>> for &Incr<I1> {
+    type Output = MapBuilder2<I1, I2>;
+    fn rem(self, rhs: &Incr<I2>) -> Self::Output {
+        MapBuilder2(self.clone(), rhs.clone())
+    }
+}
 
 impl<I1, I2, I3> Rem<Incr<I3>> for MapBuilder2<I1, I2> {
     type Output = MapBuilder3<I1, I2, I3>;
     fn rem(self, rhs: Incr<I3>) -> Self::Output {
         MapBuilder3(self.0, self.1, rhs)
+    }
+}
+impl<I1, I2, I3> Rem<&Incr<I3>> for MapBuilder2<I1, I2> {
+    type Output = MapBuilder3<I1, I2, I3>;
+    fn rem(self, rhs: &Incr<I3>) -> Self::Output {
+        MapBuilder3(self.0, self.1, rhs.clone())
     }
 }
 
@@ -30,13 +42,13 @@ impl<I1: Value, I2: Value> MapBuilder2<I1, I2> {
 }
 
 impl<I1: Value, I2: Value, I3: Value> MapBuilder3<I1, I2, I3> {
-    pub fn map<R: Value>(&self, mut f: impl FnMut(&I1, &I2, &I3) -> R + 'static) -> Incr<R> {
+    pub fn map<R: Value>(&self, f: impl FnMut(&I1, &I2, &I3) -> R + 'static) -> Incr<R> {
         let Self(i1, i2, i3) = self;
-        // TODO: implement map3 and beyond
-        let one_two: Incr<(I1, I2)> = i1.map2(i2, |a, b| (a.clone(), b.clone()));
-        one_two.map2(i3, move |(a, b), c| f(a, b, c))
+        i1.map3(i2, i3, f)
     }
 }
+
+// TODO: implement MapBuilder4 and beyond
 
 #[test]
 fn test_syntax() {
