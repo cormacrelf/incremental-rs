@@ -23,16 +23,52 @@ mod public;
 pub use public::*;
 
 use fmt::Debug;
+use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
 use std::rc::{Rc, Weak};
 
 use self::node::ErasedNode;
 /// Trait alias for `Debug + Clone + 'static`
-pub trait Value: Debug + Clone + PartialEq + 'static {}
-impl<T> Value for T where T: Debug + Clone + PartialEq + 'static {}
+pub trait Value: Debug + Clone + PartialEq + 'static {
+    fn as_any(&self) -> &dyn Any;
+}
+impl<T> Value for T
+where
+    T: Debug + Clone + PartialEq + 'static,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 pub(crate) type NodeRef = Rc<dyn ErasedNode>;
 pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+pub trait PartialEqSelf {
+    fn eq_dyn(&self, other: &dyn Any) -> bool;
+    fn ne_dyn(&self, other: &dyn Any) -> bool;
+}
+
+impl<T> PartialEqSelf for T
+where
+    T: PartialEq + Any,
+{
+    #[inline]
+    fn eq_dyn(&self, other: &dyn Any) -> bool {
+        if let Some(other) = other.downcast_ref::<T>() {
+            self.eq(other)
+        } else {
+            false
+        }
+    }
+    #[inline]
+    fn ne_dyn(&self, other: &dyn Any) -> bool {
+        if let Some(other) = other.downcast_ref::<T>() {
+            self.ne(other)
+        } else {
+            true
+        }
+    }
+}
 
 pub trait Invariant {
     fn invariant(&self);

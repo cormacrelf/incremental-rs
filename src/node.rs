@@ -122,9 +122,25 @@ pub(crate) struct ParentChildIndices {
 }
 
 pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
+pub(crate) type ErasedInput = Rc<dyn ErasedIncremental>;
+
+pub(crate) trait ErasedIncremental: Debug {
+    fn value_as_ref_any(&self) -> Option<Ref<dyn Any>>;
+}
+
+impl<G: NodeGenerics> ErasedIncremental for Node<G> {
+    fn value_as_ref_any(&self) -> Option<Ref<dyn Any>> {
+        let ref_ = self.value_as_ref()?;
+        fn g_r_as_any<'a, R: Any>(r: &'a R) -> &'a dyn Any {
+            r
+        }
+        Some(Ref::map(ref_, g_r_as_any))
+    }
+}
 
 pub(crate) trait Incremental<R>: ErasedNode + Debug {
     fn as_input(&self) -> Input<R>;
+    fn erased_input(&self) -> &dyn ErasedIncremental;
     fn latest(&self) -> R;
     fn value_opt(&self) -> Option<R>;
     fn add_parent_without_adjusting_heights(
@@ -147,6 +163,9 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
 impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     fn as_input(&self) -> Input<G::R> {
         self.weak_self.upgrade().unwrap() as Input<G::R>
+    }
+    fn erased_input(&self) -> &dyn ErasedIncremental {
+        self
     }
     fn latest(&self) -> G::R {
         self.value_opt().unwrap()
@@ -220,7 +239,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             // we swap the parent the end of the array into this one's position. This keeps the array
             // small.
             let end_p_weak = child_parents[last_parent_index].clone();
-            if let Some(end_p) = end_p_weak.upgrade_erased() {
+            if let Ok(end_p) = end_p_weak.upgrade_erased() {
                 let end_p_indices_cell = end_p.parent_child_indices();
                 let mut end_p_indices = end_p_indices_cell.borrow_mut();
                 let end_child_index =
@@ -282,13 +301,30 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum ParentError {
+    DowncastFailed,
+    ParentInvalidated,
+    ChildHasNoValue,
+    ParentDeallocated,
+}
+
 pub(crate) trait ParentNode<I> {
     fn child_changed(
         &self,
         child: &dyn Incremental<I>,
         child_index: i32,
         old_value_opt: Option<&I>,
-    ) -> NodeRef;
+    ) -> Result<NodeRef, ParentError>;
+}
+pub(crate) trait ParentNodeDyn {
+    fn dyn_child_changed(
+        &self,
+        child: &dyn ErasedIncremental,
+        child_index: i32,
+        old_value_opt: Option<&dyn Any>,
+    ) -> Result<(), ParentError>;
+    fn dyn_packed(self: Rc<Self>) -> NodeRef;
 }
 pub(crate) trait Parent1<I>: Debug + ErasedNode {
     fn p1_child_changed(
@@ -296,7 +332,7 @@ pub(crate) trait Parent1<I>: Debug + ErasedNode {
         child: &dyn Incremental<I>,
         child_index: i32,
         old_value_opt: Option<&I>,
-    );
+    ) -> Result<(), ParentError>;
     fn p1_erased(&self) -> &dyn ErasedNode;
     fn p1_packed(self: Rc<Self>) -> NodeRef;
     fn p1_parent_weak(&self) -> ParentWeak<I>;
@@ -307,7 +343,7 @@ pub(crate) trait Parent2<I>: Debug + ErasedNode {
         child: &dyn Incremental<I>,
         child_index: i32,
         old_value_opt: Option<&I>,
-    );
+    ) -> Result<(), ParentError>;
     fn p2_erased(&self) -> &dyn ErasedNode;
     fn p2_packed(self: Rc<Self>) -> NodeRef;
     fn p2_parent_weak(&self) -> ParentWeak<I>;
@@ -348,19 +384,23 @@ impl<T: Value> ParentRef<'_, T> {
 pub(crate) enum ParentWeak<T> {
     I1(Weak<dyn Parent1<T>>),
     I2(Weak<dyn Parent2<T>>),
+    Dynamic(Weak<dyn ParentNodeDyn>),
 }
 
 impl<T: Value> ParentWeak<T> {
-    fn upgrade_erased(&self) -> Option<NodeRef> {
+    fn upgrade_erased(&self) -> Result<NodeRef, ParentError> {
         match self {
             Self::I1(w) => w.upgrade().map(|x| x.p1_packed()),
             Self::I2(w) => w.upgrade().map(|x| x.p2_packed()),
+            Self::Dynamic(w) => w.upgrade().map(|x| x.dyn_packed()),
         }
+        .ok_or(ParentError::ParentDeallocated)
     }
     fn ptr_eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::I1(a), Self::I1(b)) => a.ptr_eq(b),
             (Self::I2(a), Self::I2(b)) => a.ptr_eq(b),
+            (Self::Dynamic(a), Self::Dynamic(b)) => a.ptr_eq(b),
             _ => false,
         }
     }
@@ -372,19 +412,80 @@ impl<T: Value> ParentNode<T> for ParentWeak<T> {
         child: &dyn Incremental<T>,
         child_index: i32,
         old_value_opt: Option<&T>,
-    ) -> NodeRef {
+    ) -> Result<NodeRef, ParentError> {
         match self {
             Self::I1(i1) => {
-                let i1 = i1.upgrade().unwrap();
-                i1.p1_child_changed(child, child_index, old_value_opt);
-                i1.p1_packed()
+                let i1 = i1.upgrade().ok_or(ParentError::ParentDeallocated)?;
+                i1.p1_child_changed(child, child_index, old_value_opt)?;
+                Ok(i1.p1_packed())
             }
             Self::I2(i2) => {
-                let i2 = i2.upgrade().unwrap();
-                i2.p2_child_changed(child, child_index, old_value_opt);
-                i2.p2_packed()
+                let i2 = i2.upgrade().ok_or(ParentError::ParentDeallocated)?;
+                i2.p2_child_changed(child, child_index, old_value_opt)?;
+                Ok(i2.p2_packed())
+            }
+            Self::Dynamic(idyn) => {
+                let dyn_parent = idyn.upgrade().ok_or(ParentError::ParentDeallocated)?;
+                dyn_parent.dyn_child_changed(
+                    child.erased_input(),
+                    child_index,
+                    old_value_opt.map(|t| t as &dyn Any),
+                )?;
+                Ok(dyn_parent.dyn_packed())
             }
         }
+    }
+}
+
+impl fmt::Display for ParentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl<G: NodeGenerics> ParentNodeDyn for Node<G> {
+    fn dyn_packed(self: Rc<Self>) -> NodeRef {
+        self
+    }
+    fn dyn_child_changed(
+        &self,
+        child: &dyn ErasedIncremental,
+        child_index: i32,
+        old_value_opt: Option<&dyn Any>,
+    ) -> Result<(), ParentError> {
+        let Some(kind) = self.kind() else { return Err(ParentError::ParentInvalidated) };
+        match kind {
+            Kind::Expert(expert) => expert.run_edge_callback(child_index),
+            Kind::MapRef(mapref) => {
+                // mapref is the only node that uses old_value_opt in child_changed.
+                //
+                let self_old = old_value_opt
+                    .map(|v| v.downcast_ref::<G::I1>().ok_or(ParentError::DowncastFailed))
+                    .transpose()?
+                    .map(|v| (mapref.mapper)(v));
+                let child_new = child
+                    .value_as_ref_any()
+                    .ok_or(ParentError::ChildHasNoValue)?;
+                let child_downcast = child_new
+                    .downcast_ref::<G::I1>()
+                    .ok_or(ParentError::DowncastFailed)?;
+                let self_new = (mapref.mapper)(child_downcast);
+
+                let did_change = self_old.map_or(true, |old| {
+                    !self.cutoff.borrow_mut().should_cutoff(old, self_new)
+                });
+                mapref.did_change.set(did_change);
+                // now we propagate to parent
+                // (but first, set the only_in_debug stuff & recomputed_at <- t.stabilisation_num)
+                let pci = self.parent_child_indices.borrow();
+                for (parent_index, parent) in self.parents.borrow().iter().enumerate() {
+                    let child_index = pci.my_child_index_in_parent_at_index[parent_index];
+                    parent.child_changed(self, child_index, self_old);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
@@ -393,10 +494,12 @@ impl<G: NodeGenerics> Parent2<G::I2> for Node<G> {
         _child: &dyn Incremental<G::I2>,
         child_index: i32,
         _old_value_opt: Option<&G::I2>,
-    ) {
+    ) -> Result<(), ParentError> {
+        let kind = self.kind().ok_or(ParentError::ParentInvalidated)?;
         if let Some(Kind::Expert(expert)) = self.kind() {
             expert.run_edge_callback(child_index)
         }
+        Ok(())
     }
     fn p2_erased(&self) -> &dyn ErasedNode {
         self
@@ -416,8 +519,8 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
         child: &dyn Incremental<G::I1>,
         child_index: i32,
         old_value_opt: Option<&G::I1>,
-    ) {
-        let Some(kind) = self.kind() else { return };
+    ) -> Result<(), ParentError> {
+        let kind = self.kind().ok_or(ParentError::ParentInvalidated)?;
         match kind {
             Kind::Expert(expert) => expert.run_edge_callback(child_index),
             Kind::MapRef(mapref) => {
@@ -441,6 +544,7 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
             }
             _ => {}
         }
+        Ok(())
     }
     fn p1_erased(&self) -> &dyn ErasedNode {
         self
@@ -1152,7 +1256,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.is_valid.set(false);
         let mut prop_stack = state.propagate_invalidity.borrow_mut();
         for parent in self.parents.borrow().iter() {
-            let Some(parent) = parent.upgrade_erased() else { continue };
+            let Ok(parent) = parent.upgrade_erased() else { continue };
             prop_stack.push(parent.weak());
         }
         drop(prop_stack);
@@ -1600,11 +1704,18 @@ impl<G: NodeGenerics> Node<G> {
             let first_parent = parents_iter.next();
             for (parent_index, parent) in parents_iter {
                 let child_index = pci.my_child_index_in_parent_at_index[parent_index];
-                let p = if run_child_changed {
+                let result = if run_child_changed {
                     parent.child_changed(self, child_index, old_value_opt)
                 } else {
-                    let Some(p) = parent.upgrade_erased() else { continue };
-                    p
+                    parent.upgrade_erased()
+                };
+                let p = match result {
+                    Ok(p) => p,
+                    // FIXME: refactor kept previous behaviour, but this should probably
+                    // be an error
+                    Err(ParentError::ParentDeallocated) => continue,
+                    // TODO: handle this somehow
+                    _ => result.unwrap(),
                 };
                 debug_assert!(
                     p.needs_to_be_computed(),
@@ -1640,11 +1751,18 @@ impl<G: NodeGenerics> Node<G> {
             if let Some((parent_index, parent)) = first_parent {
                 let child_index = pci.my_child_index_in_parent_at_index[parent_index];
                 // a bit of a dance to avoid upgrading the Weak pointer twice.
-                let p = if run_child_changed {
+                let result = if run_child_changed {
                     parent.child_changed(self, child_index, old_value_opt)
                 } else {
-                    let Some(p) = parent.upgrade_erased() else { return None };
-                    p
+                    parent.upgrade_erased()
+                };
+                let p = match result {
+                    Ok(p) => p,
+                    // FIXME: refactor kept previous behaviour, but this should probably
+                    // be an error
+                    Err(ParentError::ParentDeallocated) => return None,
+                    // TODO: handle this somehow
+                    _ => result.unwrap(),
                 };
                 debug_assert!(
                     p.needs_to_be_computed(),
