@@ -92,6 +92,11 @@ pub(crate) fn weak_thin_ptr_eq<T: ?Sized>(one: &Weak<T>, two: &Weak<T>) -> bool 
     let two_: *const () = Weak::as_ptr(two).cast();
     one_ == two_
 }
+pub(crate) fn dyn_thin_ptr_eq<T: ?Sized>(one: &T, two: &T) -> bool {
+    let one_: *const () = one as *const T as *const ();
+    let two_: *const () = two as *const T as *const ();
+    one_ == two_
+}
 
 /// Little helper trait for bumping a statistic.
 pub(crate) trait CellIncrement {

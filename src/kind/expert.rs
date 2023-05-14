@@ -161,15 +161,16 @@ where
             children.swap(one, two);
         });
     }
-    pub(crate) fn last_child_edge_exn(&self) -> PackedEdge {
+    pub(crate) fn last_child_edge(&self) -> Option<PackedEdge> {
         let children = self.children.borrow();
-        children.last().unwrap().clone()
+        children.last().cloned()
     }
-    pub(crate) fn remove_last_child_edge_exn(&self) {
+    pub(crate) fn pop_child_edge(&self) -> Option<PackedEdge> {
         let mut children = self.children.borrow_mut();
-        let packed_edge = children.pop().unwrap();
+        let packed_edge = children.pop()?;
         self.force_stale.set(true);
         packed_edge.index_cell().set(None);
+        Some(packed_edge)
     }
     pub(crate) fn before_main_computation(&self) -> Result<(), Invalid> {
         if self.num_invalid_children.get() > 0 {
@@ -367,7 +368,7 @@ pub mod public {
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             let edge = dep.edge.upgrade().unwrap();
-            expert::remove_dependency(&*self.incr.node, &*edge)
+            expert::remove_dependency(&*self.incr.node, &*edge);
         }
     }
 

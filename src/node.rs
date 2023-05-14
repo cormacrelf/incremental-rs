@@ -1620,7 +1620,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         [add_dependency] */
         let edge_index = dyn_edge.index_cell().get().unwrap();
         let edge_child = dyn_edge.packed();
-        let last_edge = expert.last_child_edge_exn();
+        let last_edge = expert.last_child_edge().unwrap();
         let last_edge_index = last_edge.index_cell().get().unwrap();
         if edge_index != last_edge_index {
             if self.is_necessary() {
@@ -1634,7 +1634,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             expert.swap_children(edge_index as usize, last_edge_index as usize);
             // if debug then Node.invariant ignore node;
         }
-        expert.remove_last_child_edge_exn();
+        let popped_edge = expert.pop_child_edge().unwrap();
+        debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
+
         debug_assert!(self.is_stale());
         if self.is_necessary() {
             let state = self.state();
