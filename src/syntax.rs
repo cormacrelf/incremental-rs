@@ -39,12 +39,20 @@ impl<I1: Value, I2: Value> MapBuilder2<I1, I2> {
         let Self(i1, i2) = self;
         i1.map2(i2, f)
     }
+    pub fn zip(&self) -> Incr<(I1, I2)> {
+        let Self(i1, i2) = self;
+        i1.zip(i2)
+    }
 }
 
 impl<I1: Value, I2: Value, I3: Value> MapBuilder3<I1, I2, I3> {
     pub fn map<R: Value>(&self, f: impl FnMut(&I1, &I2, &I3) -> R + 'static) -> Incr<R> {
         let Self(i1, i2, i3) = self;
         i1.map3(i2, i3, f)
+    }
+    pub fn zip(&self) -> Incr<(I1, I2, I3)> {
+        let Self(i1, i2, i3) = self;
+        i1.map3(i2, i3, |a, b, c| (a.clone(), b.clone(), c.clone()))
     }
 }
 
