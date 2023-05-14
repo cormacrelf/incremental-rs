@@ -1052,9 +1052,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
             Kind::Var(_var) => {}
             Kind::Expert(e) => {
-                for (ix, child) in e.children.borrow().iter().enumerate() {
-                    f(ix as i32, child.packed())
-                }
+                let borrow_span = tracing::debug_span!("expert.children.borrow() in foreach_child");
+                borrow_span.in_scope(|| {
+                    for (ix, child) in e.children.borrow().iter().enumerate() {
+                        f(ix as i32, child.packed())
+                    }
+                });
             }
         }
     }
@@ -1183,6 +1186,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     rhs
                 };
 
+                // TODO: let mut old_rhs = bind.rhs.borrow_mut().replace(rhs.clone());
                 let mut old_rhs = Some(rhs.clone());
                 {
                     let mut bind_rhs = bind.rhs.borrow_mut();
@@ -1603,6 +1607,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             debug_assert!(self.needs_to_be_computed());
             if !self.is_in_recompute_heap() {
                 state.recompute_heap.insert(self.packed());
+                tracing::debug!("dependency ix {new_child_index} inserted into RCH");
             }
         }
     }
@@ -2029,9 +2034,12 @@ impl<G: NodeGenerics> Node<G> {
             }
             Kind::Var(_var) => {}
             Kind::Expert(e) => {
-                for (ix, child) in e.children.borrow().iter().enumerate() {
-                    (f.idyn)(ix as i32, child.erased_input());
-                }
+                let borrow_span = tracing::debug_span!("expert.children.borrow() in foreach_child");
+                borrow_span.in_scope(|| {
+                    for (ix, child) in e.children.borrow().iter().enumerate() {
+                        (f.idyn)(ix as i32, child.erased_input());
+                    }
+                });
             }
         }
     }

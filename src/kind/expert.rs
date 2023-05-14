@@ -119,10 +119,13 @@ where
     }
 
     pub(crate) fn expert_input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
-        let children = self.children.borrow();
-        assert!(index_of_child_in_parent >= 0);
-        let edge = &children[index_of_child_in_parent as usize];
-        edge.edge_input_type_id()
+        let borrow_span = tracing::debug_span!("expert.children.borrow() in expert_input_type_id");
+        borrow_span.in_scope(|| {
+            let children = self.children.borrow();
+            assert!(index_of_child_in_parent >= 0);
+            let edge = &children[index_of_child_in_parent as usize];
+            edge.edge_input_type_id()
+        })
     }
 
     pub(crate) fn make_stale(&self) -> MakeStale {
@@ -135,19 +138,28 @@ where
     }
     pub(crate) fn add_child_edge(&self, edge: PackedEdge) -> i32 {
         assert!(edge.index_cell().get().is_none());
-        let mut children = self.children.borrow_mut();
-        let new_child_index = children.len() as i32;
-        edge.index_cell().set(Some(new_child_index));
-        children.push(edge);
-        self.force_stale.set(true);
-        new_child_index
+        let borrow_span =
+            tracing::debug_span!("expert.children.borrow_mut() in ExpertNode::add_child_edge");
+        borrow_span.in_scope(|| {
+            let mut children = self.children.borrow_mut();
+            let new_child_index = children.len() as i32;
+            edge.index_cell().set(Some(new_child_index));
+            children.push(edge);
+            self.force_stale.set(true);
+            tracing::debug!("expert added child, ix {new_child_index}");
+            new_child_index
+        })
     }
     pub(crate) fn swap_children(&self, one: usize, two: usize) {
-        let mut children = self.children.borrow_mut();
-        let c1 = children[one].index_cell();
-        let c2 = children[two].index_cell();
-        c1.swap(c2);
-        children.swap(one, two);
+        let borrow_span =
+            tracing::debug_span!("expert.children.borrow_mut() in ExpertNode::swap_children");
+        borrow_span.in_scope(|| {
+            let mut children = self.children.borrow_mut();
+            let c1 = children[one].index_cell();
+            let c2 = children[two].index_cell();
+            c1.swap(c2);
+            children.swap(one, two);
+        });
     }
     pub(crate) fn last_child_edge_exn(&self) -> PackedEdge {
         let children = self.children.borrow();
@@ -165,7 +177,13 @@ where
         } else {
             self.force_stale.set(false);
             if self.will_fire_all_callbacks.replace(false) {
-                for child in self.children.borrow().iter() {
+                let borrow_span = tracing::debug_span!(
+                    "expert.children.borrow_mut() in ExpertNode::before_main_computation"
+                );
+
+                let cloned = borrow_span.in_scope(|| self.children.borrow().clone());
+                tracing::debug!("running on_change for {} children", cloned.len());
+                for child in cloned {
                     child.on_change()
                 }
             }
@@ -188,12 +206,18 @@ where
     pub(crate) fn run_edge_callback(&self, child_index: i32) {
         if !self.will_fire_all_callbacks.get() {
             let child = {
-                let children = self.children.borrow();
-                let Some(child) = children.get(child_index as usize) else {return};
-                // clone the child, so we can drop the borrow of the children vector.
-                // the child on_change callback may add or remove children. It needs borrow_mut access!
-                child.clone()
+                let borrow_span = tracing::debug_span!(
+                    "expert.children.borrow_mut() in ExpertNode::run_edge_callback"
+                );
+                borrow_span.in_scope(|| {
+                    let children = self.children.borrow();
+                    let Some(child) = children.get(child_index as usize) else {return None };
+                    // clone the child, so we can drop the borrow of the children vector.
+                    // the child on_change callback may add or remove children. It needs borrow_mut access!
+                    Some(child.clone())
+                })
             };
+            let Some(child) = child else { return; };
             child.on_change()
         }
     }

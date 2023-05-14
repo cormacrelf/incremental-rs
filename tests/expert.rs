@@ -1,4 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
+// RUST_LOG_SPAN_EVENTS=enter,exit
+use test_log::test;
 
 use incremental::{expert::*, Incr, IncrState, Value};
 
