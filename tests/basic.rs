@@ -1142,3 +1142,19 @@ fn map345() {
     assert_eq!(quad.value(), 109);
     assert_eq!(five.value(), 309);
 }
+
+#[test]
+fn map345_ref() {
+    let incr = IncrState::new();
+    let i1 = incr.var(3);
+    let i2 = incr.var(5);
+    let i3 = incr.var(7);
+    let triple = i1.map3(&i2, &i3, |a, b, c| (a * b, *c));
+    let trip = triple.observe();
+    incr.stabilise();
+    assert_eq!(trip.value(), (15, 7));
+    let by_ref = triple.map_ref(|(ab, _)| ab);
+    let obs = by_ref.observe();
+    incr.stabilise();
+    assert_eq!(obs.value(), 15);
+}
