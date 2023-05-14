@@ -405,20 +405,6 @@ pub mod public {
         ) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency_with(on, on_change)
         }
-        #[doc(hidden)]
-        #[deprecated = "add_dependency is now generic"]
-        pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
-            self.add_dependency(on)
-        }
-        #[doc(hidden)]
-        #[deprecated = "add_dependency_with is now generic"]
-        pub fn add_dependency_unit_with(
-            &self,
-            on: &Incr<()>,
-            on_change: impl FnMut(&()) + 'static,
-        ) -> Dependency<()> {
-            self.add_dependency_with(on, on_change)
-        }
         /// Caution: if the Dependency is on an expert::Node, then running this may cause
         /// a related WeakNode to be deallocated. If you wish to use the related node after
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
