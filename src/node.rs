@@ -5,7 +5,7 @@ use crate::Value;
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
 use super::internal_observer::{InternalObserver, ObserverId};
-use super::kind::expert::{Edge, Invalid, IsEdge, MakeStale, PackedEdge};
+use super::kind::expert::{Invalid, IsEdge, MakeStale, PackedEdge};
 use super::kind::{self, Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
@@ -125,11 +125,17 @@ pub(crate) type Input<R> = Rc<dyn Incremental<R>>;
 
 pub(crate) trait ErasedIncremental: Debug + ErasedNode {
     fn value_as_ref_any(&self) -> Option<Ref<dyn Any>>;
-    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn);
+    fn dyn_remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn);
     fn dyn_add_parent_without_adjusting_heights(
         &self,
         index_of_child_in_parent: i32,
         parent_ref: &dyn ParentNodeDyn,
+        state: &State,
+    );
+    fn dyn_state_add_parent(
+        &self,
+        index_of_child_in_parent: i32,
+        parent_dyn: &dyn ParentNodeDyn,
         state: &State,
     );
 }
@@ -142,7 +148,7 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
         }
         Some(Ref::map(ref_, g_r_as_any))
     }
-    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn) {
+    fn dyn_remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ParentNodeDyn) {
         let checked_ref: ParentRef<G::R> = parent_dyn
             .try_downcast_r_ref::<G::R>(index_of_child_in_parent)
             .unwrap();
@@ -164,6 +170,17 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
             checked_ref,
             state,
         )
+    }
+    fn dyn_state_add_parent(
+        &self,
+        index_of_child_in_parent: i32,
+        parent_dyn: &dyn ParentNodeDyn,
+        state: &State,
+    ) {
+        let checked_ref: ParentRef<G::R> = parent_dyn
+            .try_downcast_r_ref::<G::R>(index_of_child_in_parent)
+            .unwrap();
+        Incremental::state_add_parent(self, index_of_child_in_parent, checked_ref, state)
     }
 }
 
@@ -516,8 +533,8 @@ impl<G: NodeGenerics> ParentNodeDyn for Node<G> {
         self.weak_self.clone()
     }
     fn input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
-        if let Some(Kind::Expert(..)) = self.kind() {
-            todo!("input_type_id for expert nodes")
+        if let Some(Kind::Expert(e)) = self.kind() {
+            return e.expert_input_type_id(index_of_child_in_parent);
         }
         match index_of_child_in_parent {
             0 => TypeId::of::<G::I1>(),
@@ -688,7 +705,7 @@ pub(crate) trait ErasedNode: Debug {
         child2: &NodeRef,
         child2_index: i32,
     );
-    fn expert_remove_child(&self, packed_edge: &dyn Any, child_index: i32, state: &State);
+    fn expert_remove_child(&self, packed_edge: &dyn IsEdge, child_index: i32, state: &State);
     fn state_opt(&self) -> Option<Rc<State>>;
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
@@ -723,7 +740,7 @@ pub(crate) trait ErasedNode: Debug {
 
     fn expert_make_stale(&self);
     fn expert_add_dependency(&self, packed_edge: PackedEdge);
-    fn expert_remove_dependency(&self, packed_edge: &dyn IsEdge, any_edge: &dyn Any);
+    fn expert_remove_dependency(&self, dyn_edge: &dyn IsEdge);
 }
 
 impl<G: NodeGenerics> Debug for Node<G> {
@@ -1581,17 +1598,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         necessary. */
         if self.is_necessary() {
             let state = self.state();
-            if let Some(i1) = packed_edge.as_any().downcast_ref::<Edge<G::I1>>() {
-                i1.child
-                    .node
-                    .state_add_parent(new_child_index, self.as_parent_ref(), &state);
-            } else if let Some(i2) = packed_edge.as_any().downcast_ref::<Edge<G::I2>>() {
-                i2.child
-                    .node
-                    .state_add_parent(new_child_index, self.as_parent2_ref(), &state);
-            } else {
-                panic!("expert_add_dependency: could not figure out child type");
-            }
+            let dyn_child = packed_edge.erased_input();
+            dyn_child.dyn_state_add_parent(new_child_index, self.as_parent_dyn_ref(), &state);
             debug_assert!(self.needs_to_be_computed());
             if !self.is_in_recompute_heap() {
                 state.recompute_heap.insert(self.packed());
@@ -1599,14 +1607,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
-    fn expert_remove_dependency(&self, packed_edge: &dyn IsEdge, any_edge: &dyn Any) {
+    fn expert_remove_dependency(&self, dyn_edge: &dyn IsEdge) {
         let Some(Kind::Expert(expert)) = self.kind() else { return };
         #[cfg(debug_assertions)]
         self.assert_currently_running_node_is_child("remove_dependency");
         /* [node] is not guaranteed to be necessary, for the reason stated in
         [add_dependency] */
-        let edge_index = packed_edge.index_cell().get().unwrap();
-        let edge_child = packed_edge.packed();
+        let edge_index = dyn_edge.index_cell().get().unwrap();
+        let edge_child = dyn_edge.packed();
         let last_edge = expert.last_child_edge_exn();
         let last_edge_index = last_edge.index_cell().get().unwrap();
         if edge_index != last_edge_index {
@@ -1625,7 +1633,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         debug_assert!(self.is_stale());
         if self.is_necessary() {
             let state = self.state();
-            self.expert_remove_child(any_edge, last_edge_index, &state);
+            self.expert_remove_child(dyn_edge, last_edge_index, &state);
             if !self.is_in_recompute_heap() {
                 state.recompute_heap.insert(self.packed());
             }
@@ -1676,20 +1684,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             index_of_parent_in_child1;
     }
 
-    fn expert_remove_child(&self, any_edge: &dyn Any, child_index: i32, state: &State) {
-        if let Some(edge) = any_edge.downcast_ref::<Edge<G::I1>>() {
-            edge.child
-                .node
-                .remove_parent(child_index, self.as_parent_ref());
-            edge.child.node.check_if_unnecessary(state);
-        } else if let Some(edge) = any_edge.downcast_ref::<Edge<G::I2>>() {
-            edge.child
-                .node
-                .remove_parent(child_index, self.as_parent2_ref());
-            edge.child.node.check_if_unnecessary(state);
-        } else {
-            panic!("wrong Incr<T> type supplied to remove_dependency")
-        }
+    fn expert_remove_child(&self, dyn_edge: &dyn IsEdge, child_index: i32, state: &State) {
+        let child = dyn_edge.erased_input();
+        child.dyn_remove_parent(child_index, self);
+        child.check_if_unnecessary(state);
     }
 }
 
@@ -2032,13 +2030,7 @@ impl<G: NodeGenerics> Node<G> {
             Kind::Var(_var) => {}
             Kind::Expert(e) => {
                 for (ix, child) in e.children.borrow().iter().enumerate() {
-                    if let Some(e1) = child.as_any().downcast_ref::<Edge<G::I1>>() {
-                        (f.i1)(ix as i32, e1.as_input())
-                    } else if let Some(e2) = child.as_any().downcast_ref::<Edge<G::I2>>() {
-                        (f.i2)(ix as i32, e2.as_input())
-                    } else {
-                        panic!("foreach_child_typed: could not figure out child type");
-                    }
+                    (f.idyn)(ix as i32, child.erased_input());
                 }
             }
         }
@@ -2055,7 +2047,7 @@ impl<G: NodeGenerics> Node<G> {
                 child.check_if_unnecessary(state);
             },
             idyn: &mut |index, child| {
-                child.remove_parent(index, self.as_parent_dyn_ref());
+                child.dyn_remove_parent(index, self.as_parent_dyn_ref());
                 child.check_if_unnecessary(state);
             },
         })

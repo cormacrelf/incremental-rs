@@ -1,19 +1,22 @@
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     cell::{Cell, RefCell},
     marker::PhantomData,
     rc::Rc,
 };
 
 use super::NodeGenerics;
-use crate::node::Input;
+use crate::node::ErasedIncremental;
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any {
+    /// Called from run_edge_callback
     fn on_change(&self);
     fn as_any(&self) -> &dyn Any;
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
+    fn erased_input(&self) -> &dyn ErasedIncremental;
+    fn edge_input_type_id(&self) -> TypeId;
 }
 
 pub(crate) trait IsEdge: ExpertEdge + Any {}
@@ -39,9 +42,6 @@ impl<T> Edge<T> {
             index: None.into(),
         }
     }
-    pub(crate) fn as_input(&self) -> Input<T> {
-        self.child.node.as_input()
-    }
 }
 
 impl<T: Value> ExpertEdge for Edge<T> {
@@ -61,6 +61,14 @@ impl<T: Value> ExpertEdge for Edge<T> {
 
     fn index_cell(&self) -> &Cell<Option<i32>> {
         &self.index
+    }
+
+    fn erased_input(&self) -> &dyn ErasedIncremental {
+        self.child.node.erased_input()
+    }
+
+    fn edge_input_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
     }
 }
 
@@ -108,6 +116,13 @@ where
     }
     pub(crate) fn decr_invalid_children(&self) {
         self.num_invalid_children.increment();
+    }
+
+    pub(crate) fn expert_input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
+        let children = self.children.borrow();
+        assert!(index_of_child_in_parent >= 0);
+        let edge = &children[index_of_child_in_parent as usize];
+        edge.edge_input_type_id()
     }
 
     pub(crate) fn make_stale(&self) -> MakeStale {
@@ -172,8 +187,13 @@ where
     }
     pub(crate) fn run_edge_callback(&self, child_index: i32) {
         if !self.will_fire_all_callbacks.get() {
-            let children = self.children.borrow();
-            let Some(child) = children.get(child_index as usize) else {return};
+            let child = {
+                let children = self.children.borrow();
+                let Some(child) = children.get(child_index as usize) else {return};
+                // clone the child, so we can drop the borrow of the children vector.
+                // the child on_change callback may add or remove children. It needs borrow_mut access!
+                child.clone()
+            };
             child.on_change()
         }
     }
@@ -200,13 +220,12 @@ where
     FObsChange: FnMut(bool) + 'static,
 {
     type R = T;
-    type I1 = C;
-    type I2 = ();
     type Recompute = FRecompute;
     type ObsChange = FObsChange;
-    node_generics_default! { I3, I4, I5 }
+    node_generics_default! { I1, I2, I3, I4, I5 }
     node_generics_default! { F1, F2, F3, F4, F5 }
-    node_generics_default! { B1, BindLhs, BindRhs, Fold, Update, WithOld, FRef }
+    node_generics_default! { B1, BindLhs, BindRhs }
+    node_generics_default! { Fold, Update, WithOld, FRef }
 }
 
 pub mod public {
@@ -333,6 +352,18 @@ pub mod public {
             expert::add_dependency(&self.incr.node.packed(), edge);
             dep
         }
+        pub fn add_dependency_with_<C_: Value>(
+            &self,
+            on: &Incr<C_>,
+            on_change: impl FnMut(&C_) + 'static,
+        ) -> Dependency<C_> {
+            let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
+            let dep = Dependency {
+                edge: Rc::downgrade(&edge),
+            };
+            expert::add_dependency(&self.incr.node.packed(), edge);
+            dep
+        }
         pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
             let edge = Rc::new(Edge::new(on.clone(), None));
             let dep = Dependency {
@@ -358,7 +389,7 @@ pub mod public {
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             let edge = dep.edge.upgrade().unwrap();
-            expert::remove_dependency(&*self.incr.node, &*edge, &*edge)
+            expert::remove_dependency(&*self.incr.node, &*edge)
         }
     }
 

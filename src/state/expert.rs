@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use super::*;
 use crate::kind;
 use crate::node::Incremental;
@@ -78,10 +76,6 @@ pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
     node.expert_add_dependency(edge);
 }
 
-pub(crate) fn remove_dependency<T>(
-    node: &dyn Incremental<T>,
-    packed_edge: &dyn IsEdge,
-    edge: &dyn Any,
-) {
-    node.expert_remove_dependency(packed_edge, edge);
+pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn IsEdge) {
+    node.expert_remove_dependency(dyn_edge);
 }

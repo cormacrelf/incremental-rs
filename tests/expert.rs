@@ -78,3 +78,67 @@ fn map345_expert() {
     incr.stabilise();
     assert_eq!(j.value(), (15, 7));
 }
+
+fn manual_zip2<T1: Value, T2: Value>(one: &Incr<T1>, two: &Incr<T2>) -> Incr<(T1, T2)> {
+    let state = one.state();
+    enum Storage<A, B> {
+        None,
+        OneOnly(A),
+        TwoOnly(B),
+        Both(A, B),
+    }
+    impl<A, B> Storage<A, B> {
+        fn take(&mut self) -> Self {
+            std::mem::replace(self, Storage::None)
+        }
+        fn both_cloned(&self) -> (A, B)
+        where
+            A: Clone,
+            B: Clone,
+        {
+            match self {
+                Self::Both(a, b) => (a.clone(), b.clone()),
+                _ => panic!("zip2 node has not yet read both inputs"),
+            }
+        }
+    }
+    let current = Rc::new(RefCell::new(Storage::None));
+    let zip2 = Node::<(T1, T2), ()>::new(&state, {
+        let current_ = current.clone();
+        move || current_.borrow().both_cloned()
+    });
+    let current_1 = current.clone();
+    zip2.add_dependency_with_(one, move |new_one| {
+        let mut tuple = current_1.borrow_mut();
+        let storage = tuple.take();
+        let new_one = new_one.clone();
+        let new = match storage {
+            Storage::Both(_, b) | Storage::TwoOnly(b) => Storage::Both(new_one, b),
+            Storage::None | Storage::OneOnly(_) => Storage::OneOnly(new_one),
+        };
+        *tuple = new;
+    });
+    let current_2 = current;
+    zip2.add_dependency_with_(two, move |new_two| {
+        let mut tuple = current_2.borrow_mut();
+        let storage = tuple.take();
+        let new_b = new_two.clone();
+        let new = match storage {
+            Storage::Both(a, _) | Storage::OneOnly(a) => Storage::Both(a, new_b),
+            Storage::None | Storage::TwoOnly(_) => Storage::TwoOnly(new_b),
+        };
+        *tuple = new;
+    });
+    zip2.watch()
+}
+
+#[test]
+fn test_zip2() {
+    let incr = IncrState::new();
+    let i1 = incr.var(3);
+    let i2 = incr.var(5);
+    let z = manual_zip2(&i1, &i2);
+    let o = z.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), (3, 5));
+}
