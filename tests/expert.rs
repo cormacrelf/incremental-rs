@@ -7,7 +7,7 @@ use incremental::{expert::*, Incr, IncrState, Value};
 fn join<T: Value>(incr: &Incr<Incr<T>>) -> Incr<T> {
     let prev_rhs: Rc<RefCell<Option<Dependency<T>>>> = Rc::new(None.into());
     let state = incr.state();
-    let join = Node::<T, T>::new(&state, {
+    let join = Node::<T>::new(&state, {
         let prev_rhs_ = prev_rhs.clone();
         move || prev_rhs_.borrow().clone().unwrap().value_cloned()
     });
@@ -22,7 +22,7 @@ fn join<T: Value>(incr: &Incr<Incr<T>>) -> Incr<T> {
         }
         prev_rhs_.replace(dep);
     });
-    join.add_dependency_unit(&lhs_change);
+    join.add_dependency(&lhs_change);
     join.watch()
 }
 
@@ -44,7 +44,7 @@ fn test_join() {
 fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 'static) -> Incr<R> {
     let prev_rhs: Rc<RefCell<Option<Dependency<R>>>> = Rc::new(None.into());
     let state = incr.state();
-    let join = Node::<R, R>::new(&state, {
+    let join = Node::<R>::new(&state, {
         let prev_rhs_ = prev_rhs.clone();
         move || prev_rhs_.borrow().clone().unwrap().value_cloned()
     });
@@ -61,7 +61,7 @@ fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 's
         }
         prev_rhs_.replace(dep);
     });
-    join.add_dependency_unit(&lhs_change);
+    join.add_dependency(&lhs_change);
     join.watch()
 }
 
@@ -106,12 +106,12 @@ fn manual_zip2<T1: Value, T2: Value>(one: &Incr<T1>, two: &Incr<T2>) -> Incr<(T1
         }
     }
     let current = Rc::new(RefCell::new(Storage::None));
-    let zip2 = Node::<(T1, T2), ()>::new(&state, {
+    let zip2 = Node::<(T1, T2)>::new(&state, {
         let current_ = current.clone();
         move || current_.borrow().both_cloned()
     });
     let current_1 = current.clone();
-    zip2.add_dependency_with_(one, move |new_one| {
+    zip2.add_dependency_with(one, move |new_one| {
         let mut tuple = current_1.borrow_mut();
         let storage = tuple.take();
         let new_one = new_one.clone();
@@ -122,7 +122,7 @@ fn manual_zip2<T1: Value, T2: Value>(one: &Incr<T1>, two: &Incr<T2>) -> Incr<(T1
         *tuple = new;
     });
     let current_2 = current;
-    zip2.add_dependency_with_(two, move |new_two| {
+    zip2.add_dependency_with(two, move |new_two| {
         let mut tuple = current_2.borrow_mut();
         let storage = tuple.take();
         let new_b = new_two.clone();
