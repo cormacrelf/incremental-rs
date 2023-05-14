@@ -91,18 +91,18 @@ impl<T: Value> Incr<T> {
     /// applying it to self. This enables you to put your own functions
     /// into the middle of a chain of method calls on Incr.
     #[inline]
-    pub fn pipe<R>(&self, mut f: impl FnMut(Incr<T>) -> Incr<R>) -> Incr<R> {
+    pub fn pipe<R>(&self, f: impl FnOnce(Incr<T>) -> Incr<R>) -> Incr<R> {
         // clones are cheap.
         f(self.clone())
     }
 
-    pub fn pipe1<R, A1>(&self, mut f: impl FnMut(Incr<T>, A1) -> Incr<R>, arg1: A1) -> Incr<R> {
+    pub fn pipe1<R, A1>(&self, f: impl FnOnce(Incr<T>, A1) -> Incr<R>, arg1: A1) -> Incr<R> {
         f(self.clone(), arg1)
     }
 
     pub fn pipe2<R, A1, A2>(
         &self,
-        mut f: impl FnMut(Incr<T>, A1, A2) -> Incr<R>,
+        f: impl FnOnce(Incr<T>, A1, A2) -> Incr<R>,
         arg1: A1,
         arg2: A2,
     ) -> Incr<R> {
