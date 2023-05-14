@@ -369,7 +369,7 @@ where
     let state = lhs.state();
     let prev_map = Rc::new(RefCell::new(OrdMap::<K, V>::new()));
     let acc = Rc::new(RefCell::new(OrdMap::new()));
-    let result = Node::<OrdMap<K, V2>, O::Output>::new(&state, {
+    let result = Node::<OrdMap<K, V2>>::new(&state, {
         let acc_ = acc.clone();
         move || OrdMap::clone(&acc_.borrow())
     });
@@ -389,7 +389,7 @@ where
             drop(acc);
         }
     };
-    let mut prev_nodes = OrdMap::<K, (WeakNode<_, _>, Dependency<_>)>::new();
+    let mut prev_nodes = OrdMap::<K, (WeakNode<_>, Dependency<_>)>::new();
     let result_weak = result.weak();
 
     // this one is just moved into the closure
@@ -429,7 +429,7 @@ where
                             node.watch().set_cutoff(cutoff);
                         }
                         let lhs_change = lhs_change.upgrade().unwrap();
-                        node.add_dependency_unit(&lhs_change);
+                        node.add_dependency(&lhs_change);
                         let mapped: Incr<O::Output> = f.call_fn(&key, node.watch());
                         let user_function_dep: Dependency<O::Output> = result_weak
                             .add_dependency_with(&mapped, {
@@ -445,6 +445,6 @@ where
             *prev_map_mut = map.clone();
         }
     });
-    result.add_dependency_unit(&lhs_change);
+    result.add_dependency(&lhs_change);
     result.watch()
 }

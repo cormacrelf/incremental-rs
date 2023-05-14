@@ -72,8 +72,8 @@ impl<T: Value> ExpertEdge for Edge<T> {
     }
 }
 
-pub(crate) struct ExpertNode<T, C, F, ObsChange> {
-    pub _f: PhantomData<(T, C)>,
+pub(crate) struct ExpertNode<T, F, ObsChange> {
+    pub _f: PhantomData<T>,
     pub recompute: RefCell<Option<F>>,
     pub on_observability_change: RefCell<Option<ObsChange>>,
     pub children: RefCell<Vec<PackedEdge>>,
@@ -82,7 +82,7 @@ pub(crate) struct ExpertNode<T, C, F, ObsChange> {
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T, C, F, O> Drop for ExpertNode<T, C, F, O> {
+impl<T, F, O> Drop for ExpertNode<T, F, O> {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -95,7 +95,7 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T, C: 'static, F, ObsChange> ExpertNode<T, C, F, ObsChange>
+impl<T, F, ObsChange> ExpertNode<T, F, ObsChange>
 where
     F: FnMut() -> T,
     ObsChange: FnMut(bool),
@@ -226,20 +226,18 @@ where
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T, C, R, O> Debug for ExpertNode<T, C, R, O>
+impl<T, R, O> Debug for ExpertNode<T, R, O>
 where
     T: Debug,
-    C: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpertNode").finish()
     }
 }
 
-impl<T, C, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, C, FRecompute, FObsChange>
+impl<T, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, FRecompute, FObsChange>
 where
     T: Value,
-    C: Value,
     FRecompute: FnMut() -> T + 'static,
     FObsChange: FnMut(bool) + 'static,
 {
@@ -253,10 +251,7 @@ where
 }
 
 pub mod public {
-    use std::{
-        marker::PhantomData,
-        rc::{Rc, Weak},
-    };
+    use std::rc::{Rc, Weak};
 
     use crate::{Incr, Value, WeakIncr, WeakState};
 
@@ -290,27 +285,24 @@ pub mod public {
         }
     }
 
-    pub struct Node<T, C = ()> {
+    pub struct Node<T> {
         incr: Incr<T>,
-        _p: PhantomData<C>,
     }
 
-    // impl<T, C> Clone for Node<T, C> {
+    // impl<T> Clone for Node<T> {
     //     fn clone(&self) -> Self {
-    //         Node { incr: self.incr.clone() , _p: self._p }
     //     }
     // }
 
     use crate::state::expert;
-    impl<T: Value, C: Value> Node<T, C> {
-        pub fn weak(&self) -> WeakNode<T, C> {
+    impl<T: Value> Node<T> {
+        pub fn weak(&self) -> WeakNode<T> {
             WeakNode {
                 incr: self.incr.weak(),
-                _p: PhantomData,
             }
         }
 
-        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static) -> Node<T, C> {
+        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static) -> Node<T> {
             fn ignore(_: bool) {}
             Node::new_(state, f, ignore)
         }
@@ -319,13 +311,10 @@ pub mod public {
             f: impl FnMut() -> T + 'static,
             obs_change: impl FnMut(bool) + 'static,
         ) -> Self {
-            let incr = expert::create::<T, C, _, _>(&state.upgrade().unwrap(), f, obs_change);
-            Self {
-                incr,
-                _p: PhantomData,
-            }
+            let incr = expert::create::<T, _, _>(&state.upgrade().unwrap(), f, obs_change);
+            Self { incr }
         }
-        pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T, C>
+        pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T>
         where
             F: FnMut() -> T + 'static,
         {
@@ -336,16 +325,13 @@ pub mod public {
             state: &WeakState,
             f: impl FnOnce(WeakIncr<T>) -> F,
             obs_change: impl FnMut(bool) + 'static,
-        ) -> Node<T, C>
+        ) -> Node<T>
         where
             F: FnMut() -> T + 'static,
         {
             let incr =
-                expert::create_cyclic::<T, C, _, _, _>(&state.upgrade().unwrap(), f, obs_change);
-            Self {
-                incr,
-                _p: PhantomData,
-            }
+                expert::create_cyclic::<T, _, _, _>(&state.upgrade().unwrap(), f, obs_change);
+            Self { incr }
         }
         pub fn watch(&self) -> Incr<T> {
             self.incr.clone()
@@ -356,7 +342,7 @@ pub mod public {
         pub fn invalidate(&self) {
             expert::invalidate(&self.incr.node.packed())
         }
-        pub fn add_dependency(&self, on: &Incr<C>) -> Dependency<C> {
+        pub fn add_dependency<D: Value>(&self, on: &Incr<D>) -> Dependency<D> {
             let edge = Rc::new(Edge::new(on.clone(), None));
             let dep = Dependency {
                 edge: Rc::downgrade(&edge),
@@ -364,43 +350,11 @@ pub mod public {
             expert::add_dependency(&self.incr.node.packed(), edge);
             dep
         }
-        pub fn add_dependency_with(
+        pub fn add_dependency_with<D: Value>(
             &self,
-            on: &Incr<C>,
-            on_change: impl FnMut(&C) + 'static,
-        ) -> Dependency<C> {
-            let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
-            let dep = Dependency {
-                edge: Rc::downgrade(&edge),
-            };
-            expert::add_dependency(&self.incr.node.packed(), edge);
-            dep
-        }
-        pub fn add_dependency_with_<C_: Value>(
-            &self,
-            on: &Incr<C_>,
-            on_change: impl FnMut(&C_) + 'static,
-        ) -> Dependency<C_> {
-            let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
-            let dep = Dependency {
-                edge: Rc::downgrade(&edge),
-            };
-            expert::add_dependency(&self.incr.node.packed(), edge);
-            dep
-        }
-        pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
-            let edge = Rc::new(Edge::new(on.clone(), None));
-            let dep = Dependency {
-                edge: Rc::downgrade(&edge),
-            };
-            expert::add_dependency(&self.incr.node.packed(), edge);
-            dep
-        }
-        pub fn add_dependency_unit_with(
-            &self,
-            on: &Incr<()>,
-            on_change: impl FnMut(&()) + 'static,
-        ) -> Dependency<()> {
+            on: &Incr<D>,
+            on_change: impl FnMut(&D) + 'static,
+        ) -> Dependency<D> {
             let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
             let dep = Dependency {
                 edge: Rc::downgrade(&edge),
@@ -417,58 +371,52 @@ pub mod public {
         }
     }
 
-    pub struct WeakNode<T, C = ()> {
+    #[derive(Clone)]
+    pub struct WeakNode<T> {
         incr: WeakIncr<T>,
-        _p: PhantomData<C>,
     }
 
-    impl<T, C> Clone for WeakNode<T, C> {
-        fn clone(&self) -> Self {
-            Self {
-                incr: self.incr.clone(),
-                _p: PhantomData,
-            }
-        }
-    }
-
-    impl<T: Value, C: Value> WeakNode<T, C> {
+    impl<T: Value> WeakNode<T> {
+        #[inline]
         pub fn watch(&self) -> WeakIncr<T> {
             self.incr.clone()
         }
-        pub fn upgrade(&self) -> Option<Node<T, C>> {
-            let incr = self.incr.upgrade();
-            incr.map(|incr| Node {
-                incr,
-                _p: PhantomData,
-            })
+        #[inline]
+        pub fn upgrade(&self) -> Option<Node<T>> {
+            self.incr.upgrade().map(|incr| Node { incr })
         }
+        #[inline]
         pub fn make_stale(&self) {
             self.upgrade().unwrap().make_stale();
         }
+        #[inline]
         pub fn invalidate(&self) {
             self.upgrade().unwrap().invalidate();
         }
-        pub fn add_dependency(&self, on: &Incr<C>) -> Dependency<C> {
+        #[inline]
+        pub fn add_dependency<D: Value>(&self, on: &Incr<D>) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency(on)
         }
-        pub fn add_dependency_with(
+        pub fn add_dependency_with<D: Value>(
             &self,
-            on: &Incr<C>,
-            on_change: impl FnMut(&C) + 'static,
-        ) -> Dependency<C> {
+            on: &Incr<D>,
+            on_change: impl FnMut(&D) + 'static,
+        ) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency_with(on, on_change)
         }
+        #[doc(hidden)]
+        #[deprecated = "add_dependency is now generic"]
         pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
-            self.upgrade().unwrap().add_dependency_unit(on)
+            self.add_dependency(on)
         }
+        #[doc(hidden)]
+        #[deprecated = "add_dependency_with is now generic"]
         pub fn add_dependency_unit_with(
             &self,
             on: &Incr<()>,
             on_change: impl FnMut(&()) + 'static,
         ) -> Dependency<()> {
-            self.upgrade()
-                .unwrap()
-                .add_dependency_unit_with(on, on_change)
+            self.add_dependency_with(on, on_change)
         }
         /// Caution: if the Dependency is on an expert::Node, then running this may cause
         /// a related WeakNode to be deallocated. If you wish to use the related node after

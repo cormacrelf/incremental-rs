@@ -98,7 +98,7 @@ pub(crate) enum Kind<G: NodeGenerics> {
         // BindNode holds weak refs to both
         lhs_change: Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
     },
-    Expert(expert::ExpertNode<G::R, G::I1, G::Recompute, G::ObsChange>),
+    Expert(expert::ExpertNode<G::R, G::Recompute, G::ObsChange>),
 }
 
 impl<G: NodeGenerics> Debug for Kind<G> {

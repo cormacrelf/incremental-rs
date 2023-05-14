@@ -141,7 +141,7 @@ where
     let state = lhs.state();
     let prev_map: Rc<RefCell<BTreeMap<K, V>>> = Rc::new(RefCell::new(BTreeMap::new()));
     let acc = Rc::new(RefCell::new(BTreeMap::<K, V2>::new()));
-    let result = Node::<BTreeMap<K, V2>, O::Output>::new(&state, {
+    let result = Node::<BTreeMap<K, V2>>::new(&state, {
         let acc_ = acc.clone();
         move || acc_.borrow().clone()
     });
@@ -162,7 +162,7 @@ where
         }
     };
 
-    let mut prev_nodes = BTreeMap::<K, (WeakNode<_, _>, Dependency<O::Output>)>::new();
+    let mut prev_nodes = BTreeMap::<K, (WeakNode<_>, Dependency<O::Output>)>::new();
     let result_weak = result.weak();
 
     let lhs_change = lhs.map_cyclic({
@@ -201,7 +201,7 @@ where
                             node.watch().set_cutoff(cutoff);
                         }
                         let lhs_change = lhs_change.upgrade().unwrap();
-                        node.add_dependency_unit(&lhs_change);
+                        node.add_dependency(&lhs_change);
                         let mapped = f.call_fn(&key, node.watch());
                         let user_function_dep = result_weak.add_dependency_with(&mapped, {
                             let key = key.clone();
@@ -216,7 +216,7 @@ where
             *prev_map_mut = map.clone();
         }
     });
-    result.add_dependency_unit(&lhs_change);
+    result.add_dependency(&lhs_change);
     result.watch()
 }
 
