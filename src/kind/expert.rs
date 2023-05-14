@@ -351,6 +351,15 @@ pub mod public {
             expert::add_dependency(&self.incr.node.packed(), edge);
             dep
         }
+        /// Add dependency with a change callback.
+        ///
+        /// Note that you should not use the change callback to
+        /// add or remove dependencies. The scheduler isn't smart enough to initialize such a
+        /// system and cut off any recursion that results, so it doesn't try. You can implement
+        /// Bind-like behaviour by introducing a Map node, adding/removing dynamic dependencies in
+        /// the Map function, and then adding a dependency on the Map node. The static dependency
+        /// on the Map node ensures all the dynamic dependnencies are resolved before the expert
+        /// Node runs. This way you also get cycle detection done by the system.
         pub fn add_dependency_with<D: Value>(
             &self,
             on: &Incr<D>,
@@ -398,6 +407,8 @@ pub mod public {
         pub fn add_dependency<D: Value>(&self, on: &Incr<D>) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency(on)
         }
+        /// See [Node::add_dependency_with], noting especially that you should not use the on_change
+        /// callback to add dynamic dependencies to this expert node.
         pub fn add_dependency_with<D: Value>(
             &self,
             on: &Incr<D>,
