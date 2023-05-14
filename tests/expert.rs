@@ -12,7 +12,8 @@ fn join<T: Value>(incr: &Incr<Incr<T>>) -> Incr<T> {
         move || prev_rhs_.borrow().clone().unwrap().value_cloned()
     });
     let join_ = join.weak();
-    // TODO: should not need to create a map node for this.
+    // In order to schedule the dependency additions/deletions before the expert Node executes,
+    // we put this in a Map node (akin to BindLhsChange).
     let lhs_change = incr.map(move |rhs| {
         let dep = join_.add_dependency(rhs);
         let mut prev_rhs_ = prev_rhs.borrow_mut();
