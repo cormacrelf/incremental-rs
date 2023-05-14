@@ -423,4 +423,11 @@ pub mod public {
             self.upgrade().unwrap().remove_dependency(dep)
         }
     }
+
+    impl<T: Value> AsRef<Incr<T>> for Node<T> {
+        #[inline]
+        fn as_ref(&self) -> &Incr<T> {
+            &self.incr
+        }
+    }
 }
