@@ -267,12 +267,21 @@ fn observer_ugly() {
     // ok none of this is guaranteed to work but i'm just trying to break it
     lhs.set(false);
     unused.set(700);
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
     incr.stabilise();
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
     unrelated.set(99);
     incr.stabilise();
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
 }
 
 #[test]

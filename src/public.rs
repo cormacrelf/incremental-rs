@@ -121,7 +121,9 @@ impl<T: Value> Observer<T> {
     }
 
     pub fn disallow_future_use(&self) {
-        let Some(state) = self.internal.incr_state() else { return };
+        let Some(state) = self.internal.incr_state() else {
+            return;
+        };
         self.internal.disallow_future_use(&state);
     }
 }

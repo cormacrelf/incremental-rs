@@ -201,7 +201,10 @@ impl<T: Value> Var<T> {
 
     fn did_set_var_while_not_stabilising(&self) {
         let Some(watch) = self.node.borrow().clone() else {
-            panic!("uninitialised var or abandoned watch node (had {:?})", self.node_id)
+            panic!(
+                "uninitialised var or abandoned watch node (had {:?})",
+                self.node_id
+            )
         };
         let t = self.state.upgrade().unwrap();
         t.num_var_sets.increment();

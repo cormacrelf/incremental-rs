@@ -37,12 +37,16 @@ where
     }
     fn is_valid(&self) -> bool {
         let main_ = self.main.borrow();
-        let Some(main) = main_.upgrade() else { return false };
+        let Some(main) = main_.upgrade() else {
+            return false;
+        };
         main.is_valid()
     }
     fn is_necessary(&self) -> bool {
         let main_ = self.main.borrow();
-        let Some(main) = main_.upgrade() else { return false };
+        let Some(main) = main_.upgrade() else {
+            return false;
+        };
         main.is_necessary()
     }
     fn height(&self) -> i32 {

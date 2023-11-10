@@ -212,13 +212,17 @@ where
                 );
                 borrow_span.in_scope(|| {
                     let children = self.children.borrow();
-                    let Some(child) = children.get(child_index as usize) else {return None };
+                    let Some(child) = children.get(child_index as usize) else {
+                        return None;
+                    };
                     // clone the child, so we can drop the borrow of the children vector.
                     // the child on_change callback may add or remove children. It needs borrow_mut access!
                     Some(child.clone())
                 })
             };
-            let Some(child) = child else { return; };
+            let Some(child) = child else {
+                return;
+            };
             child.on_change()
         }
     }

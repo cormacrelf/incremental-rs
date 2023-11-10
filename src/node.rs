@@ -551,7 +551,9 @@ impl<G: NodeGenerics> ParentNodeDyn for Node<G> {
         child_index: i32,
         old_value_opt: Option<&dyn Any>,
     ) -> Result<(), ParentError> {
-        let Some(kind) = self.kind() else { return Err(ParentError::ParentInvalidated) };
+        let Some(kind) = self.kind() else {
+            return Err(ParentError::ParentInvalidated);
+        };
         match kind {
             Kind::Expert(expert) => expert.run_edge_callback(child_index),
             Kind::MapRef(mapref) => {
@@ -785,7 +787,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.is_valid.get()
     }
     fn should_be_invalidated(&self) -> bool {
-        let Some(kind) = self.kind() else { return false };
+        let Some(kind) = self.kind() else {
+            return false;
+        };
         match kind {
             Kind::Constant(_) | Kind::Var(_) => false,
             Kind::ArrayFold(..)
@@ -860,7 +864,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.height.set(height);
     }
     fn is_stale(&self) -> bool {
-        let Some(kind) = self.kind() else { return false };
+        let Some(kind) = self.kind() else {
+            return false;
+        };
         match kind {
             Kind::Var(var) => {
                 let set_at = var.set_at.get();
@@ -1074,7 +1080,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn recompute(&self, state: &State) {
         // This is a flattened version of the original recursion, which OCaml could probably tail-call
         // optimise. First recompute self
-        let Some(mut parent) = self.recompute_one(state) else { return };
+        let Some(mut parent) = self.recompute_one(state) else {
+            return;
+        };
 
         // Then, as far as we can_recompute_now, recompute parent
         while let Some(next_parent) = parent.recompute_one(state) {
@@ -1097,7 +1105,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
 
         let Some(kind) = self.kind() else {
             // We should not be invalidating nodes that have already been queued for recompute.
-            // invalidate_nodes_created_on_rhs should only invalidate a node higher than the 
+            // invalidate_nodes_created_on_rhs should only invalidate a node higher than the
             // current one. So removing such nodes from the recompute heap should work.
             panic!("recomputing invalid node {:?}", self.id);
         };
@@ -1258,7 +1266,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let parent = self;
 
         let Some(parent_kind) = parent.kind() else {
-            return false
+            return false;
         };
 
         let can_recompute_now = match parent_kind {
@@ -1319,7 +1327,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn has_child(&self, child: &WeakNode) -> bool {
-        let Some(upgraded) = child.upgrade() else { return false };
+        let Some(upgraded) = child.upgrade() else {
+            return false;
+        };
         let mut any = false;
         self.foreach_child(&mut |_ix, child| {
             any = any || crate::rc_thin_ptr_eq(&child, &upgraded);
@@ -1365,7 +1375,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.is_valid.set(false);
         let mut prop_stack = state.propagate_invalidity.borrow_mut();
         for parent in self.parents.borrow().iter() {
-            let Ok(parent) = parent.upgrade_erased() else { continue };
+            let Ok(parent) = parent.upgrade_erased() else {
+                continue;
+            };
             prop_stack.push(parent.weak());
         }
         drop(prop_stack);
@@ -1465,7 +1477,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
         let h = self.height.get();
         let Some(kind) = self.kind() else {
-            return write!(f, "Invalid")
+            return write!(f, "Invalid");
         };
         match kind {
             Kind::Constant(v) => return write!(f, "Constant({id:?}) @ {h} => {v:?}"),
@@ -1562,7 +1574,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn assert_currently_running_node_is_parent(&self, name: &'static str) {
         let t = self.state();
         let current = t.only_in_debug.currently_running_node_exn(name);
-        let Some(current) = current.upgrade() else { return };
+        let Some(current) = current.upgrade() else {
+            return;
+        };
         assert!(
             current.has_child(&self.weak()),
             "({name}) currently running node was not a parent"
@@ -1572,7 +1586,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if !self.is_valid() {
             return;
         }
-        let Some(Kind::Expert(expert)) = self.kind() else { return };
+        let Some(Kind::Expert(expert)) = self.kind() else {
+            return;
+        };
         #[cfg(debug_assertions)]
         self.assert_currently_running_node_is_child("make_stale");
         match expert.make_stale() {
@@ -1587,7 +1603,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn expert_add_dependency(&self, packed_edge: PackedEdge) {
-        let Some(Kind::Expert(expert)) = self.kind() else { return };
+        let Some(Kind::Expert(expert)) = self.kind() else {
+            return;
+        };
         // if debug
         // then
         //   if am_stabilizing state
@@ -1613,7 +1631,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn expert_remove_dependency(&self, dyn_edge: &dyn IsEdge) {
-        let Some(Kind::Expert(expert)) = self.kind() else { return };
+        let Some(Kind::Expert(expert)) = self.kind() else {
+            return;
+        };
         #[cfg(debug_assertions)]
         self.assert_currently_running_node_is_child("remove_dependency");
         /* [node] is not guaranteed to be necessary, for the reason stated in
@@ -1881,7 +1901,9 @@ impl<G: NodeGenerics> Node<G> {
         state: &State,
     ) {
         let bind_main = self;
-        let Some(Kind::BindMain { casts: id, .. }) = bind_main.kind() else { return };
+        let Some(Kind::BindMain { casts: id, .. }) = bind_main.kind() else {
+            return;
+        };
         let new_child_node = id.input_rhs_i1.cast_ref(&new_child.node);
         match old_child {
             None => {
