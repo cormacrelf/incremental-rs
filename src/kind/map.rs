@@ -185,6 +185,9 @@ macro_rules! map_node {
             }
         }
         impl<$t1: Value> Incr<$t1> {
+            /// Like [Incr::map] and [Incr::map2], but with more input incrementals.
+            ///
+            /// If you don't feel like counting, try using the `(i1 % i2 % ...).map((|_, _, ...| ...))` syntax.
             pub fn $methodname<$fparam, $($t2,)* $r>(&self, $($tfield: &Incr<$t>,)* f: $fparam) -> Incr<R>
             where
                 $($t: Value,)*
