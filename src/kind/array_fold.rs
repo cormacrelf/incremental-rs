@@ -32,8 +32,8 @@ where
     type R = R;
     type I1 = I;
     type Fold = F;
-    node_generics_default! { I2, I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs, Update, WithOld, FRef, Recompute, ObsChange }
 }
 

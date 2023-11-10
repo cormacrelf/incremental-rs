@@ -25,9 +25,9 @@ where
     type BindRhs = ();
     type I1 = T;
     type F1 = F;
-    node_generics_default! { I2, I3, I4, I5 }
-    node_generics_default! { F2, F3, F4, F5, B1 }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
+    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { F2, F3, F4, F5, F6 }
+    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 impl<F, T, R> fmt::Debug for MapNode<F, T, R>
@@ -60,9 +60,9 @@ where
     type BindRhs = ();
     type I1 = T;
     type FRef = F;
-    node_generics_default! { I2, I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5, B1 }
-    node_generics_default! { Fold, Update, WithOld, Recompute, ObsChange }
+    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
+    node_generics_default! { B1, Fold, Update, WithOld, Recompute, ObsChange }
 }
 
 impl<F, T, R> fmt::Debug for MapRefNode<F, T, R>
@@ -100,9 +100,9 @@ where
     type I2 = T2;
     type F1 = fn(&Self::I1) -> R;
     type F2 = F;
-    node_generics_default! { I3, I4, I5 }
-    node_generics_default! { F3, F4, F5, B1 }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
+    node_generics_default! { I3, I4, I5, I6 }
+    node_generics_default! { F3, F4, F5, F6 }
+    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 impl<F, T1, T2, R> fmt::Debug for Map2Node<F, T1, T2, R>
@@ -220,7 +220,7 @@ map_node! {
         }
         fn { mapper: F3(.., T2, T3) -> R, }
     > {
-        default < F1, F2, F4, F5, I4, I5 >,
+        default < F1, F2, F4, F5, F6, I4, I5, I6 >,
         impl Incr::map3, Kind::Map3
     }
 }
@@ -235,7 +235,7 @@ map_node! {
         }
         fn { mapper: F4(.., T2, T3, T4) -> R, }
     > {
-        default < F1, F2, F3, F5, I5 >,
+        default < F1, F2, F3, F5, F6, I5, I6 >,
         impl Incr::map4, Kind::Map4
     }
 }
@@ -251,8 +251,25 @@ map_node! {
         }
         fn { mapper: F5(.., T2, T3, T4, T5) -> R, }
     > {
-        default < F1, F2, F3, F4 >,
+        default < F1, F2, F3, F4, F6, I6 >,
         impl Incr::map5, Kind::Map5
+    }
+}
+
+map_node! {
+    pub(crate) struct Map6Node<
+        inputs {
+            one: T1 = I1,
+            two: T2 = I2,
+            three: T3 = I3,
+            four: T4 = I4,
+            five: T5 = I5,
+            six: T6 = I6,
+        }
+        fn { mapper: F6(.., T2, T3, T4, T5, T6) -> R, }
+    > {
+        default < F1, F2, F3, F4, F5 >,
+        impl Incr::map6, Kind::Map6
     }
 }
 
@@ -289,8 +306,8 @@ where
     type I1 = T;
     type R = R;
     type WithOld = F;
-    node_generics_default! { I2, I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs }
     node_generics_default! { Fold, Update, FRef, Recompute, ObsChange }
 }

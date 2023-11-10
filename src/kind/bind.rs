@@ -79,8 +79,8 @@ where
     type I1 = ();
     type I2 = T;
     type B1 = F;
-    node_generics_default! { I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
@@ -103,8 +103,8 @@ where
     /// BindLhsChange (a sentinel)
     type I2 = ();
     type B1 = F;
-    node_generics_default! { I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 

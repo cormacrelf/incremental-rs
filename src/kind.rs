@@ -10,31 +10,33 @@ macro_rules! node_generics_default {
     (@fn $name:ident ( $($param:ident),* )) => {
         type $name = fn($(&Self::$param,)*) -> Self::R;
     };
-    (F1) => { node_generics_default!{ @fn F1 (I1) } };
-    (F2) => { node_generics_default!{ @fn F2 (I1, I2) } };
-    (F3) => { node_generics_default!{ @fn F3 (I1, I2, I3) } };
-    (F4) => { node_generics_default!{ @fn F4 (I1, I2, I3, I4) } };
-    (F5) => { node_generics_default!{ @fn F5 (I1, I2, I3, I4, I5) } };
+    (@single F1) => { node_generics_default!{ @fn F1 (I1) } };
+    (@single F2) => { node_generics_default!{ @fn F2 (I1, I2) } };
+    (@single F3) => { node_generics_default!{ @fn F3 (I1, I2, I3) } };
+    (@single F4) => { node_generics_default!{ @fn F4 (I1, I2, I3, I4) } };
+    (@single F5) => { node_generics_default!{ @fn F5 (I1, I2, I3, I4, I5) } };
+    (@single F6) => { node_generics_default!{ @fn F6 (I1, I2, I3, I4, I5, I6) } };
 
-    (I1) => { type I1 = (); };
-    (I2) => { type I2 = (); };
-    (I3) => { type I3 = (); };
-    (I4) => { type I4 = (); };
-    (I5) => { type I5 = (); };
+    (@single I1) => { type I1 = (); };
+    (@single I2) => { type I2 = (); };
+    (@single I3) => { type I3 = (); };
+    (@single I4) => { type I4 = (); };
+    (@single I5) => { type I5 = (); };
+    (@single I6) => { type I6 = (); };
 
-    (BindLhs) => { type BindLhs = (); };
-    (BindRhs) => { type BindRhs = (); };
-    (B1) => { type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>; };
-    (Fold) => { type Fold = fn(Self::R, &Self::I1) -> Self::R; };
-    (Update) => { type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R; };
-    (WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
-    (FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
-    (Recompute) => { type Recompute = fn() -> Self::R; };
-    (ObsChange) => { type ObsChange = fn(bool); };
+    (@single BindLhs) => { type BindLhs = (); };
+    (@single BindRhs) => { type BindRhs = (); };
+    (@single B1) => { type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>; };
+    (@single Fold) => { type Fold = fn(Self::R, &Self::I1) -> Self::R; };
+    (@single Update) => { type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R; };
+    (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
+    (@single FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
+    (@single Recompute) => { type Recompute = fn() -> Self::R; };
+    (@single ObsChange) => { type ObsChange = fn(bool); };
 
     ($($ident:ident),*) => {
         $(
-            node_generics_default! { $ident }
+            node_generics_default! { @single $ident }
         )*
     }
 }
@@ -58,12 +60,14 @@ pub(crate) trait NodeGenerics: 'static {
     type I3: Value;
     type I4: Value;
     type I5: Value;
+    type I6: Value;
     type F1: FnMut(&Self::I1) -> Self::R;
     type FRef: Fn(&Self::I1) -> &Self::R;
     type F2: FnMut(&Self::I1, &Self::I2) -> Self::R;
     type F3: FnMut(&Self::I1, &Self::I2, &Self::I3) -> Self::R;
     type F4: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4) -> Self::R;
     type F5: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5) -> Self::R;
+    type F6: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5, &Self::I6) -> Self::R;
     type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs>;
     type Fold: FnMut(Self::R, &Self::I1) -> Self::R;
     type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R;
@@ -85,6 +89,7 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Map3(map::Map3Node<G::F3, G::I1, G::I2, G::I3, G::R>),
     Map4(map::Map4Node<G::F4, G::I1, G::I2, G::I3, G::I4, G::R>),
     Map5(map::Map5Node<G::F5, G::I1, G::I2, G::I3, G::I4, G::I5, G::R>),
+    Map6(map::Map6Node<G::F6, G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
         bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
@@ -113,6 +118,7 @@ impl<G: NodeGenerics> Debug for Kind<G> {
             Kind::Map3(map) => write!(f, "Map3({:?})", map),
             Kind::Map4(map) => write!(f, "Map4({:?})", map),
             Kind::Map5(map) => write!(f, "Map5({:?})", map),
+            Kind::Map6(map) => write!(f, "Map6({:?})", map),
             Kind::BindLhsChange { bind, .. } => write!(f, "BindLhsChange({:?})", bind),
             Kind::BindMain { bind, .. } => write!(f, "BindMain({:?})", bind),
             Kind::MapRef(mapref) => write!(f, "MapRef({:?})", mapref),
@@ -133,6 +139,7 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Map3(_) => 3,
             Self::Map4(_) => 4,
             Self::Map5(_) => 5,
+            Self::Map6(_) => 6,
             Self::BindLhsChange { .. } => 1,
             Self::BindMain { .. } => 2,
             Self::Expert(_) => 0,
@@ -144,7 +151,7 @@ pub(crate) struct Constant<T>(std::marker::PhantomData<T>);
 
 impl<T: Value> NodeGenerics for Constant<T> {
     type R = T;
-    node_generics_default! { I1, I2, I3, I4, I5 }
-    node_generics_default! { F1, F2, F3, F4, F5 }
+    node_generics_default! { I1, I2, I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs, Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
