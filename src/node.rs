@@ -1529,7 +1529,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         write!(f, "({id:?})")?;
         write!(f, " @ {h}")?;
         if let Some(val) = self.value_as_ref() {
-            write!(f, " => {:?}", val)?;
+            write!(f, " => {:#?}", val)?;
         }
         Ok(())
     }
@@ -1564,10 +1564,39 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let node = self;
         write!(f, "  {} [", name)?;
         let t = node.state();
+
+        struct EscapedWriter<'a> {
+            s: &'a str,
+        }
+        impl fmt::Display for EscapedWriter<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let mut s = self.s;
+                write!(f, "\"")?;
+                while !s.is_empty() {
+                    let Some(found_esc) = s.find(['"', '\n', '\\']) else {
+                        f.write_str(s)?;
+                        break;
+                    };
+                    let b = s.as_bytes();
+                    f.write_str(&s[..found_esc])?;
+                    match b[found_esc] {
+                        // " => \"
+                        b'"' => f.write_str("\\\"")?,
+                        // newline => \l (left-justified)
+                        b'\n' => f.write_str("\\l")?,
+                        // \ => \\
+                        b'\\' => f.write_str("\\\\")?,
+                        _ => return Err(fmt::Error),
+                    }
+                    s = &s[found_esc + 1..];
+                }
+                write!(f, "\"")
+            }
+        }
         write!(f, "label=")?;
         let mut buf = String::new();
         node.dot_label(&mut buf)?;
-        write!(f, "{:?}", buf)?;
+        write!(f, "{}", EscapedWriter { s: &buf })?;
         if node.is_in_recompute_heap() {
             write!(f, ", fillcolor=3, style=filled")?;
         } else if node.dot_was_recomputed(&t) {
