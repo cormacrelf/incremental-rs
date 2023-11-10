@@ -1123,7 +1123,7 @@ fn test_duplicate_incrstate_drop() {
 }
 
 #[test]
-fn map345() {
+fn map3456() {
     let incr = IncrState::new();
     let i1 = incr.var(3);
     let i2 = incr.var(5);
@@ -1137,19 +1137,26 @@ fn map345() {
     assert_eq!(trip.value(), 24);
     let i4 = incr.var(100);
     let i5 = incr.var(200);
+    let i6 = incr.var(300);
     let quadruple = i1.map4(&i2, &i3, &i4, |a, b, c, d| a * b + c + d);
     let quad = quadruple.observe();
     let quintuple = i1.map5(&i2, &i3, &i4, &i5, |a, b, c, d, e| a * b + c + d + e);
     let five = quintuple.observe();
+    let sextuple = i1.map6(&i2, &i3, &i4, &i5, &i6, |a, b, c, d, e, f| {
+        a * b + c + d + e + f
+    });
+    let six = sextuple.observe();
     incr.stabilise();
     assert_eq!(trip.value(), 24);
     assert_eq!(quad.value(), 124);
     assert_eq!(five.value(), 324);
+    assert_eq!(six.value(), 624);
     i1.set(0);
     incr.stabilise();
     assert_eq!(trip.value(), 9);
     assert_eq!(quad.value(), 109);
     assert_eq!(five.value(), 309);
+    assert_eq!(six.value(), 609);
 }
 
 #[test]
