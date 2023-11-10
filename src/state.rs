@@ -455,6 +455,13 @@ impl State {
         let mut all_observed = observers.iter().map(|(_id, o)| o.observing_erased());
         super::node::save_dot_to_file(&mut all_observed, named).unwrap();
     }
+    pub(crate) fn save_dot_to_string(&self) -> String {
+        let observers = self.all_observers.borrow();
+        let mut all_observed = observers.iter().map(|(_id, o)| o.observing_erased());
+        let mut buf = String::new();
+        super::node::save_dot(&mut buf, &mut all_observed).unwrap();
+        buf
+    }
 
     #[tracing::instrument]
     pub(crate) fn destroy(&self) {

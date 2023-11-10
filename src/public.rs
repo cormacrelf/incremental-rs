@@ -120,6 +120,13 @@ impl<T: Value> Observer<T> {
         super::node::save_dot_to_file(&mut core::iter::once(node), named).unwrap();
     }
 
+    pub fn save_dot_to_string(&self) -> String {
+        let node = self.internal.observing_erased();
+        let mut buf = String::new();
+        super::node::save_dot(&mut buf, &mut core::iter::once(node)).unwrap();
+        buf
+    }
+
     pub fn disallow_future_use(&self) {
         let Some(state) = self.internal.incr_state() else {
             return;
@@ -458,6 +465,10 @@ impl WeakState {
 
     pub fn save_dot_to_file(&self, named: &str) {
         self.inner.upgrade().unwrap().save_dot_to_file(named)
+    }
+
+    pub fn save_dot_to_string(&self) -> String {
+        self.inner.upgrade().unwrap().save_dot_to_string()
     }
 
     pub fn unsubscribe(&self, token: SubscriptionToken) {
