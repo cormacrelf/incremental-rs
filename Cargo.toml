@@ -1,6 +1,6 @@
 [package]
 name = "incremental"
-version = "0.2.0"
+version = "0.1.2"
 authors = ["Cormac Relf <web@cormacrelf.net>"]
 edition = "2021"
 description = "incremental computations, based on Jane Street's incremental"
