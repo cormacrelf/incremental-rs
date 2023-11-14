@@ -91,25 +91,25 @@ impl<T: Value> Incr<T> {
     /// applying it to self. This enables you to put your own functions
     /// into the middle of a chain of method calls on Incr.
     #[inline]
-    pub fn pipe<R>(&self, mut f: impl FnMut(Incr<T>) -> Incr<R>) -> Incr<R> {
+    pub fn pipe<R>(&self, f: impl FnOnce(Incr<T>) -> Incr<R>) -> Incr<R> {
         // clones are cheap.
         f(self.clone())
     }
 
-    pub fn pipe1<R, A1>(&self, mut f: impl FnMut(Incr<T>, A1) -> Incr<R>, arg1: A1) -> Incr<R> {
+    pub fn pipe1<R, A1>(&self, f: impl FnOnce(Incr<T>, A1) -> Incr<R>, arg1: A1) -> Incr<R> {
         f(self.clone(), arg1)
     }
 
     pub fn pipe2<R, A1, A2>(
         &self,
-        mut f: impl FnMut(Incr<T>, A1, A2) -> Incr<R>,
+        f: impl FnOnce(Incr<T>, A1, A2) -> Incr<R>,
         arg1: A1,
         arg2: A2,
     ) -> Incr<R> {
         f(self.clone(), arg1, arg2)
     }
 
-    /// A simple variation on `Incr::map` that tells you how many
+    /// A simple variation on [Incr::map] that tells you how many
     /// times the incremental has recomputed before this time.
     pub fn enumerate<R, F>(&self, mut f: F) -> Incr<R>
     where
@@ -171,7 +171,7 @@ impl<T: Value> Incr<T> {
     /// closure.
     ///
     /// Useful for advanced usage where you want to add manual dependencies with the
-    /// `incremental::expert` constructs.
+    /// [incremental::expert] constructs.
     pub fn map_cyclic<R: Value>(
         &self,
         mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static,
@@ -199,14 +199,14 @@ impl<T: Value> Incr<T> {
         Incr { node }
     }
 
-    /// A version of `Incr::map` that allows reuse of the old
+    /// A version of [Incr::map] that allows reuse of the old
     /// value. You can use it to produce a new value. The main
     /// use case is avoiding allocation.
     ///
     /// The return type of the closure is `(R, bool)`. The boolean
-    /// value is a replacement for the `Cutoff` system, because
-    /// the `Cutoff` functions require access to an old value and
-    /// a new value. With `map_with_old`, you must figure out yourself
+    /// value is a replacement for the [Cutoff] system, because
+    /// the [Cutoff] functions require access to an old value and
+    /// a new value. With [Incr::map_with_old], you must figure out yourself
     /// (without relying on PartialEq, for example) whether the
     /// incremental node should propagate its changes.
     ///
@@ -241,11 +241,10 @@ impl<T: Value> Incr<T> {
             state.current_scope.borrow().clone(),
             Kind::Map2(mapper),
         );
-
         Incr { node }
     }
 
-    /// A version of bind that includes a copy of the `incremental::State`
+    /// A version of bind that includes a copy of the [IncrState] (as [WeakState])
     /// to help you construct new incrementals within the bind.
     pub fn binds<F, R>(&self, mut f: F) -> Incr<R>
     where
@@ -341,9 +340,9 @@ impl<T: Value> Incr<T> {
     /// Sets the cutoff function that determines (if it returns true)
     /// whether to stop (cut off) propagating changes through the graph.
     /// Note that this method can be called on `Var` as well as any
-    /// other `Incr`.
+    /// other [Incr].
     ///
-    /// The default is `Cutoff::PartialEq`. So if your values do not change,
+    /// The default is [Cutoff::PartialEq]. So if your values do not change,
     /// they will cut off propagation. There is a bound on all T in
     /// `Incr<T>` used in incremental-rs, all values you pass around
     /// must be PartialEq.
@@ -354,7 +353,7 @@ impl<T: Value> Incr<T> {
     /// and simply compare the allocation's pointer value instead.
     /// In that case, you can:
     ///
-    /// ```
+    /// ```rust
     /// use std::rc::Rc;
     /// use incremental::{IncrState, Cutoff};
     /// let incr = IncrState::new();
@@ -375,14 +374,13 @@ impl<T: Value> Incr<T> {
     /// closures, can be cast to a function pointer because they won't
     /// capture any values.
     ///
-    /// ```
+    /// ```rust
     /// use incremental::IncrState;
     /// let incr = IncrState::new();
     /// let var = incr.var(5);
     /// var.set_cutoff_fn(|a, b| a == b);
     /// var.set_cutoff_fn(i32::eq);
     /// var.set_cutoff_fn(PartialEq::eq);
-    /// // ...
     /// ```
     pub fn set_cutoff_fn(&self, cutoff_fn: fn(&T, &T) -> bool) {
         self.node.set_cutoff(Cutoff::Fn(cutoff_fn));
@@ -391,9 +389,8 @@ impl<T: Value> Incr<T> {
     /// A shorthand for using [Incr::set_cutoff] with [Cutoff::FnBoxed] and
     /// a closure that may capture its environment and mutate its captures.
     ///
-    /// ```
-    /// # use std::cell::Cell;
-    /// # use std::rc::Rc;
+    /// ```rust
+    /// use std::{cell::Cell, rc::Rc};
     /// use incremental::IncrState;
     /// let incr = IncrState::new();
     /// let var = incr.var(5);

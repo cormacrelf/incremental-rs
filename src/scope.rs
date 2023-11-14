@@ -22,7 +22,9 @@ impl fmt::Debug for Scope {
         match self {
             Scope::Top => write!(f, "Scope::Top"),
             Scope::Bind(bind) => {
-                let Some(bind) = bind.upgrade() else { return write!(f, "Scope::Bind(weak, deallocated)") };
+                let Some(bind) = bind.upgrade() else {
+                    return write!(f, "Scope::Bind(weak, deallocated)");
+                };
                 write!(f, "Scope::Bind({:?})", bind.id())
             }
         }

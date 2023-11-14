@@ -120,8 +120,17 @@ impl<T: Value> Observer<T> {
         super::node::save_dot_to_file(&mut core::iter::once(node), named).unwrap();
     }
 
+    pub fn save_dot_to_string(&self) -> String {
+        let node = self.internal.observing_erased();
+        let mut buf = String::new();
+        super::node::save_dot(&mut buf, &mut core::iter::once(node)).unwrap();
+        buf
+    }
+
     pub fn disallow_future_use(&self) {
-        let Some(state) = self.internal.incr_state() else { return };
+        let Some(state) = self.internal.incr_state() else {
+            return;
+        };
         self.internal.disallow_future_use(&state);
     }
 }
@@ -170,7 +179,7 @@ impl<T: Value> PartialEq for Var<T> {
     }
 }
 
-impl<T: Value> Deref for crate::Var<T> {
+impl<T: Value> Deref for Var<T> {
     type Target = Incr<T>;
     fn deref(&self) -> &Self::Target {
         &self.watch
@@ -458,6 +467,10 @@ impl WeakState {
         self.inner.upgrade().unwrap().save_dot_to_file(named)
     }
 
+    pub fn save_dot_to_string(&self) -> String {
+        self.inner.upgrade().unwrap().save_dot_to_string()
+    }
+
     pub fn unsubscribe(&self, token: SubscriptionToken) {
         self.inner.upgrade().unwrap().unsubscribe(token)
     }
@@ -531,6 +544,20 @@ impl Sub for Stats {
 /// so may as well accept Var anywhere we accept Incr.
 pub trait IntoIncr<T> {
     fn into_incr(self) -> Incr<T>;
+}
+
+impl<T: Value> AsRef<Incr<T>> for Var<T> {
+    #[inline]
+    fn as_ref(&self) -> &Incr<T> {
+        self.deref()
+    }
+}
+
+impl<T: Value> AsRef<Incr<T>> for Incr<T> {
+    #[inline]
+    fn as_ref(&self) -> &Incr<T> {
+        &self
+    }
 }
 
 impl<T> IntoIncr<T> for Incr<T> {

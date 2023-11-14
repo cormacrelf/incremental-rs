@@ -253,7 +253,9 @@ impl State {
     fn unlink_disallowed_observers(&self) {
         let mut disallowed = self.disallowed_observers.borrow_mut();
         for obs_weak in disallowed.drain(..) {
-            let Some(obs) = obs_weak.upgrade() else { continue };
+            let Some(obs) = obs_weak.upgrade() else {
+                continue;
+            };
             debug_assert_eq!(obs.state().get(), ObserverState::Disallowed);
             obs.state().set(ObserverState::Unlinked);
             // get a strong ref to the node, before we drop its owning InternalObserver
@@ -288,9 +290,7 @@ impl State {
         tracing::info_span!("set_during_stabilisation").in_scope(|| {
             let mut stack = self.set_during_stabilisation.borrow_mut();
             while let Some(var) = stack.pop() {
-                let Some(var) = var.upgrade() else {
-                    continue
-                };
+                let Some(var) = var.upgrade() else { continue };
                 tracing::debug!("set_during_stabilisation: found var with {:?}", var.id());
                 var.set_var_stabilise_end();
             }
@@ -304,9 +304,7 @@ impl State {
         tracing::info_span!("dead_vars").in_scope(|| {
             let mut stack = self.dead_vars.borrow_mut();
             for var in stack.drain(..) {
-                let Some(var) = var.upgrade() else {
-                    continue
-                };
+                let Some(var) = var.upgrade() else { continue };
                 tracing::debug!("dead_vars: found var with {:?}", var.id());
                 var.break_rc_cycle();
             }
@@ -456,6 +454,13 @@ impl State {
         let observers = self.all_observers.borrow();
         let mut all_observed = observers.iter().map(|(_id, o)| o.observing_erased());
         super::node::save_dot_to_file(&mut all_observed, named).unwrap();
+    }
+    pub(crate) fn save_dot_to_string(&self) -> String {
+        let observers = self.all_observers.borrow();
+        let mut all_observed = observers.iter().map(|(_id, o)| o.observing_erased());
+        let mut buf = String::new();
+        super::node::save_dot(&mut buf, &mut all_observed).unwrap();
+        buf
     }
 
     #[tracing::instrument]

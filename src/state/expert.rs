@@ -1,19 +1,16 @@
-use std::any::Any;
-
 use super::*;
 use crate::kind;
 use crate::node::Incremental;
 use crate::WeakIncr;
 use kind::expert::{IsEdge, PackedEdge};
 
-pub(crate) fn create<T, C, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
+pub(crate) fn create<T, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
     T: Value,
-    C: Value,
     F: FnMut() -> T + 'static,
     O: FnMut(bool) + 'static,
 {
-    let node = Node::<kind::ExpertNode<T, C, F, O>>::create_rc(
+    let node = Node::<kind::ExpertNode<T, F, O>>::create_rc(
         state.weak(),
         state.current_scope(),
         Kind::Expert(kind::ExpertNode::new_obs(
@@ -32,14 +29,13 @@ where
     Incr { node }
 }
 
-pub(crate) fn create_cyclic<T, C, Cyclic, F, O>(
+pub(crate) fn create_cyclic<T, Cyclic, F, O>(
     state: &State,
     cyclic: Cyclic,
     on_observability_change: O,
 ) -> Incr<T>
 where
     T: Value,
-    C: Value,
     Cyclic: FnOnce(WeakIncr<T>) -> F,
     F: FnMut() -> T + 'static,
     O: FnMut(bool) + 'static,
@@ -47,7 +43,7 @@ where
     let node = Rc::<Node<_>>::new_cyclic(|weak| {
         let weak_incr = WeakIncr(weak.clone());
         let recompute = cyclic(weak_incr);
-        let mut node = Node::<kind::ExpertNode<T, C, F, O>>::create(
+        let mut node = Node::<kind::ExpertNode<T, F, O>>::create(
             state.weak(),
             state.current_scope(),
             Kind::Expert(kind::ExpertNode::new_obs(
@@ -78,10 +74,6 @@ pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
     node.expert_add_dependency(edge);
 }
 
-pub(crate) fn remove_dependency<T>(
-    node: &dyn Incremental<T>,
-    packed_edge: &dyn IsEdge,
-    edge: &dyn Any,
-) {
-    node.expert_remove_dependency(packed_edge, edge);
+pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn IsEdge) {
+    node.expert_remove_dependency(dyn_edge);
 }

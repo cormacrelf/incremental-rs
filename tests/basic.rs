@@ -267,12 +267,21 @@ fn observer_ugly() {
     // ok none of this is guaranteed to work but i'm just trying to break it
     lhs.set(false);
     unused.set(700);
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
     incr.stabilise();
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
     unrelated.set(99);
     incr.stabilise();
-    assert_eq!(o2.try_get_value(), Ok(Err(ObserverError::CurrentlyStabilising)));
+    assert_eq!(
+        o2.try_get_value(),
+        Ok(Err(ObserverError::CurrentlyStabilising))
+    );
 }
 
 #[test]
@@ -1111,4 +1120,57 @@ fn test_duplicate_incrstate_drop() {
 
     drop(obs);
     drop(incr);
+}
+
+#[test]
+fn map3456() {
+    let incr = IncrState::new();
+    let i1 = incr.var(3);
+    let i2 = incr.var(5);
+    let i3 = incr.var(7);
+    let triple = i1.map3(&i2, &i3, |a, b, c| a * b + c);
+    let trip = triple.observe();
+    incr.stabilise();
+    assert_eq!(trip.value(), 22);
+    i3.set(9);
+    incr.stabilise();
+    assert_eq!(trip.value(), 24);
+    let i4 = incr.var(100);
+    let i5 = incr.var(200);
+    let i6 = incr.var(300);
+    let quadruple = i1.map4(&i2, &i3, &i4, |a, b, c, d| a * b + c + d);
+    let quad = quadruple.observe();
+    let quintuple = i1.map5(&i2, &i3, &i4, &i5, |a, b, c, d, e| a * b + c + d + e);
+    let five = quintuple.observe();
+    let sextuple = i1.map6(&i2, &i3, &i4, &i5, &i6, |a, b, c, d, e, f| {
+        a * b + c + d + e + f
+    });
+    let six = sextuple.observe();
+    incr.stabilise();
+    assert_eq!(trip.value(), 24);
+    assert_eq!(quad.value(), 124);
+    assert_eq!(five.value(), 324);
+    assert_eq!(six.value(), 624);
+    i1.set(0);
+    incr.stabilise();
+    assert_eq!(trip.value(), 9);
+    assert_eq!(quad.value(), 109);
+    assert_eq!(five.value(), 309);
+    assert_eq!(six.value(), 609);
+}
+
+#[test]
+fn map345_ref() {
+    let incr = IncrState::new();
+    let i1 = incr.var(3);
+    let i2 = incr.var(5);
+    let i3 = incr.var(7);
+    let triple = i1.map3(&i2, &i3, |a, b, c| (a * b, *c));
+    let trip = triple.observe();
+    incr.stabilise();
+    assert_eq!(trip.value(), (15, 7));
+    let by_ref = triple.map_ref(|(ab, _)| ab);
+    let obs = by_ref.observe();
+    incr.stabilise();
+    assert_eq!(obs.value(), 15);
 }

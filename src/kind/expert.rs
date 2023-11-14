@@ -1,19 +1,22 @@
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     cell::{Cell, RefCell},
     marker::PhantomData,
     rc::Rc,
 };
 
 use super::NodeGenerics;
-use crate::node::Input;
+use crate::node::ErasedIncremental;
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any {
+    /// Called from run_edge_callback
     fn on_change(&self);
     fn as_any(&self) -> &dyn Any;
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
+    fn erased_input(&self) -> &dyn ErasedIncremental;
+    fn edge_input_type_id(&self) -> TypeId;
 }
 
 pub(crate) trait IsEdge: ExpertEdge + Any {}
@@ -39,9 +42,6 @@ impl<T> Edge<T> {
             index: None.into(),
         }
     }
-    pub(crate) fn as_input(&self) -> Input<T> {
-        self.child.node.as_input()
-    }
 }
 
 impl<T: Value> ExpertEdge for Edge<T> {
@@ -62,10 +62,18 @@ impl<T: Value> ExpertEdge for Edge<T> {
     fn index_cell(&self) -> &Cell<Option<i32>> {
         &self.index
     }
+
+    fn erased_input(&self) -> &dyn ErasedIncremental {
+        self.child.node.erased_input()
+    }
+
+    fn edge_input_type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
 }
 
-pub(crate) struct ExpertNode<T, C, F, ObsChange> {
-    pub _f: PhantomData<(T, C)>,
+pub(crate) struct ExpertNode<T, F, ObsChange> {
+    pub _f: PhantomData<T>,
     pub recompute: RefCell<Option<F>>,
     pub on_observability_change: RefCell<Option<ObsChange>>,
     pub children: RefCell<Vec<PackedEdge>>,
@@ -74,7 +82,7 @@ pub(crate) struct ExpertNode<T, C, F, ObsChange> {
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T, C, F, O> Drop for ExpertNode<T, C, F, O> {
+impl<T, F, O> Drop for ExpertNode<T, F, O> {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -87,7 +95,7 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T, C: 'static, F, ObsChange> ExpertNode<T, C, F, ObsChange>
+impl<T, F, ObsChange> ExpertNode<T, F, ObsChange>
 where
     F: FnMut() -> T,
     ObsChange: FnMut(bool),
@@ -110,6 +118,16 @@ where
         self.num_invalid_children.increment();
     }
 
+    pub(crate) fn expert_input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
+        let borrow_span = tracing::debug_span!("expert.children.borrow() in expert_input_type_id");
+        borrow_span.in_scope(|| {
+            let children = self.children.borrow();
+            assert!(index_of_child_in_parent >= 0);
+            let edge = &children[index_of_child_in_parent as usize];
+            edge.edge_input_type_id()
+        })
+    }
+
     pub(crate) fn make_stale(&self) -> MakeStale {
         if self.force_stale.get() {
             MakeStale::AlreadyStale
@@ -120,29 +138,39 @@ where
     }
     pub(crate) fn add_child_edge(&self, edge: PackedEdge) -> i32 {
         assert!(edge.index_cell().get().is_none());
-        let mut children = self.children.borrow_mut();
-        let new_child_index = children.len() as i32;
-        edge.index_cell().set(Some(new_child_index));
-        children.push(edge);
-        self.force_stale.set(true);
-        new_child_index
+        let borrow_span =
+            tracing::debug_span!("expert.children.borrow_mut() in ExpertNode::add_child_edge");
+        borrow_span.in_scope(|| {
+            let mut children = self.children.borrow_mut();
+            let new_child_index = children.len() as i32;
+            edge.index_cell().set(Some(new_child_index));
+            children.push(edge);
+            self.force_stale.set(true);
+            tracing::debug!("expert added child, ix {new_child_index}");
+            new_child_index
+        })
     }
     pub(crate) fn swap_children(&self, one: usize, two: usize) {
-        let mut children = self.children.borrow_mut();
-        let c1 = children[one].index_cell();
-        let c2 = children[two].index_cell();
-        c1.swap(c2);
-        children.swap(one, two);
+        let borrow_span =
+            tracing::debug_span!("expert.children.borrow_mut() in ExpertNode::swap_children");
+        borrow_span.in_scope(|| {
+            let mut children = self.children.borrow_mut();
+            let c1 = children[one].index_cell();
+            let c2 = children[two].index_cell();
+            c1.swap(c2);
+            children.swap(one, two);
+        });
     }
-    pub(crate) fn last_child_edge_exn(&self) -> PackedEdge {
+    pub(crate) fn last_child_edge(&self) -> Option<PackedEdge> {
         let children = self.children.borrow();
-        children.last().unwrap().clone()
+        children.last().cloned()
     }
-    pub(crate) fn remove_last_child_edge_exn(&self) {
+    pub(crate) fn pop_child_edge(&self) -> Option<PackedEdge> {
         let mut children = self.children.borrow_mut();
-        let packed_edge = children.pop().unwrap();
+        let packed_edge = children.pop()?;
         self.force_stale.set(true);
         packed_edge.index_cell().set(None);
+        Some(packed_edge)
     }
     pub(crate) fn before_main_computation(&self) -> Result<(), Invalid> {
         if self.num_invalid_children.get() > 0 {
@@ -150,7 +178,13 @@ where
         } else {
             self.force_stale.set(false);
             if self.will_fire_all_callbacks.replace(false) {
-                for child in self.children.borrow().iter() {
+                let borrow_span = tracing::debug_span!(
+                    "expert.children.borrow_mut() in ExpertNode::before_main_computation"
+                );
+
+                let cloned = borrow_span.in_scope(|| self.children.borrow().clone());
+                tracing::debug!("running on_change for {} children", cloned.len());
+                for child in cloned {
                     child.on_change()
                 }
             }
@@ -172,8 +206,23 @@ where
     }
     pub(crate) fn run_edge_callback(&self, child_index: i32) {
         if !self.will_fire_all_callbacks.get() {
-            let children = self.children.borrow();
-            let Some(child) = children.get(child_index as usize) else {return};
+            let child = {
+                let borrow_span = tracing::debug_span!(
+                    "expert.children.borrow_mut() in ExpertNode::run_edge_callback"
+                );
+                borrow_span.in_scope(|| {
+                    let children = self.children.borrow();
+                    let Some(child) = children.get(child_index as usize) else {
+                        return None;
+                    };
+                    // clone the child, so we can drop the borrow of the children vector.
+                    // the child on_change callback may add or remove children. It needs borrow_mut access!
+                    Some(child.clone())
+                })
+            };
+            let Some(child) = child else {
+                return;
+            };
             child.on_change()
         }
     }
@@ -182,44 +231,32 @@ where
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T, C, R, O> Debug for ExpertNode<T, C, R, O>
+impl<T, R, O> Debug for ExpertNode<T, R, O>
 where
     T: Debug,
-    C: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpertNode").finish()
     }
 }
 
-impl<T, C, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, C, FRecompute, FObsChange>
+impl<T, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, FRecompute, FObsChange>
 where
     T: Value,
-    C: Value,
     FRecompute: FnMut() -> T + 'static,
     FObsChange: FnMut(bool) + 'static,
 {
     type R = T;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = C;
-    type I2 = ();
-    type F1 = fn(&Self::I1) -> Self::R;
-    type F2 = fn(&Self::I1, &Self::I2) -> Self::R;
-    type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>;
-    type Fold = fn(Self::R, &Self::I1) -> Self::R;
-    type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type FRef = fn(&Self::I1) -> &Self::R;
     type Recompute = FRecompute;
     type ObsChange = FObsChange;
+    node_generics_default! { I1, I2, I3, I4, I5, I6 }
+    node_generics_default! { F1, F2, F3, F4, F5, F6 }
+    node_generics_default! { B1, BindLhs, BindRhs }
+    node_generics_default! { Fold, Update, WithOld, FRef }
 }
 
 pub mod public {
-    use std::{
-        marker::PhantomData,
-        rc::{Rc, Weak},
-    };
+    use std::rc::{Rc, Weak};
 
     use crate::{Incr, Value, WeakIncr, WeakState};
 
@@ -253,27 +290,24 @@ pub mod public {
         }
     }
 
-    pub struct Node<T, C = ()> {
+    pub struct Node<T> {
         incr: Incr<T>,
-        _p: PhantomData<C>,
     }
 
-    // impl<T, C> Clone for Node<T, C> {
+    // impl<T> Clone for Node<T> {
     //     fn clone(&self) -> Self {
-    //         Node { incr: self.incr.clone() , _p: self._p }
     //     }
     // }
 
     use crate::state::expert;
-    impl<T: Value, C: Value> Node<T, C> {
-        pub fn weak(&self) -> WeakNode<T, C> {
+    impl<T: Value> Node<T> {
+        pub fn weak(&self) -> WeakNode<T> {
             WeakNode {
                 incr: self.incr.weak(),
-                _p: PhantomData,
             }
         }
 
-        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static) -> Node<T, C> {
+        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static) -> Node<T> {
             fn ignore(_: bool) {}
             Node::new_(state, f, ignore)
         }
@@ -282,13 +316,10 @@ pub mod public {
             f: impl FnMut() -> T + 'static,
             obs_change: impl FnMut(bool) + 'static,
         ) -> Self {
-            let incr = expert::create::<T, C, _, _>(&state.upgrade().unwrap(), f, obs_change);
-            Self {
-                incr,
-                _p: PhantomData,
-            }
+            let incr = expert::create::<T, _, _>(&state.upgrade().unwrap(), f, obs_change);
+            Self { incr }
         }
-        pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T, C>
+        pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T>
         where
             F: FnMut() -> T + 'static,
         {
@@ -299,16 +330,13 @@ pub mod public {
             state: &WeakState,
             f: impl FnOnce(WeakIncr<T>) -> F,
             obs_change: impl FnMut(bool) + 'static,
-        ) -> Node<T, C>
+        ) -> Node<T>
         where
             F: FnMut() -> T + 'static,
         {
             let incr =
-                expert::create_cyclic::<T, C, _, _, _>(&state.upgrade().unwrap(), f, obs_change);
-            Self {
-                incr,
-                _p: PhantomData,
-            }
+                expert::create_cyclic::<T, _, _, _>(&state.upgrade().unwrap(), f, obs_change);
+            Self { incr }
         }
         pub fn watch(&self) -> Incr<T> {
             self.incr.clone()
@@ -319,7 +347,7 @@ pub mod public {
         pub fn invalidate(&self) {
             expert::invalidate(&self.incr.node.packed())
         }
-        pub fn add_dependency(&self, on: &Incr<C>) -> Dependency<C> {
+        pub fn add_dependency<D: Value>(&self, on: &Incr<D>) -> Dependency<D> {
             let edge = Rc::new(Edge::new(on.clone(), None));
             let dep = Dependency {
                 edge: Rc::downgrade(&edge),
@@ -327,31 +355,20 @@ pub mod public {
             expert::add_dependency(&self.incr.node.packed(), edge);
             dep
         }
-        pub fn add_dependency_with(
+        /// Add dependency with a change callback.
+        ///
+        /// Note that you should not use the change callback to
+        /// add or remove dependencies. The scheduler isn't smart enough to initialize such a
+        /// system and cut off any recursion that results, so it doesn't try. You can implement
+        /// Bind-like behaviour by introducing a Map node, adding/removing dynamic dependencies in
+        /// the Map function, and then adding a dependency on the Map node. The static dependency
+        /// on the Map node ensures all the dynamic dependnencies are resolved before the expert
+        /// Node runs. This way you also get cycle detection done by the system.
+        pub fn add_dependency_with<D: Value>(
             &self,
-            on: &Incr<C>,
-            on_change: impl FnMut(&C) + 'static,
-        ) -> Dependency<C> {
-            let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
-            let dep = Dependency {
-                edge: Rc::downgrade(&edge),
-            };
-            expert::add_dependency(&self.incr.node.packed(), edge);
-            dep
-        }
-        pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
-            let edge = Rc::new(Edge::new(on.clone(), None));
-            let dep = Dependency {
-                edge: Rc::downgrade(&edge),
-            };
-            expert::add_dependency(&self.incr.node.packed(), edge);
-            dep
-        }
-        pub fn add_dependency_unit_with(
-            &self,
-            on: &Incr<()>,
-            on_change: impl FnMut(&()) + 'static,
-        ) -> Dependency<()> {
+            on: &Incr<D>,
+            on_change: impl FnMut(&D) + 'static,
+        ) -> Dependency<D> {
             let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
             let dep = Dependency {
                 edge: Rc::downgrade(&edge),
@@ -364,68 +381,57 @@ pub mod public {
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             let edge = dep.edge.upgrade().unwrap();
-            expert::remove_dependency(&*self.incr.node, &*edge, &*edge)
+            expert::remove_dependency(&*self.incr.node, &*edge);
         }
     }
 
-    pub struct WeakNode<T, C = ()> {
+    #[derive(Clone)]
+    pub struct WeakNode<T> {
         incr: WeakIncr<T>,
-        _p: PhantomData<C>,
     }
 
-    impl<T, C> Clone for WeakNode<T, C> {
-        fn clone(&self) -> Self {
-            Self {
-                incr: self.incr.clone(),
-                _p: PhantomData,
-            }
-        }
-    }
-
-    impl<T: Value, C: Value> WeakNode<T, C> {
+    impl<T: Value> WeakNode<T> {
+        #[inline]
         pub fn watch(&self) -> WeakIncr<T> {
             self.incr.clone()
         }
-        pub fn upgrade(&self) -> Option<Node<T, C>> {
-            let incr = self.incr.upgrade();
-            incr.map(|incr| Node {
-                incr,
-                _p: PhantomData,
-            })
+        #[inline]
+        pub fn upgrade(&self) -> Option<Node<T>> {
+            self.incr.upgrade().map(|incr| Node { incr })
         }
+        #[inline]
         pub fn make_stale(&self) {
             self.upgrade().unwrap().make_stale();
         }
+        #[inline]
         pub fn invalidate(&self) {
             self.upgrade().unwrap().invalidate();
         }
-        pub fn add_dependency(&self, on: &Incr<C>) -> Dependency<C> {
+        #[inline]
+        pub fn add_dependency<D: Value>(&self, on: &Incr<D>) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency(on)
         }
-        pub fn add_dependency_with(
+        /// See [Node::add_dependency_with], noting especially that you should not use the on_change
+        /// callback to add dynamic dependencies to this expert node.
+        pub fn add_dependency_with<D: Value>(
             &self,
-            on: &Incr<C>,
-            on_change: impl FnMut(&C) + 'static,
-        ) -> Dependency<C> {
+            on: &Incr<D>,
+            on_change: impl FnMut(&D) + 'static,
+        ) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency_with(on, on_change)
-        }
-        pub fn add_dependency_unit(&self, on: &Incr<()>) -> Dependency<()> {
-            self.upgrade().unwrap().add_dependency_unit(on)
-        }
-        pub fn add_dependency_unit_with(
-            &self,
-            on: &Incr<()>,
-            on_change: impl FnMut(&()) + 'static,
-        ) -> Dependency<()> {
-            self.upgrade()
-                .unwrap()
-                .add_dependency_unit_with(on, on_change)
         }
         /// Caution: if the Dependency is on an expert::Node, then running this may cause
         /// a related WeakNode to be deallocated. If you wish to use the related node after
         /// (i.e. to invalidate it) then upgrade the WeakNode first.
         pub fn remove_dependency<D: Value>(&self, dep: Dependency<D>) {
             self.upgrade().unwrap().remove_dependency(dep)
+        }
+    }
+
+    impl<T: Value> AsRef<Incr<T>> for Node<T> {
+        #[inline]
+        fn as_ref(&self) -> &Incr<T> {
+            &self.incr
         }
     }
 }

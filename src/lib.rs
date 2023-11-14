@@ -1,6 +1,5 @@
 // #![feature(type_alias_impl_trait)]
 #![doc = include_str!("../README.md")]
-
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
 // #![allow(clippy::single_match)]
@@ -23,16 +22,52 @@ mod public;
 pub use public::*;
 
 use fmt::Debug;
+use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
 use std::rc::{Rc, Weak};
 
 use self::node::ErasedNode;
 /// Trait alias for `Debug + Clone + 'static`
-pub trait Value: Debug + Clone + PartialEq + 'static {}
-impl<T> Value for T where T: Debug + Clone + PartialEq + 'static {}
+pub trait Value: Debug + Clone + PartialEq + 'static {
+    fn as_any(&self) -> &dyn Any;
+}
+impl<T> Value for T
+where
+    T: Debug + Clone + PartialEq + 'static,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 pub(crate) type NodeRef = Rc<dyn ErasedNode>;
 pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+pub trait PartialEqSelf {
+    fn eq_dyn(&self, other: &dyn Any) -> bool;
+    fn ne_dyn(&self, other: &dyn Any) -> bool;
+}
+
+impl<T> PartialEqSelf for T
+where
+    T: PartialEq + Any,
+{
+    #[inline]
+    fn eq_dyn(&self, other: &dyn Any) -> bool {
+        if let Some(other) = other.downcast_ref::<T>() {
+            self.eq(other)
+        } else {
+            false
+        }
+    }
+    #[inline]
+    fn ne_dyn(&self, other: &dyn Any) -> bool {
+        if let Some(other) = other.downcast_ref::<T>() {
+            self.ne(other)
+        } else {
+            true
+        }
+    }
+}
 
 pub trait Invariant {
     fn invariant(&self);
@@ -54,6 +89,11 @@ pub(crate) fn rc_thin_ptr_eq<T: ?Sized>(one: &Rc<T>, two: &Rc<T>) -> bool {
 pub(crate) fn weak_thin_ptr_eq<T: ?Sized>(one: &Weak<T>, two: &Weak<T>) -> bool {
     let one_: *const () = Weak::as_ptr(one).cast();
     let two_: *const () = Weak::as_ptr(two).cast();
+    one_ == two_
+}
+pub(crate) fn dyn_thin_ptr_eq<T: ?Sized>(one: &T, two: &T) -> bool {
+    let one_: *const () = one as *const T as *const ();
+    let two_: *const () = two as *const T as *const ();
     one_ == two_
 }
 
