@@ -27,6 +27,14 @@ pub struct Observer<T: Value> {
     sentinel: Rc<()>,
 }
 
+/// Implemented as pointer equality, like [Rc::ptr_eq].
+impl<T: Value> PartialEq for Observer<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.internal, &other.internal)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Update<T> {
     Initialised(T),
@@ -288,6 +296,14 @@ impl Default for IncrState {
     }
 }
 
+/// Implemented as pointer equality, like [Rc::ptr_eq].
+impl PartialEq for IncrState {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other)
+    }
+}
+
 impl IncrState {
     pub fn new() -> Self {
         let inner = State::new();
@@ -296,6 +312,11 @@ impl IncrState {
     pub fn new_with_height(max_height: usize) -> Self {
         let inner = State::new_with_height(max_height);
         Self { inner }
+    }
+
+    #[inline]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
     }
 
     pub fn weak(&self) -> WeakState {
@@ -483,6 +504,15 @@ impl IncrState {
 pub struct WeakState {
     pub(crate) inner: Weak<State>,
 }
+
+/// Implemented as pointer equality, like [Weak::ptr_eq].
+impl PartialEq for WeakState {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other)
+    }
+}
+
 impl WeakState {
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.ptr_eq(&other.inner)
