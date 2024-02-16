@@ -352,14 +352,41 @@ impl IncrState {
         self.inner.is_stable()
     }
 
+    /// Propagates changes in the graph.
+    ///
+    /// ```
+    /// let state = incremental::IncrState::new();
+    /// let var = state.var(5);
+    /// let mapped = var.map(|&x| x + 10);
+    /// let obs = mapped.observe();
+    ///
+    /// // Observers can't be used until after they are held through a stabilise
+    /// assert!(obs.try_get_value().is_err());
+    /// state.stabilise();
+    /// assert_eq!(obs.value(), 15);
+    ///
+    /// var.set(10);
+    /// assert_eq!(obs.value(), 15, "No change until stabilise");
+    ///
+    /// state.stabilise();
+    /// assert_eq!(obs.value(), 20, "Now it changes");
+    /// ```
+    ///
+    /// This only affects nodes that are transitively being observed by an Observer.
+    /// If you create some incremental nodes, changes are not propagated you call `.observe()` on
+    /// one of them and keep that observer (i.e. don't drop it) over a stabilise() call.
     pub fn stabilise(&self) {
         self.inner.stabilise();
     }
 
+    /// Stabilise, and also write out each step of the stabilisation as a GraphViz dot file.
     pub fn stabilise_debug(&self, dot_file_prefix: &str) {
         self.inner.stabilise_debug(Some(dot_file_prefix));
     }
 
+    /// An incremental that never changes. This is more efficient than just using a Var and not
+    /// mutating it, and also clarifies intent. Typically you will use this to "lift" `T` into
+    /// `Incr<T>` when you are calling code that takes an `Incr<T>`.
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
         self.inner.constant(value)
@@ -455,6 +482,7 @@ impl WeakState {
         println!("{:?}", inner.recompute_heap);
     }
 
+    /// See [IncrState::constant]
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
         self.upgrade().unwrap().constant(value)
