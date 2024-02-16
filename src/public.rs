@@ -27,6 +27,14 @@ pub struct Observer<T: Value> {
     sentinel: Rc<()>,
 }
 
+/// Implemented as pointer equality, like [Rc::ptr_eq].
+impl<T: Value> PartialEq for Observer<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.internal, &other.internal)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Update<T> {
     Initialised(T),
@@ -34,6 +42,7 @@ pub enum Update<T> {
     Invalidated,
 }
 impl<T> Update<T> {
+    #[inline]
     pub fn value(self) -> Option<T> {
         match self {
             Self::Initialised(t) => Some(t),
@@ -43,6 +52,7 @@ impl<T> Update<T> {
     }
 }
 impl<T> Update<&T> {
+    #[inline]
     pub fn cloned(&self) -> Update<T>
     where
         T: Clone,
@@ -56,6 +66,7 @@ impl<T> Update<&T> {
 }
 
 impl<T: Value> Observer<T> {
+    #[inline]
     pub(crate) fn new(internal: Rc<InternalObserver<T>>) -> Self {
         Self {
             internal,
@@ -288,6 +299,14 @@ impl Default for IncrState {
     }
 }
 
+/// Implemented as pointer equality, like [Rc::ptr_eq].
+impl PartialEq for IncrState {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other)
+    }
+}
+
 impl IncrState {
     pub fn new() -> Self {
         let inner = State::new();
@@ -298,6 +317,12 @@ impl IncrState {
         Self { inner }
     }
 
+    #[inline]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    #[inline]
     pub fn weak(&self) -> WeakState {
         WeakState {
             inner: Rc::downgrade(&self.inner),
@@ -348,6 +373,7 @@ impl IncrState {
 
     /// Returns true if there is nothing to do. In particular, this allows you to
     /// find a fixed point in a computation that sets variables during stabilisation.
+    #[inline]
     pub fn is_stable(&self) -> bool {
         self.inner.is_stable()
     }
@@ -411,6 +437,7 @@ impl IncrState {
     /// Returns true if the current thread of execution is inside a stabilise call.
     /// Useful because [IncrState::stabilise] panics if you call
     /// stabilise recursively, so this helps avoid doing so.
+    #[inline]
     pub fn is_stabilising(&self) -> bool {
         self.inner.is_stabilising()
     }
@@ -483,13 +510,25 @@ impl IncrState {
 pub struct WeakState {
     pub(crate) inner: Weak<State>,
 }
+
+/// Implemented as pointer equality, like [Weak::ptr_eq].
+impl PartialEq for WeakState {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr_eq(other)
+    }
+}
+
 impl WeakState {
+    #[inline]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         self.inner.ptr_eq(&other.inner)
     }
+    #[inline]
     pub fn strong_count(&self) -> usize {
         self.inner.strong_count()
     }
+    #[inline]
     pub fn weak_count(&self) -> usize {
         self.inner.weak_count()
     }
@@ -506,6 +545,7 @@ impl WeakState {
     /// an IncrState, which is capable of calling `stabilise` and panicking because you can't
     /// stabilise recursively. So it may be best to keep it as `WeakState`, wherever possible.
     ///
+    #[inline]
     pub fn upgrade(&self) -> Option<IncrState> {
         Some(IncrState {
             inner: self.upgrade_inner()?,
