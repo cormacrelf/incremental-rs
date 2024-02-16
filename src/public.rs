@@ -498,7 +498,7 @@ impl WeakState {
         self.inner.upgrade()
     }
 
-    /// Much like [std::rc::Rc::upgrade].
+    /// Much like [std::rc::Weak::upgrade].
     ///
     /// NOTE: If you are using WeakState so that it can be stored inside an incremental (e.g.
     /// `incr.bind(move |_| weak_state.constant(5))` or `observer.subscribe()`), then you need

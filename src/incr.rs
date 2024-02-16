@@ -171,7 +171,7 @@ impl<T: Value> Incr<T> {
     /// closure.
     ///
     /// Useful for advanced usage where you want to add manual dependencies with the
-    /// [incremental::expert] constructs.
+    /// [crate::expert] constructs.
     pub fn map_cyclic<R: Value>(
         &self,
         mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static,
@@ -244,7 +244,7 @@ impl<T: Value> Incr<T> {
         Incr { node }
     }
 
-    /// A version of bind that includes a copy of the [IncrState] (as [WeakState])
+    /// A version of bind that includes a copy of the [crate::IncrState] (as [crate::WeakState])
     /// to help you construct new incrementals within the bind.
     pub fn binds<F, R>(&self, mut f: F) -> Incr<R>
     where
