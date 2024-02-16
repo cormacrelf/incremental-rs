@@ -430,19 +430,34 @@ impl WeakState {
     pub fn weak_count(&self) -> usize {
         self.inner.weak_count()
     }
-    pub(crate) fn upgrade(&self) -> Option<Rc<State>> {
+
+    pub(crate) fn upgrade_inner(&self) -> Option<Rc<State>> {
         self.inner.upgrade()
+    }
+
+    /// Much like [std::rc::Rc::upgrade].
+    ///
+    /// NOTE: If you are using WeakState so that it can be stored inside an incremental (e.g.
+    /// `incr.bind(move |_| weak_state.constant(5))` or `observer.subscribe()`), then you need
+    /// to be a bit careful about what you do with that WeakState. Upgrading it just gives you
+    /// an IncrState, which is capable of calling `stabilise` and panicking because you can't
+    /// stabilise recursively. So it may be best to keep it as `WeakState`, wherever possible.
+    ///
+    pub fn upgrade(&self) -> Option<IncrState> {
+        Some(IncrState {
+            inner: self.upgrade_inner()?,
+        })
     }
 
     #[doc(hidden)]
     pub fn print_heap(&self) {
-        let inner = self.upgrade().unwrap();
+        let inner = self.upgrade_inner().unwrap();
         println!("{:?}", inner.recompute_heap);
     }
 
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
-        self.inner.upgrade().unwrap().constant(value)
+        self.upgrade().unwrap().constant(value)
     }
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>

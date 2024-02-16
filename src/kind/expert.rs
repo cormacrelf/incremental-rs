@@ -316,7 +316,7 @@ pub mod public {
             f: impl FnMut() -> T + 'static,
             obs_change: impl FnMut(bool) + 'static,
         ) -> Self {
-            let incr = expert::create::<T, _, _>(&state.upgrade().unwrap(), f, obs_change);
+            let incr = expert::create::<T, _, _>(&state.upgrade_inner().unwrap(), f, obs_change);
             Self { incr }
         }
         pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T>
@@ -335,7 +335,7 @@ pub mod public {
             F: FnMut() -> T + 'static,
         {
             let incr =
-                expert::create_cyclic::<T, _, _, _>(&state.upgrade().unwrap(), f, obs_change);
+                expert::create_cyclic::<T, _, _, _>(&state.upgrade_inner().unwrap(), f, obs_change);
             Self { incr }
         }
         pub fn watch(&self) -> Incr<T> {
