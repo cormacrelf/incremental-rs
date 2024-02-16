@@ -323,7 +323,7 @@ impl IncrState {
         let weak_state = self.weak();
 
         // Function f is run in the scope you called weak_memoize_fn in.
-        let creation_scope = self.inner.current_scope();
+        let creation_scope = self.current_scope();
 
         move |i| {
             let storage_ = storage.borrow();
@@ -352,14 +352,77 @@ impl IncrState {
         self.inner.is_stable()
     }
 
+    /// Propagates changes in the graph.
+    ///
+    /// ```
+    /// let state = incremental::IncrState::new();
+    /// let var = state.var(5);
+    /// let mapped = var.map(|&x| x + 10);
+    /// let obs = mapped.observe();
+    ///
+    /// // Observers can't be used until after they are held through a stabilise
+    /// assert!(obs.try_get_value().is_err());
+    /// state.stabilise();
+    /// assert_eq!(obs.value(), 15);
+    ///
+    /// var.set(10);
+    /// assert_eq!(obs.value(), 15, "No change until stabilise");
+    ///
+    /// state.stabilise();
+    /// assert_eq!(obs.value(), 20, "Now it changes");
+    /// ```
+    ///
+    /// This only affects nodes that are transitively being observed by an Observer.
+    /// If you create some incremental nodes, changes are not propagated you call `.observe()` on
+    /// one of them and keep that observer (i.e. don't drop it) over a stabilise() call.
+    ///
+    ///
+    /// ### Panics: recursive stabilisation
+    ///
+    /// If you are currently in the middle of stabilising, you cannot stabilise
+    /// again, and such an attempt will panic.
+    ///
+    /// Examples of code that is executed during stabilisation, in which you must not
+    /// call stabilise again:
+    ///
+    /// - A mapping function, e.g. `incr.map(|_| { /* in here */ })`
+    /// - A subscription, i.e. `observer.subscribe(|_| { /* in here */ })`
+    /// - Any call stack deep inside one of those two.
+    ///
+    ///
+    /// ### Working with other event loops and schedulers
+    ///
+    /// If you are using Incremental as state management for a React-style web app, for example
+    /// [`yew`](https://crates.io/crates/yew), then consider the following pattern:
+    ///
+    /// - Event handlers, like onclick, can call stabilise.
+    /// - Incremental subscriptions dirty components using whatever API you're provided.
+    /// - The scheduler, e.g. yew's scheduler, runs actual component updates on the "next tick"
+    ///   of the main JavaScript VM event loop. They all do this.
+    ///
+    /// The overall effect is that any further stabilises (e.g. create an observer and stabilise it
+    /// when instantiating a yew component) are postponed until the next tick. The next tick
+    /// is its own fresh call stack. So the previous stabilise is allowed to completely finish
+    /// first.
     pub fn stabilise(&self) {
         self.inner.stabilise();
     }
 
+    /// Returns true if the current thread of execution is inside a stabilise call.
+    /// Useful because [IncrState::stabilise] panics if you call
+    /// stabilise recursively, so this helps avoid doing so.
+    pub fn is_stabilising(&self) -> bool {
+        self.inner.is_stabilising()
+    }
+
+    /// Stabilise, and also write out each step of the stabilisation as a GraphViz dot file.
     pub fn stabilise_debug(&self, dot_file_prefix: &str) {
         self.inner.stabilise_debug(Some(dot_file_prefix));
     }
 
+    /// An incremental that never changes. This is more efficient than just using a Var and not
+    /// mutating it, and also clarifies intent. Typically you will use this to "lift" `T` into
+    /// `Incr<T>` when you are calling code that takes an `Incr<T>`.
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
         self.inner.constant(value)
@@ -390,6 +453,11 @@ impl IncrState {
 
     pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
         self.inner.within_scope(scope.0, f)
+    }
+
+    #[inline]
+    pub fn current_scope(&self) -> Scope {
+        Scope(self.inner.current_scope())
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
@@ -425,19 +493,35 @@ impl WeakState {
     pub fn weak_count(&self) -> usize {
         self.inner.weak_count()
     }
-    pub(crate) fn upgrade(&self) -> Option<Rc<State>> {
+
+    pub(crate) fn upgrade_inner(&self) -> Option<Rc<State>> {
         self.inner.upgrade()
+    }
+
+    /// Much like [std::rc::Weak::upgrade].
+    ///
+    /// NOTE: If you are using WeakState so that it can be stored inside an incremental (e.g.
+    /// `incr.bind(move |_| weak_state.constant(5))` or `observer.subscribe()`), then you need
+    /// to be a bit careful about what you do with that WeakState. Upgrading it just gives you
+    /// an IncrState, which is capable of calling `stabilise` and panicking because you can't
+    /// stabilise recursively. So it may be best to keep it as `WeakState`, wherever possible.
+    ///
+    pub fn upgrade(&self) -> Option<IncrState> {
+        Some(IncrState {
+            inner: self.upgrade_inner()?,
+        })
     }
 
     #[doc(hidden)]
     pub fn print_heap(&self) {
-        let inner = self.upgrade().unwrap();
+        let inner = self.upgrade_inner().unwrap();
         println!("{:?}", inner.recompute_heap);
     }
 
+    /// See [IncrState::constant]
     #[inline]
     pub fn constant<T: Value>(&self, value: T) -> Incr<T> {
-        self.inner.upgrade().unwrap().constant(value)
+        self.upgrade().unwrap().constant(value)
     }
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
@@ -461,6 +545,11 @@ impl WeakState {
 
     pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
         self.inner.upgrade().unwrap().within_scope(scope.0, f)
+    }
+
+    #[inline]
+    pub fn current_scope(&self) -> Scope {
+        Scope(self.inner.upgrade().unwrap().current_scope())
     }
 
     pub fn save_dot_to_file(&self, named: &str) {

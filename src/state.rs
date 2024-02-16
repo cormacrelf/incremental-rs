@@ -435,6 +435,10 @@ impl State {
         }
     }
 
+    pub(crate) fn is_stabilising(&self) -> bool {
+        self.status.get() != IncrStatus::NotStabilising
+    }
+
     pub(crate) fn set_max_height_allowed(&self, new_max_height: usize) {
         if self.status.get() == IncrStatus::Stabilising {
             panic!("tried to set_max_height_allowed during stabilisation");
