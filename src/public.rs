@@ -375,8 +375,44 @@ impl IncrState {
     /// This only affects nodes that are transitively being observed by an Observer.
     /// If you create some incremental nodes, changes are not propagated you call `.observe()` on
     /// one of them and keep that observer (i.e. don't drop it) over a stabilise() call.
+    ///
+    ///
+    /// ### Panics: recursive stabilisation
+    ///
+    /// If you are currently in the middle of stabilising, you cannot stabilise
+    /// again, and such an attempt will panic.
+    ///
+    /// Examples of code that is executed during stabilisation, in which you must not
+    /// call stabilise again:
+    ///
+    /// - A mapping function, e.g. `incr.map(|_| { /* in here */ })`
+    /// - A subscription, i.e. `observer.subscribe(|_| { /* in here */ })`
+    /// - Any call stack deep inside one of those two.
+    ///
+    ///
+    /// ### Working with other event loops and schedulers
+    ///
+    /// If you are using Incremental as state management for a React-style web app, for example
+    /// [`yew`](https://crates.io/crates/yew), then consider the following pattern:
+    ///
+    /// - Event handlers, like onclick, can call stabilise.
+    /// - Incremental subscriptions dirty components using whatever API you're provided.
+    /// - The scheduler, e.g. yew's scheduler, runs actual component updates on the "next tick"
+    ///   of the main JavaScript VM event loop. They all do this.
+    ///
+    /// The overall effect is that any further stabilises (e.g. create an observer and stabilise it
+    /// when instantiating a yew component) are postponed until the next tick. The next tick
+    /// is its own fresh call stack. So the previous stabilise is allowed to completely finish
+    /// first.
     pub fn stabilise(&self) {
         self.inner.stabilise();
+    }
+
+    /// Returns true if the current thread of execution is inside a stabilise call.
+    /// Useful because [IncrState::stabilise] panics if you call
+    /// stabilise recursively, so this helps avoid doing so.
+    pub fn is_stabilising(&self) -> bool {
+        self.inner.is_stabilising()
     }
 
     /// Stabilise, and also write out each step of the stabilisation as a GraphViz dot file.
