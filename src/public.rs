@@ -323,7 +323,7 @@ impl IncrState {
         let weak_state = self.weak();
 
         // Function f is run in the scope you called weak_memoize_fn in.
-        let creation_scope = self.inner.current_scope();
+        let creation_scope = self.current_scope();
 
         move |i| {
             let storage_ = storage.borrow();
@@ -390,6 +390,11 @@ impl IncrState {
 
     pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
         self.inner.within_scope(scope.0, f)
+    }
+
+    #[inline]
+    pub fn current_scope(&self) -> Scope {
+        Scope(self.inner.current_scope())
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
@@ -461,6 +466,11 @@ impl WeakState {
 
     pub fn within_scope<R>(&self, scope: Scope, f: impl FnOnce() -> R) -> R {
         self.inner.upgrade().unwrap().within_scope(scope.0, f)
+    }
+
+    #[inline]
+    pub fn current_scope(&self) -> Scope {
+        Scope(self.inner.upgrade().unwrap().current_scope())
     }
 
     pub fn save_dot_to_file(&self, named: &str) {
