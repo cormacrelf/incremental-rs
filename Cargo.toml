@@ -3,8 +3,11 @@ name = "incremental"
 version = "0.2.1"
 authors = ["Cormac Relf <web@cormacrelf.net>"]
 edition = "2021"
+categories = ["algorithms", "data-structures", "caching"]
 description = "incremental computations, based on Jane Street's incremental"
+keywords = ["incremental", "computation"]
 license = "MIT"
+repository = "https://github.com/cormacrelf/incremental-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
