@@ -1182,5 +1182,6 @@ fn drop_var_var() {
     incr.stabilise();
     drop(var);
     incr.stabilise();
+    assert!(incr.is_stable());
     incr.stabilise();
 }

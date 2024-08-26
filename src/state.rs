@@ -310,15 +310,21 @@ impl State {
         // will not be a problem, because the last time that was needed was back a few
         // lines ago when we ran var.set_var_stabilise_end().
         tracing::info_span!("dead_vars").in_scope(|| {
-            // See dead_vars_alt for why we doubel buffer
-            let mut stack = self.dead_vars.borrow_mut();
+            // This code handles Var<Var> by double buffering
             let mut alt = self.dead_vars_alt.borrow_mut();
-            std::mem::swap(&mut *stack, &mut *alt);
-            drop(stack);
-            for var in alt.drain(..) {
-                let Some(var) = var.upgrade() else { continue };
-                tracing::debug!("dead_vars: found var with {:?}", var.id());
-                var.break_rc_cycle();
+            loop {
+                let mut stack = self.dead_vars.borrow_mut();
+                if stack.is_empty() {
+                    break;
+                }
+                // Subtle: don't just swap the RefMuts! Swap the vecs.
+                std::mem::swap(&mut *stack, &mut *alt);
+                drop(stack);
+                for var in alt.drain(..) {
+                    let Some(var) = var.upgrade() else { continue };
+                    tracing::debug!("dead_vars: found var with {:?}", var.id());
+                    var.break_rc_cycle();
+                }
             }
         });
         tracing::info_span!("handle_after_stabilisation").in_scope(|| {
