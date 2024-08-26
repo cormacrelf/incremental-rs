@@ -43,6 +43,13 @@ pub(crate) struct State {
     pub(crate) current_scope: RefCell<Scope>,
     pub(crate) set_during_stabilisation: RefCell<Vec<WeakVar>>,
     pub(crate) dead_vars: RefCell<Vec<WeakVar>>,
+    /// Buffer for dropping vars
+    ///
+    /// If you have a Var<Var<i32>>, and then you drop the outer one, the outer one gets put in the
+    /// dead_vars bucket. But then, when you stabilise, the code that actually drops the internal
+    /// Vars wants to push the inner Var onto the dead_vars list. So we can't have it borrowed
+    /// while we execute the Drop code.
+    pub(crate) dead_vars_alt: RefCell<Vec<WeakVar>>,
 
     pub(crate) weak_maps: RefCell<Vec<Rc<RefCell<dyn WeakMap>>>>,
     pub(crate) weak_self: Weak<Self>,
@@ -133,6 +140,7 @@ impl State {
             current_scope: RefCell::new(Scope::Top),
             set_during_stabilisation: RefCell::new(vec![]),
             dead_vars: RefCell::new(vec![]),
+            dead_vars_alt: RefCell::new(vec![]),
             handle_after_stabilisation: RefCell::new(vec![]),
             run_on_update_handlers: RefCell::new(vec![]),
             weak_maps: RefCell::new(vec![]),
@@ -302,8 +310,12 @@ impl State {
         // will not be a problem, because the last time that was needed was back a few
         // lines ago when we ran var.set_var_stabilise_end().
         tracing::info_span!("dead_vars").in_scope(|| {
+            // See dead_vars_alt for why we doubel buffer
             let mut stack = self.dead_vars.borrow_mut();
-            for var in stack.drain(..) {
+            let mut alt = self.dead_vars_alt.borrow_mut();
+            std::mem::swap(&mut stack, &mut alt);
+            drop(stack);
+            for var in alt.drain(..) {
                 let Some(var) = var.upgrade() else { continue };
                 tracing::debug!("dead_vars: found var with {:?}", var.id());
                 var.break_rc_cycle();
