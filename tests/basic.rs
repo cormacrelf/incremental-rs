@@ -420,7 +420,7 @@ fn bind_fold() {
 // }
 
 #[derive(Debug)]
-struct CallCounter(&'static str, Cell<u32>);
+struct CallCounter(#[allow(unused)] &'static str, Cell<u32>);
 
 #[allow(dead_code)]
 impl CallCounter {

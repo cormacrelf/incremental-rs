@@ -12,7 +12,6 @@ use crate::{CellIncrement, Incr, NodeRef, Value};
 pub(crate) trait ExpertEdge: Any {
     /// Called from run_edge_callback
     fn on_change(&self);
-    fn as_any(&self) -> &dyn Any;
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
     fn erased_input(&self) -> &dyn ErasedIncremental;
@@ -54,9 +53,6 @@ impl<T: Value> ExpertEdge for Edge<T> {
     }
     fn packed(&self) -> NodeRef {
         self.child.node.packed()
-    }
-    fn as_any(&self) -> &dyn Any {
-        self as &dyn Any
     }
 
     fn index_cell(&self) -> &Cell<Option<i32>> {

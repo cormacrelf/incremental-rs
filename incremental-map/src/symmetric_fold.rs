@@ -276,6 +276,8 @@ pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
 
     fn symmetric_diff(&'a self, other: &'a Self) -> Self::Iter;
 
+    // Could be useful, I guess
+    #[allow(unused)]
     fn symmetric_fold_with_inverse<R, FAdd, FRemove>(
         &'a self,
         other: &'a Self,
@@ -301,6 +303,8 @@ pub(crate) trait SymmetricDiffMap<'a, K: 'a, V: 'a> {
     }
 }
 
+// Could be useful, I guess
+#[allow(unused)]
 pub(crate) trait SymmetricDiffMapOwned<K, V> {
     type Iter: Iterator<Item = DiffElement<(K, V)>>;
 

@@ -45,7 +45,6 @@ pub(crate) type StrongObserver = Rc<dyn ErasedObserver>;
 
 pub(crate) trait ErasedObserver: Debug {
     fn id(&self) -> ObserverId;
-    fn use_is_allowed(&self) -> bool;
     fn state(&self) -> &Cell<ObserverState>;
     fn observing_packed(&self) -> NodeRef;
     fn observing_erased(&self) -> &dyn ErasedNode;
@@ -59,12 +58,6 @@ pub(crate) trait ErasedObserver: Debug {
 impl<T: Value> ErasedObserver for InternalObserver<T> {
     fn id(&self) -> ObserverId {
         self.id
-    }
-    fn use_is_allowed(&self) -> bool {
-        match self.state.get() {
-            Created | InUse => true,
-            Disallowed | Unlinked => false,
-        }
     }
     fn state(&self) -> &Cell<ObserverState> {
         &self.state

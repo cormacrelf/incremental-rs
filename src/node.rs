@@ -724,8 +724,10 @@ pub(crate) trait ErasedNode: Debug {
     fn changed_at(&self) -> &Cell<StabilisationNum>;
     fn invalidate_node(&self, state: &State);
     #[cfg(debug_assertions)]
+    #[allow(unused)]
     fn assert_currently_running_node_is_child(&self, name: &'static str);
     #[cfg(debug_assertions)]
+    #[allow(unused)]
     fn assert_currently_running_node_is_parent(&self, name: &'static str);
     fn has_child(&self, child: &WeakNode) -> bool;
     fn adjust_heights_bind_lhs_change(
