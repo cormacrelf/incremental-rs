@@ -1174,3 +1174,13 @@ fn map345_ref() {
     incr.stabilise();
     assert_eq!(obs.value(), 15);
 }
+
+#[test]
+fn drop_var_var() {
+    let incr = IncrState::new();
+    let var = incr.var(incr.var(5i32));
+    incr.stabilise();
+    drop(var);
+    incr.stabilise();
+    incr.stabilise();
+}

@@ -313,7 +313,7 @@ impl State {
             // See dead_vars_alt for why we doubel buffer
             let mut stack = self.dead_vars.borrow_mut();
             let mut alt = self.dead_vars_alt.borrow_mut();
-            std::mem::swap(&mut stack, &mut alt);
+            std::mem::swap(&mut *stack, &mut *alt);
             drop(stack);
             for var in alt.drain(..) {
                 let Some(var) = var.upgrade() else { continue };
