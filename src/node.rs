@@ -1733,6 +1733,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
+    #[rustfmt::skip]
     fn expert_swap_children_except_in_kind(
         &self,
         child1: &NodeRef,
@@ -1751,27 +1752,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let mut child1_pci = child1_pci_.borrow_mut();
         let mut child2_pci = child2_pci_.borrow_mut();
 
-        let index_of_parent_in_child1 =
-            parent_pci.my_parent_index_in_child_at_index[child_index1 as usize];
-        let index_of_parent_in_child2 =
-            parent_pci.my_parent_index_in_child_at_index[child_index2 as usize];
-        debug_assert_eq!(
-            child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize],
-            child_index1
-        );
-        debug_assert_eq!(
-            child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize],
-            child_index2
-        );
+        let index_of_parent_in_child1 = parent_pci.my_parent_index_in_child_at_index[child_index1 as usize];
+        let index_of_parent_in_child2 = parent_pci.my_parent_index_in_child_at_index[child_index2 as usize];
+        debug_assert_eq!(child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize], child_index1);
+        debug_assert_eq!(child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize], child_index2);
         /* now start swapping */
-        child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize] =
-            child_index2;
-        child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize] =
-            child_index1;
-        parent_pci.my_parent_index_in_child_at_index[child_index1 as usize] =
-            index_of_parent_in_child2;
-        parent_pci.my_parent_index_in_child_at_index[child_index2 as usize] =
-            index_of_parent_in_child1;
+        child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize] = child_index2;
+        child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize] = child_index1;
+        parent_pci.my_parent_index_in_child_at_index[child_index1 as usize] = index_of_parent_in_child2;
+        parent_pci.my_parent_index_in_child_at_index[child_index2 as usize] = index_of_parent_in_child1;
     }
 
     fn expert_remove_child(&self, dyn_edge: &dyn IsEdge, child_index: i32, state: &State) {
@@ -1983,6 +1972,8 @@ impl<G: NodeGenerics> Node<G> {
                     return;
                 }
                 let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
+                /* We remove [old_child] before adding [new_child], because they share the same
+                child index. */
                 old_child_node.remove_parent(child_index, bind_main.as_parent_ref());
                 /* We force [old_child] to temporarily be necessary so that [add_parent] can't
                 mistakenly think it is unnecessary and transition it to necessary (which would
