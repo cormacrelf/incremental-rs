@@ -267,6 +267,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         }
     }
 
+    #[rustfmt::skip]
     fn remove_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
@@ -275,11 +276,29 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         let parent_indices_cell = parent.parent_child_indices();
         let mut parent_indices = parent_indices_cell.borrow_mut();
 
-        debug_assert!(child_parents.len() >= 1);
         let parent_index = parent_indices.my_parent_index_in_child_at_index[child_index as usize];
-        debug_assert!(parent_ref
-            .weak()
-            .ptr_eq(&child_parents[parent_index as usize].clone()));
+
+        debug_assert!(
+            child_parents.len() >= 1 && parent_index >= 0,
+            "my_parent_index_in_child_at_index[child_index] = {parent_index}, parent has already been removed?
+            child_index = {child_index}
+            my_parent_index_in_child_at_index = {mpi:?}
+            my_child_index_in_parent_at_index = {mci:?}
+            parent_index = {parent_index}
+            child_parents = {child_parents:?}
+            parent_type = {pty}
+            child_type = {chty:?}
+            ",
+            mpi = &parent_indices.my_parent_index_in_child_at_index,
+            mci = &child_indices.my_child_index_in_parent_at_index,
+            child_parents = child_parents
+                .iter()
+                .map(|p| p.upgrade_erased().ok().map(|p| p.kind_debug_ty()))
+                .collect::<Vec<_>>(),
+            pty = parent.kind_debug_ty(),
+            chty = child.kind().map(|k| k.debug_ty()),
+        );
+        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
             // we swap the parent the end of the array into this one's position. This keeps the array
@@ -288,13 +307,10 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             if let Ok(end_p) = end_p_weak.upgrade_erased() {
                 let end_p_indices_cell = end_p.parent_child_indices();
                 let mut end_p_indices = end_p_indices_cell.borrow_mut();
-                let end_child_index =
-                    child_indices.my_child_index_in_parent_at_index[last_parent_index];
+                let end_child_index = child_indices.my_child_index_in_parent_at_index[last_parent_index];
                 // link parent_index & end_child_index
-                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] =
-                    parent_index;
-                child_indices.my_child_index_in_parent_at_index[parent_index as usize] =
-                    end_child_index;
+                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
+                child_indices.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
             }
         }
         // unlink last_parent_index & child_index
@@ -662,6 +678,7 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
 pub(crate) trait ErasedNode: Debug {
     fn id(&self) -> NodeId;
     fn ptr_eq(&self, other: &dyn ErasedNode) -> bool;
+    fn kind_debug_ty(&self) -> String;
     fn weak_state(&self) -> &Weak<State>;
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
@@ -768,8 +785,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn kind_debug_ty(&self) -> String {
         let Some(dbg) = self.kind().map(|k| k.debug_ty()) else {
-            return "Invalid node".to_string();
+            if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
+                return format!("{user:?}: Invalid node");
+            }
+            return format!("Invalid node");
         };
+        if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
+            return format!("{user:?}: {dbg:?}");
+        }
         format!("{dbg:?}")
     }
     fn weak_state(&self) -> &Weak<State> {
