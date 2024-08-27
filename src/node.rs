@@ -115,9 +115,13 @@ pub(crate) struct Node<G: NodeGenerics> {
     pub graphviz_user_data: RefCell<Option<Box<dyn Debug>>>,
 }
 
+/// Recall that parents and children feel a bit backwards in incremental.
+/// A child == an input of self. A parent == a node derived from self.
 #[derive(Debug)]
 pub(crate) struct ParentChildIndices {
+    /// For each input, which number do they know me by?
     pub my_parent_index_in_child_at_index: SmallVec<[i32; 2]>,
+    /// For each derived node, which number do they know me by?
     pub my_child_index_in_parent_at_index: SmallVec<[i32; 1]>,
 }
 
