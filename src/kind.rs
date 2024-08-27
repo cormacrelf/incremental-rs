@@ -128,6 +128,122 @@ impl<G: NodeGenerics> Debug for Kind<G> {
 }
 
 impl<G: NodeGenerics> Kind<G> {
+    pub(crate) fn debug_ty(&self) -> impl Debug + '_ {
+        return KindDebugTy(self);
+        struct KindDebugTy<'a, G: NodeGenerics>(&'a Kind<G>);
+        impl<'a, G: NodeGenerics> Debug for KindDebugTy<'a, G> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    Kind::Constant(_) => {
+                        write!(f, "Constant<{}>", std::any::type_name::<G::R>())
+                    }
+                    Kind::ArrayFold(_) => {
+                        write!(
+                            f,
+                            "ArrayFold<[{}] -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Var(_) => write!(f, "Var<{}>", std::any::type_name::<G::R>()),
+                    Kind::Map(..) => {
+                        write!(
+                            f,
+                            "Map<({}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::MapWithOld(..) => {
+                        write!(
+                            f,
+                            "MapWithOld<({}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::MapRef(..) => {
+                        write!(
+                            f,
+                            "MapRef<({}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Map2(..) => {
+                        write!(
+                            f,
+                            "Map2<({}, {}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::I2>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Map3(..) => {
+                        write!(
+                            f,
+                            "Map3<({}, {}, {}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::I2>(),
+                            std::any::type_name::<G::I3>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Map4(..) => {
+                        write!(
+                            f,
+                            "Map4<({}, {}, {}, {}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::I2>(),
+                            std::any::type_name::<G::I3>(),
+                            std::any::type_name::<G::I4>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Map5(..) => {
+                        write!(
+                            f,
+                            "Map5<({}, {}, {}, {}, {}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::I2>(),
+                            std::any::type_name::<G::I3>(),
+                            std::any::type_name::<G::I4>(),
+                            std::any::type_name::<G::I5>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::Map6(..) => {
+                        write!(
+                            f,
+                            "Map6<({}, {}, {}, {}, {}, {}) -> {}>",
+                            std::any::type_name::<G::I1>(),
+                            std::any::type_name::<G::I2>(),
+                            std::any::type_name::<G::I3>(),
+                            std::any::type_name::<G::I4>(),
+                            std::any::type_name::<G::I5>(),
+                            std::any::type_name::<G::I6>(),
+                            std::any::type_name::<G::R>()
+                        )
+                    }
+                    Kind::BindLhsChange { .. } => {
+                        write!(f, "BindLhsChange<{}>", std::any::type_name::<G::BindLhs>(),)
+                    }
+                    Kind::BindMain { .. } => {
+                        write!(
+                            f,
+                            "BindMain<({}) -> {}>",
+                            std::any::type_name::<G::BindLhs>(),
+                            std::any::type_name::<G::BindRhs>()
+                        )
+                    }
+                    Kind::Expert(_) => write!(f, "Expert<{}>", std::any::type_name::<G::R>()),
+                }
+            }
+        }
+    }
+}
+
+impl<G: NodeGenerics> Kind<G> {
     pub(crate) const BIND_RHS_CHILD_INDEX: i32 = 1;
     pub(crate) fn initial_num_children(&self) -> usize {
         match self {

@@ -752,6 +752,7 @@ impl<G: NodeGenerics> Debug for Node<G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
+            .field("type", &self.kind().map(|k| k.debug_ty()))
             .field("kind", &self.kind())
             // .field("height", &self.height.get())
             .finish()
@@ -764,6 +765,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn ptr_eq(&self, other: &dyn ErasedNode) -> bool {
         self.weak().ptr_eq(&other.weak())
+    }
+    fn kind_debug_ty(&self) -> String {
+        let Some(dbg) = self.kind().map(|k| k.debug_ty()) else {
+            return "Invalid node".to_string();
+        };
+        format!("{dbg:?}")
     }
     fn weak_state(&self) -> &Weak<State> {
         &self.weak_state
