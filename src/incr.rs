@@ -44,8 +44,9 @@ impl<T> Hash for Incr<T> {
 }
 
 impl<T> Incr<T> {
-    pub(crate) fn ptr_eq(&self, other: &Incr<T>) -> bool {
-        crate::rc_thin_ptr_eq(&self.node, &other.node)
+    /// Allows an extra T2, because you might be comparing two incrs inside a map2 constructor.
+    pub(crate) fn ptr_eq<T2>(&self, other: &Incr<T2>) -> bool {
+        crate::rc_thin_ptr_eq_t2(&self.node, &other.node)
     }
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
@@ -230,6 +231,10 @@ impl<T: Value> Incr<T> {
         R: Value,
         F: FnMut(&T, &T2) -> R + 'static,
     {
+        assert!(
+            !self.ptr_eq(&other),
+            "You cannot map2 an incremental with itself. We need to be able to borrow_mut both at the same time."
+        );
         let mapper = kind::Map2Node {
             one: self.clone().node,
             two: other.clone().node,

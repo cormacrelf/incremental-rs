@@ -86,6 +86,11 @@ pub(crate) fn rc_thin_ptr_eq<T: ?Sized>(one: &Rc<T>, two: &Rc<T>) -> bool {
     let two_: *const () = Rc::as_ptr(two).cast();
     one_ == two_
 }
+pub(crate) fn rc_thin_ptr_eq_t2<T: ?Sized, T2: ?Sized>(one: &Rc<T>, two: &Rc<T2>) -> bool {
+    let one_: *const () = Rc::as_ptr(one).cast();
+    let two_: *const () = Rc::as_ptr(two).cast();
+    one_ == two_
+}
 pub(crate) fn weak_thin_ptr_eq<T: ?Sized>(one: &Weak<T>, two: &Weak<T>) -> bool {
     let one_: *const () = Weak::as_ptr(one).cast();
     let two_: *const () = Weak::as_ptr(two).cast();
