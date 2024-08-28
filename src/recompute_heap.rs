@@ -1,6 +1,6 @@
 use crate::CellIncrement;
 use crate::NodeRef;
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -131,24 +131,11 @@ impl RecomputeHeap {
     }
 
     pub fn min_height(&self) -> i32 {
-        // This function is used for determining whether the coast is clear to recompute a parent
-        // node _now_ instead of enqueueing it in the RCH. See [Node::parent_iter_can_recompute_now]
-        //
-        // If we were using remove_min() (singular) for enqueueing recomputes, we would run
-        // self.raise_min_height() first.
-        //
-        // But since we remove a whole layer at a time, and those nodes are gone from the RCH, we
-        // still need to be aware of them when determining whether the coast is clear.
-        // So raising the height _here_ would cause min_height to skip forward, and recompute_now
-        // some nodes that shouldn't be.
-        //
-        // Instead, we can call raise_min_height just before we recompute the last node of a frontier.
-        // That way we know there are no others in this layer. Not doing so is also fine, we would
-        // just miss out on some recompute_now optimisation.
+        self.raise_min_height();
         self.height_lower_bound.get()
     }
 
-    pub fn raise_min_height(&self) {
+    fn raise_min_height(&self) {
         let queues = self.queues.borrow();
         let max = queues.len() as i32;
         if self.length.get() == 0 {
@@ -175,11 +162,11 @@ impl RecomputeHeap {
         Ref::map(self.queues.borrow(), |queue| &queue[height])
     }
 
-    pub(crate) fn remove_min_layer(&self) -> Option<RefMut<VecDeque<NodeRef>>> {
-        let queues = self.queues.borrow();
+    pub(crate) fn remove_min(&self) -> Option<NodeRef> {
         if self.is_empty() {
             return None;
         }
+        let queues = self.queues.borrow();
         debug_assert!(self.height_lower_bound.get() >= 0);
         let len = queues.len();
         let mut queue;
@@ -188,24 +175,16 @@ impl RecomputeHeap {
             queue.borrow().is_empty()
         } {
             self.height_lower_bound.increment();
-            debug_assert!(self.height_lower_bound.get() as usize <= len);
+            debug_assert!(
+                (self.height_lower_bound.get() as usize) < len,
+                "RecomputeHeap::remove_min unexpectedly reached end of heap"
+            );
         }
-        let mut swap = self.swap.borrow_mut();
-        swap.clear();
         let mut q = queue.borrow_mut();
-        let len = self.len();
-        let q_len = q.len();
-        self.length.set(len - q_len);
-        // must use &mut *swap, because we don't want to swap the RefMuts,
-        // we want to swap the actual VecDeques inside the RefMuts..
-        std::mem::swap(&mut *swap, &mut *q);
-        // make nodes report false for in_recompute_heap, just in case
-        // they become unnecessary & are removed from heap (to little effect)
-        // while they're sitting in the frontier here.
-        for node in swap.iter() {
-            node.height_in_recompute_heap().set(-1);
-        }
-        Some(swap)
+        let node = q.pop_front()?;
+        node.height_in_recompute_heap().set(-1);
+        self.length.decrement();
+        Some(node)
     }
 
     pub(crate) fn max_height_allowed(&self) -> i32 {

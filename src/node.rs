@@ -307,8 +307,8 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
-            // we swap the parent the end of the array into this one's position. This keeps the array
-            // small.
+            // we swap the parent the end of the array into this one's position. This requires much fewer index twiddles than shifting
+            // all subsequent indices back by one.
             let end_p_weak = child_parents[last_parent_index].clone();
             if let Ok(end_p) = end_p_weak.upgrade_erased() {
                 let end_p_indices_cell = end_p.parent_child_indices();

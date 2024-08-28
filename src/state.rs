@@ -391,15 +391,9 @@ impl State {
 
             self.stabilise_start();
 
-            while let Some(mut frontier) = self.recompute_heap.remove_min_layer() {
-                let frontier_len = frontier.len();
-                for (ix, node) in frontier.drain(..).enumerate() {
-                    if ix + 1 == frontier_len {
-                        self.recompute_heap.raise_min_height();
-                    }
-                    do_debug();
-                    node.recompute(self);
-                }
+            while let Some(node) = self.recompute_heap.remove_min() {
+                do_debug();
+                node.recompute(self);
             }
 
             self.stabilise_end();
