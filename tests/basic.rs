@@ -1294,3 +1294,42 @@ fn bind_fold_2() {
     vector.modify(|v| v.clear());
     incr.stabilise();
 }
+
+#[ignore = "Not sure why this doesn't panic. Normally we would BorrowMut in the parent-twiddling code."]
+#[should_panic]
+#[test]
+fn fold_many_same_incr() {
+    let incr = IncrState::new();
+    let five = incr.var(5i32);
+    let five_ = five.clone();
+    let bound = incr.constant(false).bind(move |_| five_.watch());
+    // This basically shouldn't work
+    let vec = incr.var(vec![five.watch(), five.watch(), bound]);
+    let sum = vec.binds(|s, vec| s.fold(vec.clone(), 0i32, |acc, x| acc + x));
+    let o = sum.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), 15);
+    vec.modify(|v| {
+        v.pop();
+    });
+    incr.stabilise();
+    assert_eq!(o.value(), 10);
+}
+
+#[test]
+fn simultaneous_disallow_and_rebind() {
+    let incr = IncrState::new();
+    let c1 = incr.constant(1);
+    let c2 = incr.constant(2);
+    let v = incr.var(c1);
+    let b1 = v.watch().binds(|_, v| v.clone());
+    let b2 = b1.binds(|s, &v| s.constant(v));
+    let o = b2.observe();
+    incr.stabilise();
+    v.set(c2);
+    o.disallow_future_use();
+    drop(o);
+    incr.stabilise();
+    let _o2 = b1.observe();
+    incr.stabilise();
+}
