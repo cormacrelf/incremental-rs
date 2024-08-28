@@ -247,6 +247,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     }
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>, state: &State) {
         let parent = parent_ref.erased();
+        tracing::debug!(child_id = ?self.id, child_index = %child_index, parent = %parent.kind_debug_ty(), "state_add_parent");
         debug_assert!(parent.is_necessary());
         self.add_parent_without_adjusting_heights(child_index, parent_ref.clone(), state);
         if self.height() >= parent.height() {
@@ -279,6 +280,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         let parent = parent_ref.erased();
         let parent_indices_cell = parent.parent_child_indices();
         let mut parent_indices = parent_indices_cell.borrow_mut();
+        tracing::debug!(child_id = ?child.id, child_index = %child_index, parent = %parent.kind_debug_ty(), "remove_parent");
 
         let parent_index = parent_indices.my_parent_index_in_child_at_index[child_index as usize];
 
@@ -315,6 +317,8 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
                 // link parent_index & end_child_index
                 end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
                 child_indices.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
+            } else {
+                tracing::error!("end_p_weak pointer could not be upgraded (child_parents[{last_parent_index}])");
             }
         }
         // unlink last_parent_index & child_index
@@ -975,6 +979,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if self.is_valid() && !self.created_in.is_necessary() {
             panic!("trying to make a node necessary whose defining bind is not necessary");
         }
+        tracing::debug!("node {:?} became necessary", self.id);
         state.num_nodes_became_necessary.increment();
         self.maybe_handle_after_stabilisation(state);
         /* Since [node] became necessary, to restore the invariant, we need to:
@@ -1024,6 +1029,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn became_unnecessary(&self, state: &State) {
+        tracing::debug!("node {:?} became unnecessary", self.id);
         state.num_nodes_became_unnecessary.increment();
         self.maybe_handle_after_stabilisation(state);
         state.set_height(self.packed(), -1);
@@ -1145,7 +1151,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
-    #[tracing::instrument(skip(state))]
+    #[tracing::instrument(skip(self, state), fields(height = %self.height(), id = ?self.id, node = %self.kind_debug_ty()))]
     fn recompute_one(&self, state: &State) -> Option<NodeRef> {
         #[cfg(debug_assertions)]
         {
@@ -1404,10 +1410,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         any
     }
 
+    #[tracing::instrument(skip_all, fields(id = ?self.id))]
     fn invalidate_node(&self, state: &State) {
         if !self.is_valid() {
             return;
         }
+        tracing::debug!("invalidating node");
         self.maybe_handle_after_stabilisation(state);
         self.value_opt.take();
         // this was for node-level subscriptions. we don't have those
@@ -1979,6 +1987,7 @@ impl<G: NodeGenerics> Node<G> {
         None
     }
 
+    #[tracing::instrument(skip_all, fields(bind_main = ?self.id))]
     fn change_child_bind_rhs(
         &self,
         old_child: Option<Incr<G::BindRhs>>,

@@ -55,7 +55,11 @@ where
         lhs_change.height.get()
     }
     fn add_node(&self, node: WeakNode) {
-        tracing::info!("added node to scope {self:?}: {:?}", node.upgrade());
+        tracing::info!(
+            "added node to BindScope({:?}): {:?}",
+            self.id(),
+            node.upgrade()
+        );
         let mut all = self.all_nodes_created_on_rhs.borrow_mut();
         all.push(node);
     }
