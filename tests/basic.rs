@@ -1,8 +1,11 @@
 use test_log::test;
 
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
-use incremental::{Cutoff, IncrState, NodeUpdate, ObserverError, StatsDiff, Update, Var};
+use incremental::{Cutoff, Incr, IncrState, NodeUpdate, ObserverError, StatsDiff, Update, Var};
 
 #[test]
 fn testit() {
@@ -1183,5 +1186,150 @@ fn drop_var_var() {
     drop(var);
     incr.stabilise();
     assert!(incr.is_stable());
+    incr.stabilise();
+}
+
+#[test]
+fn drop_var_var_obs() {
+    let incr = IncrState::new();
+    let var = incr.var(incr.var(5i32));
+    let o = var.bind(|v| v.watch()).observe();
+    incr.stabilise();
+    drop(var);
+    incr.stabilise();
+    drop(o);
+    incr.stabilise();
+}
+
+#[test]
+fn drop_var_var_obs_var() {
+    let incr = IncrState::new();
+    let var = incr.var(incr.var(incr.var(5i32)));
+    let o = var.bind(|v| v.watch()).observe();
+    incr.stabilise();
+    o.disallow_future_use();
+    incr.stabilise();
+    drop(o);
+    drop(var);
+    incr.stabilise();
+}
+
+#[test]
+fn var_bind_to_itself() {
+    let incr = IncrState::new();
+    let var = incr.var(5i32);
+    let v = var.clone();
+    let o = var.bind(move |_| v.watch()).observe();
+    incr.stabilise();
+    drop(o);
+    incr.stabilise();
+    drop(var);
+    incr.stabilise();
+}
+
+#[test]
+#[should_panic = "cannot map2 an incremental with itself"]
+fn map2_itself() {
+    let incr = IncrState::new();
+    let var = incr.var(5i32);
+    let i = var.watch();
+    let o = i.map2(&i, |a, b| a + b).observe();
+    incr.stabilise();
+    o.disallow_future_use();
+    incr.stabilise();
+    drop(o);
+    drop(var);
+    incr.stabilise();
+}
+
+#[test]
+#[should_panic = "cannot map2 an incremental with itself"]
+fn map2_itself_unobserved() {
+    let incr = IncrState::new();
+    let var = incr.var(5i32);
+    let i = var.watch();
+    let _ = i.map2(&i, |a, b| a + b);
+    incr.stabilise();
+    drop(var);
+    incr.stabilise();
+}
+
+#[ignore = "This panics in the destructor while recovering from the BorrowMutError"]
+#[should_panic = "BorrowMutError"]
+#[test]
+fn bind_bind() {
+    let incr = IncrState::new();
+    let var = incr.var(5i32);
+    let i = var.watch();
+    // This code is gacked. Don't do it.
+    let cell = Rc::new(RefCell::new(None::<Incr<i32>>));
+    let cell_ = cell.clone();
+    let b = i.bind(move |_| cell_.borrow().as_ref().unwrap().clone());
+    cell.borrow_mut().replace(b.clone());
+    let o = b.observe();
+    incr.stabilise();
+    drop(o);
+    incr.stabilise();
+}
+
+#[test]
+fn bind_fold_2() {
+    let incr = IncrState::new();
+    let vector = incr.var(vec![
+        incr.var(1).watch(),
+        incr.var(2).watch(),
+        incr.var(3).watch(),
+    ]);
+    let vec = vector.clone();
+    let init = incr.var(0);
+    let sum = init.binds(move |s, &init| {
+        let s = s.clone();
+        vec.watch()
+            .map(move |vector| s.fold(vector.clone(), init, |acc, x| acc + x))
+    });
+    let _o = sum.observe();
+    incr.stabilise();
+    vector.modify(|v| v.push(incr.var(10).watch()));
+    incr.stabilise();
+    vector.modify(|v| v.clear());
+    incr.stabilise();
+}
+
+#[ignore = "Not sure why this doesn't panic. Normally we would BorrowMut in the parent-twiddling code."]
+#[should_panic]
+#[test]
+fn fold_many_same_incr() {
+    let incr = IncrState::new();
+    let five = incr.var(5i32);
+    let five_ = five.clone();
+    let bound = incr.constant(false).bind(move |_| five_.watch());
+    // This basically shouldn't work
+    let vec = incr.var(vec![five.watch(), five.watch(), bound]);
+    let sum = vec.binds(|s, vec| s.fold(vec.clone(), 0i32, |acc, x| acc + x));
+    let o = sum.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), 15);
+    vec.modify(|v| {
+        v.pop();
+    });
+    incr.stabilise();
+    assert_eq!(o.value(), 10);
+}
+
+#[test]
+fn simultaneous_disallow_and_rebind() {
+    let incr = IncrState::new();
+    let c1 = incr.constant(1);
+    let c2 = incr.constant(2);
+    let v = incr.var(c1);
+    let b1 = v.watch().binds(|_, v| v.clone());
+    let b2 = b1.binds(|s, &v| s.constant(v));
+    let o = b2.observe();
+    incr.stabilise();
+    v.set(c2);
+    o.disallow_future_use();
+    drop(o);
+    incr.stabilise();
+    let _o2 = b1.observe();
     incr.stabilise();
 }

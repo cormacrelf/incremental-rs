@@ -115,9 +115,13 @@ pub(crate) struct Node<G: NodeGenerics> {
     pub graphviz_user_data: RefCell<Option<Box<dyn Debug>>>,
 }
 
+/// Recall that parents and children feel a bit backwards in incremental.
+/// A child == an input of self. A parent == a node derived from self.
 #[derive(Debug)]
 pub(crate) struct ParentChildIndices {
+    /// For each input, which number do they know me by?
     pub my_parent_index_in_child_at_index: SmallVec<[i32; 2]>,
+    /// For each derived node, which number do they know me by?
     pub my_child_index_in_parent_at_index: SmallVec<[i32; 1]>,
 }
 
@@ -243,6 +247,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     }
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>, state: &State) {
         let parent = parent_ref.erased();
+        tracing::debug!(child_id = ?self.id, child_index = %child_index, parent = %parent.kind_debug_ty(), "state_add_parent");
         debug_assert!(parent.is_necessary());
         self.add_parent_without_adjusting_heights(child_index, parent_ref.clone(), state);
         if self.height() >= parent.height() {
@@ -267,6 +272,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         }
     }
 
+    #[rustfmt::skip]
     fn remove_parent(&self, child_index: i32, parent_ref: ParentRef<G::R>) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
@@ -274,27 +280,45 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         let parent = parent_ref.erased();
         let parent_indices_cell = parent.parent_child_indices();
         let mut parent_indices = parent_indices_cell.borrow_mut();
+        tracing::debug!(child_id = ?child.id, child_index = %child_index, parent = %parent.kind_debug_ty(), "remove_parent");
 
-        debug_assert!(child_parents.len() >= 1);
         let parent_index = parent_indices.my_parent_index_in_child_at_index[child_index as usize];
-        debug_assert!(parent_ref
-            .weak()
-            .ptr_eq(&child_parents[parent_index as usize].clone()));
+
+        debug_assert!(
+            child_parents.len() >= 1 && parent_index >= 0,
+            "my_parent_index_in_child_at_index[child_index] = {parent_index}, parent has already been removed?
+            child_index = {child_index}
+            my_parent_index_in_child_at_index = {mpi:?}
+            my_child_index_in_parent_at_index = {mci:?}
+            parent_index = {parent_index}
+            child_parents = {child_parents:?}
+            parent_type = {pty}
+            child_type = {chty:?}
+            ",
+            mpi = &parent_indices.my_parent_index_in_child_at_index,
+            mci = &child_indices.my_child_index_in_parent_at_index,
+            child_parents = child_parents
+                .iter()
+                .map(|p| p.upgrade_erased().ok().map(|p| p.kind_debug_ty()))
+                .collect::<Vec<_>>(),
+            pty = parent.kind_debug_ty(),
+            chty = child.kind().map(|k| k.debug_ty()),
+        );
+        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
-            // we swap the parent the end of the array into this one's position. This keeps the array
-            // small.
+            // we swap the parent the end of the array into this one's position. This requires much fewer index twiddles than shifting
+            // all subsequent indices back by one.
             let end_p_weak = child_parents[last_parent_index].clone();
             if let Ok(end_p) = end_p_weak.upgrade_erased() {
                 let end_p_indices_cell = end_p.parent_child_indices();
                 let mut end_p_indices = end_p_indices_cell.borrow_mut();
-                let end_child_index =
-                    child_indices.my_child_index_in_parent_at_index[last_parent_index];
+                let end_child_index = child_indices.my_child_index_in_parent_at_index[last_parent_index];
                 // link parent_index & end_child_index
-                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] =
-                    parent_index;
-                child_indices.my_child_index_in_parent_at_index[parent_index as usize] =
-                    end_child_index;
+                end_p_indices.my_parent_index_in_child_at_index[end_child_index as usize] = parent_index;
+                child_indices.my_child_index_in_parent_at_index[parent_index as usize] = end_child_index;
+            } else {
+                tracing::error!("end_p_weak pointer could not be upgraded (child_parents[{last_parent_index}])");
             }
         }
         // unlink last_parent_index & child_index
@@ -662,6 +686,7 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
 pub(crate) trait ErasedNode: Debug {
     fn id(&self) -> NodeId;
     fn ptr_eq(&self, other: &dyn ErasedNode) -> bool;
+    fn kind_debug_ty(&self) -> String;
     fn weak_state(&self) -> &Weak<State>;
     fn is_valid(&self) -> bool;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
@@ -752,6 +777,7 @@ impl<G: NodeGenerics> Debug for Node<G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
+            .field("type", &self.kind().map(|k| k.debug_ty()))
             .field("kind", &self.kind())
             // .field("height", &self.height.get())
             .finish()
@@ -764,6 +790,18 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn ptr_eq(&self, other: &dyn ErasedNode) -> bool {
         self.weak().ptr_eq(&other.weak())
+    }
+    fn kind_debug_ty(&self) -> String {
+        let Some(dbg) = self.kind().map(|k| k.debug_ty()) else {
+            if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
+                return format!("{user:?}: Invalid node");
+            }
+            return format!("Invalid node");
+        };
+        if let Some(user) = self.graphviz_user_data.borrow().as_ref() {
+            return format!("{user:?}: {dbg:?}");
+        }
+        format!("{dbg:?}")
     }
     fn weak_state(&self) -> &Weak<State> {
         &self.weak_state
@@ -941,6 +979,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         if self.is_valid() && !self.created_in.is_necessary() {
             panic!("trying to make a node necessary whose defining bind is not necessary");
         }
+        tracing::debug!("node {:?} became necessary", self.id);
         state.num_nodes_became_necessary.increment();
         self.maybe_handle_after_stabilisation(state);
         /* Since [node] became necessary, to restore the invariant, we need to:
@@ -990,6 +1029,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 
     fn became_unnecessary(&self, state: &State) {
+        tracing::debug!("node {:?} became unnecessary", self.id);
         state.num_nodes_became_unnecessary.increment();
         self.maybe_handle_after_stabilisation(state);
         state.set_height(self.packed(), -1);
@@ -1111,7 +1151,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
-    #[tracing::instrument(skip(state))]
+    #[tracing::instrument(skip(self, state), fields(height = %self.height(), id = ?self.id, node = %self.kind_debug_ty()))]
     fn recompute_one(&self, state: &State) -> Option<NodeRef> {
         #[cfg(debug_assertions)]
         {
@@ -1370,10 +1410,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         any
     }
 
+    #[tracing::instrument(skip_all, fields(id = ?self.id))]
     fn invalidate_node(&self, state: &State) {
         if !self.is_valid() {
             return;
         }
+        tracing::debug!("invalidating node");
         self.maybe_handle_after_stabilisation(state);
         self.value_opt.take();
         // this was for node-level subscriptions. we don't have those
@@ -1733,6 +1775,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
+    #[rustfmt::skip]
     fn expert_swap_children_except_in_kind(
         &self,
         child1: &NodeRef,
@@ -1751,27 +1794,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let mut child1_pci = child1_pci_.borrow_mut();
         let mut child2_pci = child2_pci_.borrow_mut();
 
-        let index_of_parent_in_child1 =
-            parent_pci.my_parent_index_in_child_at_index[child_index1 as usize];
-        let index_of_parent_in_child2 =
-            parent_pci.my_parent_index_in_child_at_index[child_index2 as usize];
-        debug_assert_eq!(
-            child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize],
-            child_index1
-        );
-        debug_assert_eq!(
-            child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize],
-            child_index2
-        );
+        let index_of_parent_in_child1 = parent_pci.my_parent_index_in_child_at_index[child_index1 as usize];
+        let index_of_parent_in_child2 = parent_pci.my_parent_index_in_child_at_index[child_index2 as usize];
+        debug_assert_eq!(child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize], child_index1);
+        debug_assert_eq!(child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize], child_index2);
         /* now start swapping */
-        child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize] =
-            child_index2;
-        child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize] =
-            child_index1;
-        parent_pci.my_parent_index_in_child_at_index[child_index1 as usize] =
-            index_of_parent_in_child2;
-        parent_pci.my_parent_index_in_child_at_index[child_index2 as usize] =
-            index_of_parent_in_child1;
+        child1_pci.my_child_index_in_parent_at_index[index_of_parent_in_child1 as usize] = child_index2;
+        child2_pci.my_child_index_in_parent_at_index[index_of_parent_in_child2 as usize] = child_index1;
+        parent_pci.my_parent_index_in_child_at_index[child_index1 as usize] = index_of_parent_in_child2;
+        parent_pci.my_parent_index_in_child_at_index[child_index2 as usize] = index_of_parent_in_child1;
     }
 
     fn expert_remove_child(&self, dyn_edge: &dyn IsEdge, child_index: i32, state: &State) {
@@ -1956,6 +1987,7 @@ impl<G: NodeGenerics> Node<G> {
         None
     }
 
+    #[tracing::instrument(skip_all, fields(bind_main = ?self.id))]
     fn change_child_bind_rhs(
         &self,
         old_child: Option<Incr<G::BindRhs>>,
@@ -1983,6 +2015,8 @@ impl<G: NodeGenerics> Node<G> {
                     return;
                 }
                 let old_child_node = id.input_rhs_i1.cast_ref(&old_child.node);
+                /* We remove [old_child] before adding [new_child], because they share the same
+                child index. */
                 old_child_node.remove_parent(child_index, bind_main.as_parent_ref());
                 /* We force [old_child] to temporarily be necessary so that [add_parent] can't
                 mistakenly think it is unnecessary and transition it to necessary (which would
