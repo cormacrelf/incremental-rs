@@ -231,10 +231,6 @@ impl<T: Value> Incr<T> {
         R: Value,
         F: FnMut(&T, &T2) -> R + 'static,
     {
-        assert!(
-            !self.ptr_eq(&other),
-            "You cannot map2 an incremental with itself. We need to be able to borrow_mut both at the same time."
-        );
         let mapper = kind::Map2Node {
             one: self.clone().node,
             two: other.clone().node,

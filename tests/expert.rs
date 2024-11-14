@@ -145,3 +145,15 @@ fn test_zip2() {
     incr.stabilise();
     assert_eq!(o.value(), (3, 5));
 }
+
+#[test]
+fn expert_duplicate_inputs() {
+    let incr = IncrState::new();
+    let constant = incr.constant(3);
+    let z = manual_zip2(&constant, &constant);
+    let o = z.observe();
+    incr.stabilise();
+    assert_eq!(o.value(), (3, 3));
+    drop(o);
+    incr.stabilise();
+}
