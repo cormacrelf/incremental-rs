@@ -1228,7 +1228,6 @@ fn var_bind_to_itself() {
 }
 
 #[test]
-#[should_panic = "cannot map2 an incremental with itself"]
 fn map2_itself() {
     let incr = IncrState::new();
     let var = incr.var(5i32);
@@ -1243,7 +1242,6 @@ fn map2_itself() {
 }
 
 #[test]
-#[should_panic = "cannot map2 an incremental with itself"]
 fn map2_itself_unobserved() {
     let incr = IncrState::new();
     let var = incr.var(5i32);
@@ -1331,5 +1329,30 @@ fn simultaneous_disallow_and_rebind() {
     drop(o);
     incr.stabilise();
     let _o2 = b1.observe();
+    incr.stabilise();
+}
+
+#[test]
+fn fold_duplicate_inputs() {
+    let incr = IncrState::new();
+    let constant = incr.constant(1);
+
+    let vec = vec![constant.clone(), constant];
+    let fold = incr.fold(vec, 0, |i, _| i + 1);
+    let obs = fold.observe();
+    incr.stabilise();
+    drop(obs);
+    incr.stabilise();
+}
+
+#[test]
+fn map_duplicate_inputs() {
+    let incr = IncrState::new();
+    let constant = incr.constant(1);
+
+    let combine = (constant.clone() % constant).map(|_, _| 5);
+    let obs = combine.observe();
+    incr.stabilise();
+    drop(obs);
     incr.stabilise();
 }

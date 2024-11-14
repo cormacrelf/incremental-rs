@@ -305,6 +305,15 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             chty = child.kind().map(|k| k.debug_ty()),
         );
         debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
+
+        // unlink last_parent_index & child_index
+        //
+        // but we unlink child_index from the parent first, because then we can drop the
+        // RefMut and we don't get BorrowMutError when we have duplicate parents.
+        // See test 'fold_duplicate_inputs' (duplicate inputs <=> duplicate parents)
+        parent_indices.my_parent_index_in_child_at_index[child_index as usize] = -1;
+        drop(parent_indices);
+
         let last_parent_index = child_parents.len() - 1;
         if (parent_index as usize) < last_parent_index {
             // we swap the parent the end of the array into this one's position. This requires much fewer index twiddles than shifting
@@ -321,8 +330,10 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
                 tracing::error!("end_p_weak pointer could not be upgraded (child_parents[{last_parent_index}])");
             }
         }
-        // unlink last_parent_index & child_index
-        parent_indices.my_parent_index_in_child_at_index[child_index as usize] = -1;
+
+        // continue unlinking last_parent_index & child_index
+        // Must do this after the previous block, because we may use this value in the block above
+        // if there are duplicate parents (again, see test fold_duplicate_inputs)
         child_indices.my_child_index_in_parent_at_index[last_parent_index] = -1;
 
         // now do what we just did but super easily in the actual Vec
