@@ -1,6 +1,6 @@
 [package]
 name = "incremental"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Cormac Relf <web@cormacrelf.net>"]
 edition = "2021"
 categories = ["algorithms", "data-structures", "caching"]
