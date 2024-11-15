@@ -5,6 +5,7 @@ use std::{cell::Cell, fmt};
 use refl::Id;
 
 use super::NodeGenerics;
+use crate::incrsan::NotObserver;
 use crate::node::{ErasedNode, Input, Node, NodeId};
 use crate::scope::{BindScope, Scope};
 use crate::WeakNode;
@@ -14,7 +15,7 @@ pub(crate) struct BindNode<F, T, R>
 where
     R: Value,
     T: Value,
-    F: FnMut(&T) -> Incr<R> + 'static,
+    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
 {
     pub id_lhs_change: Cell<NodeId>,
     pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<F, T, R>>>>,
@@ -30,7 +31,7 @@ impl<F, T, R> BindScope for BindNode<F, T, R>
 where
     R: Value,
     T: Value,
-    F: FnMut(&T) -> Incr<R>,
+    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
 {
     fn id(&self) -> NodeId {
         self.id_lhs_change.get()
@@ -71,7 +72,7 @@ pub(crate) struct BindLhsChangeGen<F, T, R> {
 
 impl<F, T, R> NodeGenerics for BindLhsChangeGen<F, T, R>
 where
-    F: FnMut(&T) -> Incr<R> + 'static,
+    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     T: Value,
     R: Value,
 {
@@ -94,7 +95,7 @@ pub(crate) struct BindNodeMainGen<F, T, R> {
 
 impl<F, T, R> NodeGenerics for BindNodeMainGen<F, T, R>
 where
-    F: FnMut(&T) -> Incr<R> + 'static,
+    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     T: Value,
     R: Value,
 {
@@ -114,7 +115,7 @@ where
 
 impl<F, T, R> fmt::Debug for BindNode<F, T, R>
 where
-    F: FnMut(&T) -> Incr<R>,
+    F: FnMut(&T) -> Incr<R> + NotObserver,
     R: Value,
     T: Value,
 {

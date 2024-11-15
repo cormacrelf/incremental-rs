@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use super::node::Node;
 use super::var::Var;
+use crate::incrsan::NotObserver;
 use crate::{Incr, Value};
 
 #[macro_export]
@@ -51,7 +52,7 @@ pub(crate) use bind::*;
 pub(crate) use expert::ExpertNode;
 pub(crate) use map::*;
 
-pub(crate) trait NodeGenerics: 'static {
+pub(crate) trait NodeGenerics: 'static + NotObserver {
     type R: Value;
     type BindLhs: Value;
     type BindRhs: Value;
@@ -61,19 +62,20 @@ pub(crate) trait NodeGenerics: 'static {
     type I4: Value;
     type I5: Value;
     type I6: Value;
-    type F1: FnMut(&Self::I1) -> Self::R;
-    type FRef: Fn(&Self::I1) -> &Self::R;
-    type F2: FnMut(&Self::I1, &Self::I2) -> Self::R;
-    type F3: FnMut(&Self::I1, &Self::I2, &Self::I3) -> Self::R;
-    type F4: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4) -> Self::R;
-    type F5: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5) -> Self::R;
-    type F6: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5, &Self::I6) -> Self::R;
-    type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs>;
-    type Fold: FnMut(Self::R, &Self::I1) -> Self::R;
-    type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R;
-    type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool);
-    type Recompute: FnMut() -> Self::R;
-    type ObsChange: FnMut(bool);
+    type F1: FnMut(&Self::I1) -> Self::R + NotObserver;
+    type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
+    type F2: FnMut(&Self::I1, &Self::I2) -> Self::R + NotObserver;
+    type F3: FnMut(&Self::I1, &Self::I2, &Self::I3) -> Self::R + NotObserver;
+    type F4: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4) -> Self::R + NotObserver;
+    type F5: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5) -> Self::R + NotObserver;
+    type F6: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5, &Self::I6) -> Self::R
+        + NotObserver;
+    type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs> + NotObserver;
+    type Fold: FnMut(Self::R, &Self::I1) -> Self::R + NotObserver;
+    type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R + NotObserver;
+    type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
+    type Recompute: FnMut() -> Self::R + NotObserver;
+    type ObsChange: FnMut(bool) + NotObserver;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {

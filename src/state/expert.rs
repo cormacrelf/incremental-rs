@@ -7,8 +7,8 @@ use kind::expert::{IsEdge, PackedEdge};
 pub(crate) fn create<T, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
     T: Value,
-    F: FnMut() -> T + 'static,
-    O: FnMut(bool) + 'static,
+    F: FnMut() -> T + 'static + NotObserver,
+    O: FnMut(bool) + 'static + NotObserver,
 {
     let node = Node::<kind::ExpertNode<T, F, O>>::create_rc(
         state.weak(),
@@ -37,8 +37,8 @@ pub(crate) fn create_cyclic<T, Cyclic, F, O>(
 where
     T: Value,
     Cyclic: FnOnce(WeakIncr<T>) -> F,
-    F: FnMut() -> T + 'static,
-    O: FnMut(bool) + 'static,
+    F: FnMut() -> T + 'static + NotObserver,
+    O: FnMut(bool) + 'static + NotObserver,
 {
     let node = Rc::<Node<_>>::new_cyclic(|weak| {
         let weak_incr = WeakIncr(weak.clone());

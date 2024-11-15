@@ -1,6 +1,9 @@
-use super::CellIncrement;
-use crate::node_update::OnUpdateHandler;
-use crate::Value;
+use core::fmt::Debug;
+use std::any::{Any, TypeId};
+use std::cell::Ref;
+use std::collections::HashMap;
+use std::fmt::{self, Write};
+use std::rc::Weak;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
@@ -10,13 +13,11 @@ use super::kind::{self, Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
 use super::state::{IncrStatus, State};
+use super::CellIncrement;
 use super::{Incr, NodeRef, WeakNode};
-use core::fmt::Debug;
-use std::any::{Any, TypeId};
-use std::cell::Ref;
-use std::collections::HashMap;
-use std::fmt::{self, Write};
-use std::rc::Weak;
+use crate::incrsan::NotObserver;
+use crate::node_update::OnUpdateHandler;
+use crate::Value;
 
 use super::stabilisation_num::StabilisationNum;
 use refl::Id;
@@ -112,8 +113,13 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// of stabilisation, all you need to do is add the node to a queue.
     pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<G::R>>>>,
     pub on_update_handlers: RefCell<Vec<OnUpdateHandler<G::R>>>,
-    pub graphviz_user_data: RefCell<Option<Box<dyn Debug>>>,
+    pub graphviz_user_data: RefCell<Option<BoxedDebugData>>,
 }
+
+#[cfg(not(feature = "nightly-incrsan"))]
+type BoxedDebugData = Box<dyn Debug>;
+#[cfg(feature = "nightly-incrsan")]
+type BoxedDebugData = Box<dyn Debug + NotObserver>;
 
 /// Recall that parents and children feel a bit backwards in incremental.
 /// A child == an input of self. A parent == a node derived from self.
@@ -188,7 +194,7 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
     }
 }
 
-pub(crate) trait Incremental<R>: ErasedNode + Debug {
+pub(crate) trait Incremental<R>: ErasedNode + Debug + NotObserver {
     fn as_input(&self) -> Input<R>;
     fn erased_input(&self) -> &dyn ErasedIncremental;
     fn latest(&self) -> R;
@@ -202,7 +208,7 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug {
     fn state_add_parent(&self, child_index: i32, parent_ref: ParentRef<R>, state: &State);
     fn remove_parent(&self, child_index: i32, parent_ref: ParentRef<R>);
     fn set_cutoff(&self, cutoff: Cutoff<R>);
-    fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>);
+    fn set_graphviz_user_data(&self, user_data: BoxedDebugData);
     fn value_as_ref(&self) -> Option<Ref<R>>;
     fn constant(&self) -> Option<&R>;
     fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
@@ -344,7 +350,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.cutoff.replace(cutoff);
     }
 
-    fn set_graphviz_user_data(&self, user_data: Box<dyn Debug>) {
+    fn set_graphviz_user_data(&self, user_data: BoxedDebugData) {
         let mut slot = self.graphviz_user_data.borrow_mut();
         slot.replace(user_data);
     }
@@ -396,7 +402,7 @@ impl fmt::Display for ParentError {
     }
 }
 
-pub(crate) trait ParentNode<I> {
+pub(crate) trait ParentNode<I>: NotObserver {
     fn child_changed(
         &self,
         child: &dyn Incremental<I>,
@@ -404,7 +410,7 @@ pub(crate) trait ParentNode<I> {
         old_value_opt: Option<&I>,
     ) -> Result<NodeRef, ParentError>;
 }
-pub(crate) trait ParentNodeDyn: Debug + Any {
+pub(crate) trait ParentNodeDyn: Debug + Any + NotObserver {
     fn dyn_child_changed(
         &self,
         child: &dyn ErasedIncremental,
@@ -685,7 +691,7 @@ impl<G: NodeGenerics> Parent1<G::I1> for Node<G> {
     }
 }
 
-pub(crate) trait ErasedNode: Debug {
+pub(crate) trait ErasedNode: Debug + NotObserver {
     fn id(&self) -> NodeId;
     fn ptr_eq(&self, other: &dyn ErasedNode) -> bool;
     fn kind_debug_ty(&self) -> String;

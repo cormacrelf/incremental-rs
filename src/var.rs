@@ -1,4 +1,7 @@
-use crate::{node_generics_default, Value};
+use core::fmt::Debug;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+
 #[cfg(test)]
 use test_log::test;
 
@@ -7,11 +10,11 @@ use super::node::{ErasedNode, Incremental, Node, NodeId};
 use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
 use super::state::State;
-use super::{CellIncrement, Incr};
-
-use core::fmt::Debug;
-use std::cell::{Cell, RefCell};
-use std::rc::{Rc, Weak};
+use super::CellIncrement;
+use super::Incr;
+use crate::incrsan::NotObserver;
+use crate::node_generics_default;
+use crate::Value;
 
 pub(crate) struct VarGenerics<T: Value>(std::marker::PhantomData<T>);
 impl<R: Value> NodeGenerics for VarGenerics<R> {
@@ -27,7 +30,7 @@ impl<R: Value> NodeGenerics for VarGenerics<R> {
 // Rc-cycle-breaking on public::Var.
 pub(crate) type WeakVar = Weak<dyn ErasedVariable>;
 
-pub(crate) trait ErasedVariable: Debug {
+pub(crate) trait ErasedVariable: Debug + NotObserver {
     fn set_var_stabilise_end(&self);
     fn id(&self) -> NodeId;
     fn break_rc_cycle(&self);

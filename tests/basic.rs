@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use incremental::{Cutoff, Incr, IncrState, NodeUpdate, ObserverError, StatsDiff, Update, Var};
+use incremental::{Cutoff, Incr, IncrState, NodeUpdate, StatsDiff, Update, Var};
 
 #[test]
 fn testit() {
@@ -239,52 +239,6 @@ fn bind_changing_heights_inside() {
     is_short.set(true);
     incr.stabilise();
     assert_eq!(obs.try_get_value(), Ok(5));
-}
-
-#[test]
-fn observer_ugly() {
-    let incr = IncrState::new();
-    let lhs = incr.var(true);
-    let unused = incr.var(2);
-    let unused_w = unused.watch();
-    let state = incr.weak();
-    let v9 = state.var(9);
-    let bound = lhs.bind(move |&l| if l { v9.watch() } else { unused_w.clone() });
-    let o = bound.observe();
-
-    incr.stabilise();
-    assert_eq!(o.try_get_value(), Ok(9));
-
-    let unrelated = incr.var(100);
-    // make sure to add unrelated to recompute heap first
-    let _o = unrelated.observe();
-
-    let var = incr.var(10);
-    let o1 = var.map(|a| a + 10).observe();
-    assert_eq!(o1.try_get_value(), Err(ObserverError::NeverStabilised));
-
-    let map = unrelated.map(move |_x| o.try_get_value());
-    let o2 = map.observe();
-
-    incr.stabilise();
-    // ok none of this is guaranteed to work but i'm just trying to break it
-    lhs.set(false);
-    unused.set(700);
-    assert_eq!(
-        o2.try_get_value(),
-        Ok(Err(ObserverError::CurrentlyStabilising))
-    );
-    incr.stabilise();
-    assert_eq!(
-        o2.try_get_value(),
-        Ok(Err(ObserverError::CurrentlyStabilising))
-    );
-    unrelated.set(99);
-    incr.stabilise();
-    assert_eq!(
-        o2.try_get_value(),
-        Ok(Err(ObserverError::CurrentlyStabilising))
-    );
 }
 
 #[test]

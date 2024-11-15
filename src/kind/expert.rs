@@ -6,10 +6,11 @@ use std::{
 };
 
 use super::NodeGenerics;
+use crate::incrsan::NotObserver;
 use crate::node::ErasedIncremental;
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
-pub(crate) trait ExpertEdge: Any {
+pub(crate) trait ExpertEdge: Any + NotObserver {
     /// Called from run_edge_callback
     fn on_change(&self);
     fn packed(&self) -> NodeRef;
@@ -23,9 +24,14 @@ impl<T> IsEdge for T where T: ExpertEdge + Any {}
 
 pub(crate) type PackedEdge = Rc<dyn IsEdge>;
 
+#[cfg(not(feature = "nightly-incrsan"))]
+type BoxedOnChange<T> = Box<dyn FnMut(&T)>;
+#[cfg(feature = "nightly-incrsan")]
+type BoxedOnChange<T> = Box<dyn FnMut(&T) + NotObserver>;
+
 pub(crate) struct Edge<T> {
     pub child: Incr<T>,
-    pub on_change: RefCell<Option<Box<dyn FnMut(&T)>>>,
+    pub on_change: RefCell<Option<BoxedOnChange<T>>>,
     /* [index] is defined whenever the [edge] is in the [children] of some [t]. Then it is
     the index of this [edge] in that [children] array. It might seem redundant with all
     the other indexes we have, but it is necessary to remove children.  The index may
@@ -34,10 +40,10 @@ pub(crate) struct Edge<T> {
 }
 
 impl<T> Edge<T> {
-    fn new(child: Incr<T>, on_change: Option<Box<dyn FnMut(&T)>>) -> Self {
+    fn new(child: Incr<T>, on_change: Option<BoxedOnChange<T>>) -> Self {
         Self {
             child,
-            on_change: on_change.into(),
+            on_change: RefCell::new(on_change),
             index: None.into(),
         }
     }
@@ -239,8 +245,8 @@ where
 impl<T, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, FRecompute, FObsChange>
 where
     T: Value,
-    FRecompute: FnMut() -> T + 'static,
-    FObsChange: FnMut(bool) + 'static,
+    FRecompute: FnMut() -> T + 'static + NotObserver,
+    FObsChange: FnMut(bool) + 'static + NotObserver,
 {
     type R = T;
     type Recompute = FRecompute;
@@ -254,6 +260,7 @@ where
 pub mod public {
     use std::rc::{Rc, Weak};
 
+    use crate::incrsan::NotObserver;
     use crate::{Incr, Value, WeakIncr, WeakState};
 
     use super::Edge;
@@ -303,32 +310,35 @@ pub mod public {
             }
         }
 
-        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static) -> Node<T> {
+        pub fn new(state: &WeakState, f: impl FnMut() -> T + 'static + NotObserver) -> Node<T> {
             fn ignore(_: bool) {}
             Node::new_(state, f, ignore)
         }
         pub fn new_(
             state: &WeakState,
-            f: impl FnMut() -> T + 'static,
-            obs_change: impl FnMut(bool) + 'static,
+            f: impl FnMut() -> T + 'static + NotObserver,
+            obs_change: impl FnMut(bool) + 'static + NotObserver,
         ) -> Self {
             let incr = expert::create::<T, _, _>(&state.upgrade_inner().unwrap(), f, obs_change);
             Self { incr }
         }
-        pub fn new_cyclic<F>(state: &WeakState, f: impl FnOnce(WeakIncr<T>) -> F) -> Node<T>
+        pub fn new_cyclic<F>(
+            state: &WeakState,
+            f: impl FnOnce(WeakIncr<T>) -> F + NotObserver,
+        ) -> Node<T>
         where
-            F: FnMut() -> T + 'static,
+            F: FnMut() -> T + 'static + NotObserver,
         {
             fn ignore(_: bool) {}
             Node::new_cyclic_(state, f, ignore)
         }
         pub fn new_cyclic_<F>(
             state: &WeakState,
-            f: impl FnOnce(WeakIncr<T>) -> F,
-            obs_change: impl FnMut(bool) + 'static,
+            f: impl FnOnce(WeakIncr<T>) -> F + NotObserver,
+            obs_change: impl FnMut(bool) + 'static + NotObserver,
         ) -> Node<T>
         where
-            F: FnMut() -> T + 'static,
+            F: FnMut() -> T + 'static + NotObserver,
         {
             let incr =
                 expert::create_cyclic::<T, _, _, _>(&state.upgrade_inner().unwrap(), f, obs_change);
@@ -363,7 +373,7 @@ pub mod public {
         pub fn add_dependency_with<D: Value>(
             &self,
             on: &Incr<D>,
-            on_change: impl FnMut(&D) + 'static,
+            on_change: impl FnMut(&D) + 'static + NotObserver,
         ) -> Dependency<D> {
             let edge = Rc::new(Edge::new(on.clone(), Some(Box::new(on_change))));
             let dep = Dependency {
@@ -412,7 +422,7 @@ pub mod public {
         pub fn add_dependency_with<D: Value>(
             &self,
             on: &Incr<D>,
-            on_change: impl FnMut(&D) + 'static,
+            on_change: impl FnMut(&D) + 'static + NotObserver,
         ) -> Dependency<D> {
             self.upgrade().unwrap().add_dependency_with(on, on_change)
         }

@@ -2,6 +2,7 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::kind;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
+use crate::incrsan::NotObserver;
 use crate::{SubscriptionToken, WeakMap};
 
 use super::internal_observer::{
@@ -174,7 +175,7 @@ impl State {
         f: F,
     ) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'static,
+        F: FnMut(R, &T) -> R + 'static + NotObserver,
     {
         if vec.is_empty() {
             return self.constant(init);

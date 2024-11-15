@@ -6,6 +6,7 @@ use std::rc::{Rc, Weak};
 use super::kind::{self, Kind};
 use super::node::{Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
+use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
 use crate::{Cutoff, NodeUpdate, Observer, Value, WeakState};
 
@@ -51,10 +52,10 @@ impl<T> Incr<T> {
     pub fn weak(&self) -> WeakIncr<T> {
         WeakIncr(Rc::downgrade(&self.node))
     }
-    pub fn set_graphviz_user_data(&self, data: impl fmt::Debug + 'static) {
+    pub fn set_graphviz_user_data(&self, data: impl fmt::Debug + NotObserver + 'static) {
         self.node.set_graphviz_user_data(Box::new(data))
     }
-    pub fn with_graphviz_user_data(self, data: impl fmt::Debug + 'static) -> Self {
+    pub fn with_graphviz_user_data(self, data: impl fmt::Debug + NotObserver + 'static) -> Self {
         self.node.set_graphviz_user_data(Box::new(data));
         self
     }
@@ -115,7 +116,7 @@ impl<T: Value> Incr<T> {
     pub fn enumerate<R, F>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(usize, &T) -> R + 'static,
+        F: FnMut(usize, &T) -> R + 'static + NotObserver,
     {
         let mut counter = 0;
         self.map(move |x| {
@@ -125,7 +126,7 @@ impl<T: Value> Incr<T> {
         })
     }
 
-    pub fn map<R: Value, F: FnMut(&T) -> R + 'static>(&self, f: F) -> Incr<R> {
+    pub fn map<R: Value, F: FnMut(&T) -> R + 'static + NotObserver>(&self, f: F) -> Incr<R> {
         let mapper = kind::MapNode {
             input: self.clone().node,
             mapper: f.into(),
@@ -153,7 +154,7 @@ impl<T: Value> Incr<T> {
 
     pub fn map_ref<F, R: Value>(&self, f: F) -> Incr<R>
     where
-        F: for<'a> Fn(&'a T) -> &'a R + 'static,
+        F: for<'a> Fn(&'a T) -> &'a R + 'static + NotObserver,
     {
         let state = self.node.state();
         let node = Node::<kind::MapRefNode<F, T, R>>::create_rc(
@@ -175,7 +176,7 @@ impl<T: Value> Incr<T> {
     /// [crate::expert] constructs.
     pub fn map_cyclic<R: Value>(
         &self,
-        mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static,
+        mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static + NotObserver,
     ) -> Incr<R> {
         let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
             let f = {
@@ -214,7 +215,7 @@ impl<T: Value> Incr<T> {
     pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
+        F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
     {
         let state = self.node.state();
         let node = Node::<kind::MapWithOld<F, T, R>>::create_rc(
@@ -229,7 +230,7 @@ impl<T: Value> Incr<T> {
     where
         T2: Value,
         R: Value,
-        F: FnMut(&T, &T2) -> R + 'static,
+        F: FnMut(&T, &T2) -> R + 'static + NotObserver,
     {
         let mapper = kind::Map2Node {
             one: self.clone().node,
@@ -250,7 +251,7 @@ impl<T: Value> Incr<T> {
     pub fn binds<F, R>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(&WeakState, &T) -> Incr<R> + 'static,
+        F: FnMut(&WeakState, &T) -> Incr<R> + 'static + NotObserver,
     {
         let cloned = self.node.state().public_weak();
         self.bind(move |value: &T| f(&cloned, value))
@@ -259,7 +260,7 @@ impl<T: Value> Incr<T> {
     pub fn bind<F, R>(&self, f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(&T) -> Incr<R> + 'static,
+        F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
@@ -400,7 +401,7 @@ impl<T: Value> Incr<T> {
     /// ```
     pub fn set_cutoff_fn_boxed<F>(&self, cutoff_fn: F)
     where
-        F: FnMut(&T, &T) -> bool + Clone + 'static,
+        F: FnMut(&T, &T) -> bool + Clone + 'static + NotObserver,
     {
         self.node.set_cutoff(Cutoff::FnBoxed(Box::new(cutoff_fn)));
     }
@@ -415,7 +416,7 @@ impl<T: Value> Incr<T> {
         output
     }
 
-    pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static) {
+    pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static + NotObserver) {
         let state = self.node.state();
         let now = state.stabilisation_num.get();
         let handler = OnUpdateHandler::new(now, Box::new(f));
