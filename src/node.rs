@@ -1770,10 +1770,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             expert.swap_children(edge_index as usize, last_edge_index as usize);
             // if debug then Node.invariant ignore node;
         }
-        let popped_edge = expert.pop_child_edge().unwrap();
-        debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
 
+        // OCaml: let popped_edge = expert.pop_child_edge().unwrap();
+        // debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
+        //
+        // Even though we delay popping the child edge, we do need to force stale so we can insert
+        // into the recompute heap.
+        expert.force_stale.set(true);
         debug_assert!(self.is_stale());
+
         if self.is_necessary() {
             let state = self.state();
             self.expert_remove_child(dyn_edge, last_edge_index, &state);
@@ -1784,6 +1789,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 expert.decr_invalid_children();
             }
         }
+
+        // Difference: OCaml version removes it above.
+        // But we need the last child edge to stay alive,
+        // long enough to report its type id during expert_remove_child.
+        let popped_edge = expert.pop_child_edge().unwrap();
+        debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
     }
 
     #[rustfmt::skip]
