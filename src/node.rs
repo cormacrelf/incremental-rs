@@ -304,7 +304,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             pty = parent.kind_debug_ty(),
             chty = child.kind().map(|k| k.debug_ty()),
         );
-        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
+        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize]));
 
         // unlink last_parent_index & child_index
         //
@@ -510,9 +510,11 @@ impl<T: Value> ParentWeak<T> {
     }
     fn ptr_eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Input1(a), Self::Input1(b)) => a.ptr_eq(b),
-            (Self::Input2(a), Self::Input2(b)) => a.ptr_eq(b),
-            (Self::Dynamic(a, ix_a), Self::Dynamic(b, ix_b)) => ix_a == ix_b && a.ptr_eq(b),
+            (Self::Input1(a), Self::Input1(b)) => crate::weak_thin_ptr_eq(a, b),
+            (Self::Input2(a), Self::Input2(b)) => crate::weak_thin_ptr_eq(a, b),
+            (Self::Dynamic(a, ix_a), Self::Dynamic(b, ix_b)) => {
+                ix_a == ix_b && crate::weak_thin_ptr_eq(a, b)
+            }
             _ => false,
         }
     }
