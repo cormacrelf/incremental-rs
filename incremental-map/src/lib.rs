@@ -3,6 +3,7 @@
 
 use std::{cell::RefCell, marker::PhantomData};
 
+use incremental::incrsan::NotObserver;
 use incremental::{Incr, Value};
 
 pub mod btree_map;
@@ -23,11 +24,11 @@ trait Operator<K, V, V2> {
 
 struct MapOperator<K, V, V2, F>(F, PhantomData<(K, V, V2)>)
 where
-    F: FnMut(&K, Incr<V>) -> Incr<V2>;
+    F: FnMut(&K, Incr<V>) -> Incr<V2> + NotObserver;
 
 impl<K, V, V2, F> Operator<K, V, V2> for MapOperator<K, V, V2, F>
 where
-    F: FnMut(&K, Incr<V>) -> Incr<V2>,
+    F: FnMut(&K, Incr<V>) -> Incr<V2> + NotObserver,
 {
     type Output = V2;
     type Function = F;
@@ -43,11 +44,11 @@ where
 
 struct FilterMapOperator<K, V, V2, F>(F, PhantomData<(K, V, V2)>)
 where
-    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>;
+    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + NotObserver;
 
 impl<K, V, V2, F> Operator<K, V, V2> for FilterMapOperator<K, V, V2, F>
 where
-    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>>,
+    F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + NotObserver,
 {
     type Output = Option<V2>;
     type Function = F;
@@ -65,20 +66,20 @@ pub(crate) trait WithOldIO<T> {
     fn with_old_input_output<R, F>(&self, f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static;
+        F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static + NotObserver;
 
     fn with_old_input_output2<R, T2, F>(&self, other: &Incr<T2>, f: F) -> Incr<R>
     where
         R: Value,
         T2: Value,
-        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static;
+        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static + NotObserver;
 }
 
 impl<T: Value> WithOldIO<T> for Incr<T> {
     fn with_old_input_output<R, F>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
-        F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static,
+        F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static + NotObserver,
     {
         let old_input: RefCell<Option<T>> = RefCell::new(None);
         self.map_with_old(move |old_opt, a| {
@@ -93,7 +94,7 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
     where
         R: Value,
         T2: Value,
-        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static,
+        F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static + NotObserver,
     {
         let old_input: RefCell<Option<(T, T2)>> = RefCell::new(None);
         // TODO: too much cloning
@@ -118,7 +119,7 @@ pub trait Symmetric<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&V) -> V2 + 'static,
+        F: FnMut(&V) -> V2 + 'static + NotObserver,
         T::OutputMap<V2>: Value;
 
     fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
@@ -127,7 +128,7 @@ pub trait Symmetric<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&V) -> Option<V2> + 'static,
+        F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
         T::OutputMap<V2>: Value;
 
     fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
@@ -136,7 +137,7 @@ pub trait Symmetric<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&K, &V) -> V2 + 'static,
+        F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
         T::OutputMap<V2>: Value;
 
     fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
@@ -145,7 +146,7 @@ pub trait Symmetric<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&K, &V) -> Option<V2> + 'static,
+        F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
         T::OutputMap<V2>: Value;
 
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
@@ -160,8 +161,8 @@ pub trait Symmetric<T> {
         K: Value + Ord,
         V: Value,
         R: Value,
-        FAdd: FnMut(R, &K, &V) -> R + 'static,
-        FRemove: FnMut(R, &K, &V) -> R + 'static;
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver;
 }
 
 impl<T: Value> Symmetric<T> for Incr<T> {
@@ -172,7 +173,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&V) -> V2 + 'static,
+        F: FnMut(&V) -> V2 + 'static + NotObserver,
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
@@ -191,7 +192,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&V) -> Option<V2> + 'static,
+        F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
@@ -210,7 +211,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&K, &V) -> V2 + 'static,
+        F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
         T::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
@@ -228,7 +229,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         K: Value + Ord,
         V: Value,
         V2: Value,
-        F: FnMut(&K, &V) -> Option<V2> + 'static,
+        F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
         T::OutputMap<V2>: Value,
     {
         let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
@@ -283,8 +284,8 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         K: Value + Ord,
         V: Value,
         R: Value,
-        FAdd: FnMut(R, &K, &V) -> R + 'static,
-        FRemove: FnMut(R, &K, &V) -> R + 'static,
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
     {
         let i = self.with_old_input_output(move |old, new_in| match old {
             None => {

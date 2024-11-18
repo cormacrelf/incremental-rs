@@ -1,3 +1,5 @@
+use crate::incrsan::NotObserver;
+
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum Cutoff<T> {
@@ -8,13 +10,13 @@ pub enum Cutoff<T> {
     FnBoxed(Box<dyn CutoffClosure<T>>),
 }
 
-pub trait CutoffClosure<T>: FnMut(&T, &T) -> bool {
+pub trait CutoffClosure<T>: FnMut(&T, &T) -> bool + NotObserver {
     fn clone_box(&self) -> Box<dyn CutoffClosure<T>>;
 }
 
 impl<T, F> CutoffClosure<T> for F
 where
-    F: FnMut(&T, &T) -> bool + Clone + 'static,
+    F: FnMut(&T, &T) -> bool + Clone + 'static + NotObserver,
 {
     fn clone_box(&self) -> Box<dyn CutoffClosure<T>> {
         Box::new(self.clone())

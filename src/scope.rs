@@ -2,8 +2,9 @@ use core::fmt;
 use std::rc::Weak;
 
 use super::{node::NodeId, NodeRef, WeakNode};
+use crate::incrsan::NotObserver;
 
-pub(crate) trait BindScope: fmt::Debug {
+pub(crate) trait BindScope: fmt::Debug + NotObserver {
     fn id(&self) -> NodeId;
     fn is_valid(&self) -> bool;
     fn is_necessary(&self) -> bool;

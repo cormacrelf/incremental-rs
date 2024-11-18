@@ -20,6 +20,7 @@ use super::node_update::OnUpdateHandler;
 use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
+use crate::incrsan::NotObserver;
 
 #[derive(Clone)]
 pub struct Observer<T: Value> {
@@ -82,13 +83,16 @@ impl<T: Value> Observer<T> {
         self.internal.try_get_value().unwrap()
     }
 
-    pub fn subscribe(&self, on_update: impl FnMut(Update<&T>) + 'static) -> SubscriptionToken {
+    pub fn subscribe(
+        &self,
+        on_update: impl FnMut(Update<&T>) + 'static + NotObserver,
+    ) -> SubscriptionToken {
         self.try_subscribe(on_update).unwrap()
     }
 
     pub fn try_subscribe(
         &self,
-        mut on_update: impl FnMut(Update<&T>) + 'static,
+        mut on_update: impl FnMut(Update<&T>) + 'static + NotObserver,
     ) -> Result<SubscriptionToken, ObserverError> {
         let handler_fn = Box::new(move |node_update: NodeUpdate<&T>| {
             let update = match node_update {
@@ -333,7 +337,7 @@ impl IncrState {
         self.inner.add_weak_map(weak_map)
     }
 
-    pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static, T: Value>(
+    pub fn weak_memoize_fn<I: Hash + Eq + Clone + 'static + NotObserver, T: Value>(
         &self,
         mut f: impl FnMut(I) -> Incr<T> + Clone,
     ) -> impl FnMut(I) -> Incr<T> + Clone {
@@ -457,7 +461,7 @@ impl IncrState {
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'static,
+        F: FnMut(R, &T) -> R + 'static + NotObserver,
     {
         self.inner.fold(vec, init, f)
     }
@@ -566,7 +570,7 @@ impl WeakState {
 
     pub fn fold<F, T: Value, R: Value>(&self, vec: Vec<Incr<T>>, init: R, f: F) -> Incr<R>
     where
-        F: FnMut(R, &T) -> R + 'static,
+        F: FnMut(R, &T) -> R + 'static + NotObserver,
     {
         self.inner.upgrade().unwrap().fold(vec, init, f)
     }
@@ -671,7 +675,7 @@ impl Sub for Stats {
 /// A helper trait for accepting either Incr or Var.
 /// We already do Deref coercion from Var to Incr (i.e. its watch node),
 /// so may as well accept Var anywhere we accept Incr.
-pub trait IntoIncr<T> {
+pub trait IntoIncr<T>: NotObserver {
     fn into_incr(self) -> Incr<T>;
 }
 
@@ -720,7 +724,7 @@ impl<T: Value> IntoIncr<T> for &Var<T> {
 
 // We don't need is_empty... this is only for stats, if that.
 #[allow(clippy::len_without_is_empty)]
-pub trait WeakMap {
+pub trait WeakMap: NotObserver {
     fn len(&self) -> usize;
     fn capacity(&self) -> usize;
     fn garbage_collect(&mut self);
@@ -728,7 +732,7 @@ pub trait WeakMap {
 
 pub type WeakHashMap<K, V> = HashMap<K, WeakIncr<V>>;
 
-impl<K: Hash, V> WeakMap for WeakHashMap<K, V> {
+impl<K: Hash + NotObserver, V> WeakMap for WeakHashMap<K, V> {
     fn garbage_collect(&mut self) {
         self.retain(|_k, v| v.strong_count() != 0);
     }

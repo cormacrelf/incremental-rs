@@ -3,12 +3,14 @@ use std::marker::PhantomData;
 use std::{cell::Cell, fmt};
 
 use super::NodeGenerics;
+use crate::incrsan::NotObserver;
 use crate::node::Input;
-use crate::{Incr, Value};
+use crate::Incr;
+use crate::Value;
 
 pub(crate) struct MapNode<F, T, R>
 where
-    F: FnMut(&T) -> R,
+    F: FnMut(&T) -> R + NotObserver,
 {
     pub input: Input<T>,
     pub mapper: RefCell<F>,
@@ -18,7 +20,7 @@ impl<F, T, R> NodeGenerics for MapNode<F, T, R>
 where
     T: Value,
     R: Value,
-    F: FnMut(&T) -> R + 'static,
+    F: FnMut(&T) -> R + 'static + NotObserver,
 {
     type R = R;
     type BindLhs = ();
@@ -32,7 +34,7 @@ where
 
 impl<F, T, R> fmt::Debug for MapNode<F, T, R>
 where
-    F: FnMut(&T) -> R,
+    F: FnMut(&T) -> R + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -42,7 +44,7 @@ where
 
 pub(crate) struct MapRefNode<F, T, R>
 where
-    F: Fn(&T) -> &R + 'static,
+    F: Fn(&T) -> &R + 'static + NotObserver,
 {
     pub(crate) input: Input<T>,
     pub(crate) mapper: F,
@@ -53,7 +55,7 @@ impl<F, T, R> NodeGenerics for MapRefNode<F, T, R>
 where
     T: Value,
     R: Value,
-    F: Fn(&T) -> &R + 'static,
+    F: Fn(&T) -> &R + 'static + NotObserver,
 {
     type R = R;
     type BindLhs = ();
@@ -67,7 +69,7 @@ where
 
 impl<F, T, R> fmt::Debug for MapRefNode<F, T, R>
 where
-    F: Fn(&T) -> &R + 'static,
+    F: Fn(&T) -> &R + 'static + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -79,7 +81,7 @@ where
 
 pub(crate) struct Map2Node<F, T1, T2, R>
 where
-    F: FnMut(&T1, &T2) -> R,
+    F: FnMut(&T1, &T2) -> R + NotObserver,
 {
     pub(crate) one: Input<T1>,
     pub(crate) two: Input<T2>,
@@ -91,7 +93,7 @@ where
     T1: Value,
     T2: Value,
     R: Value,
-    F: FnMut(&T1, &T2) -> R + 'static,
+    F: FnMut(&T1, &T2) -> R + 'static + NotObserver,
 {
     type R = R;
     type BindLhs = ();
@@ -107,7 +109,7 @@ where
 
 impl<F, T1, T2, R> fmt::Debug for Map2Node<F, T1, T2, R>
 where
-    F: FnMut(&T1, &T2) -> R,
+    F: FnMut(&T1, &T2) -> R + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -164,7 +166,7 @@ macro_rules! map_node {
         where
             $t1: Value,
             $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static,
+            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
             $r: Value,
         {
             map_node!{ @rest }
@@ -177,7 +179,7 @@ macro_rules! map_node {
         impl<$fparam, $t1, $($t,)* $r> fmt::Debug for $mapnode<$fparam, $t1, $($t,)* $r>
         where
             $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static,
+            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
             $r: Value,
         {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -192,7 +194,7 @@ macro_rules! map_node {
             where
                 $($t: Value,)*
                 $r: Value,
-                $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static,
+                $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
             {
                 let mapper = map_node! {
                     @tail_mapper $mapnode {
@@ -288,7 +290,7 @@ where
 
 impl<F, T, R> MapWithOld<F, T, R>
 where
-    F: FnMut(Option<R>, &T) -> (R, bool),
+    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
 {
     pub fn new(input: Input<T>, mapper: F) -> Self {
         Self {
@@ -304,7 +306,7 @@ where
     T: Value,
     R: Value,
     // WARN: we ignore this boolean now
-    F: FnMut(Option<R>, &T) -> (R, bool) + 'static,
+    F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
 {
     type I1 = T;
     type R = R;
@@ -317,7 +319,7 @@ where
 
 impl<F, T, R> fmt::Debug for MapWithOld<F, T, R>
 where
-    F: FnMut(Option<R>, &T) -> (R, bool),
+    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

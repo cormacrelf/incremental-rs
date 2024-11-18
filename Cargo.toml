@@ -31,6 +31,7 @@ im-rc = { version = "15.1.0" }
 
 [features]
 rust-analyzer = []
+nightly-incrsan = []
 
 [dependencies]
 refl = "0.2.1"

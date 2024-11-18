@@ -1,8 +1,12 @@
-use super::stabilisation_num::StabilisationNum;
-use crate::node::Incremental;
 use std::cell::Cell;
 
+use super::stabilisation_num::StabilisationNum;
+use crate::node::Incremental;
+
+#[cfg(not(feature = "nightly-incrsan"))]
 pub(crate) type BoxedUpdateFn<T> = Box<dyn FnMut(NodeUpdate<&T>)>;
+#[cfg(feature = "nightly-incrsan")]
+pub(crate) type BoxedUpdateFn<T> = Box<dyn FnMut(NodeUpdate<&T>) + crate::incrsan::NotObserver>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Previously {

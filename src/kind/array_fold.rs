@@ -1,7 +1,9 @@
-use super::NodeGenerics;
-use super::{Incr, Value};
 use std::cell::RefCell;
 use std::fmt::{self, Debug};
+
+use super::NodeGenerics;
+use super::{Incr, Value};
+use crate::incrsan::NotObserver;
 
 pub(crate) struct ArrayFold<F, I, R> {
     pub(crate) init: R,
@@ -11,7 +13,7 @@ pub(crate) struct ArrayFold<F, I, R> {
 
 impl<F, I, R> ArrayFold<F, I, R>
 where
-    F: FnMut(R, &I) -> R,
+    F: FnMut(R, &I) -> R + NotObserver,
     I: Value,
     R: Value,
 {
@@ -27,7 +29,7 @@ where
 
 impl<F, I: Value, R: Value> NodeGenerics for ArrayFold<F, I, R>
 where
-    F: FnMut(R, &I) -> R + 'static,
+    F: FnMut(R, &I) -> R + 'static + NotObserver,
 {
     type R = R;
     type I1 = I;

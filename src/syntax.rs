@@ -10,7 +10,7 @@ macro_rules! map_builder {
         pub struct $n<$ifirst, $($upto_i,)+>(Incr<$ifirst>, $(Incr<$upto_i>,)+);
         impl<$ifirst: Value, $($upto_i: Value,)+> $n<$ifirst, $($upto_i),+> {
             /// Maps the incrementals in the (i1 % i2 % ...) syntax all at once.
-            pub fn map<R: Value>(&self, f: impl FnMut(&$ifirst, $(&$upto_i),+) -> R + 'static) -> Incr<R> {
+            pub fn map<R: Value>(&self, f: impl FnMut(&$ifirst, $(&$upto_i),+) -> R + 'static + crate::incrsan::NotObserver) -> Incr<R> {
                 let Self($vfirst, $($v),+) = self;
                 $vfirst.$map($($v),+, f)
             }

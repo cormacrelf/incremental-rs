@@ -12,6 +12,7 @@ use std::{cell::Cell, rc::Weak};
 
 use super::{CellIncrement, Incr};
 use super::{NodeRef, Value};
+use crate::incrsan::NotObserver;
 
 use self::ObserverState::*;
 
@@ -43,7 +44,7 @@ pub(crate) struct InternalObserver<T> {
 pub(crate) type WeakObserver = Weak<dyn ErasedObserver>;
 pub(crate) type StrongObserver = Rc<dyn ErasedObserver>;
 
-pub(crate) trait ErasedObserver: Debug {
+pub(crate) trait ErasedObserver: Debug + NotObserver {
     fn id(&self) -> ObserverId;
     fn state(&self) -> &Cell<ObserverState>;
     fn observing_packed(&self) -> NodeRef;

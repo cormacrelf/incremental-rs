@@ -2,6 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 // RUST_LOG_SPAN_EVENTS=enter,exit
 use test_log::test;
 
+use incremental::incrsan::NotObserver;
 use incremental::{expert::*, Incr, IncrState, Value};
 
 fn join<T: Value>(incr: &Incr<Incr<T>>) -> Incr<T> {
@@ -41,7 +42,10 @@ fn test_join() {
 }
 
 #[allow(dead_code)]
-fn bind<T: Value, R: Value>(incr: Incr<T>, mut f: impl FnMut(&T) -> Incr<R> + 'static) -> Incr<R> {
+fn bind<T: Value, R: Value>(
+    incr: Incr<T>,
+    mut f: impl FnMut(&T) -> Incr<R> + 'static + NotObserver,
+) -> Incr<R> {
     let prev_rhs: Rc<RefCell<Option<Dependency<R>>>> = Rc::new(None.into());
     let state = incr.state();
     let join = Node::<R>::new(&state, {

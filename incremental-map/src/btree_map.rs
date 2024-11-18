@@ -5,6 +5,7 @@ use super::symmetric_fold::{DiffElement, MergeElement, MergeOnceWith, SymmetricD
 use super::{FilterMapOperator, MapOperator, Operator};
 use crate::symmetric_fold::SymmetricFoldMap;
 use incremental::expert::{Dependency, Node, WeakNode};
+use incremental::incrsan::NotObserver;
 use incremental::{Cutoff, Incr, Value};
 
 use crate::WithOldIO;
@@ -13,28 +14,28 @@ pub trait IncrBTreeMap<K: Value + Ord, V: Value> {
     fn incr_mapi_<F, V2>(&self, f: F) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static;
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static + NotObserver;
 
     fn incr_mapi_cutoff<F, V2>(&self, f: F, cutoff: Cutoff<V>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static;
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static + NotObserver;
 
     fn incr_filter_mapi_<F, V2>(&self, f: F) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static;
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver;
 
     fn incr_filter_mapi_cutoff<F, V2>(&self, f: F, cutoff: Cutoff<V>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static;
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver;
 
     fn incr_merge<F, V2, R>(&self, other: &Incr<BTreeMap<K, V2>>, f: F) -> Incr<BTreeMap<K, R>>
     where
         V2: Value,
         R: Value,
-        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static;
+        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static + NotObserver;
 }
 
 impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
@@ -46,7 +47,7 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
     ) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static + NotObserver,
     {
         incr_filter_mapi_generic_btree_map(self, MapOperator(f, PhantomData), None)
     }
@@ -54,7 +55,7 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
     fn incr_mapi_cutoff<F, V2>(&self, f: F, cutoff: Cutoff<V>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static,
+        F: FnMut(&K, Incr<V>) -> Incr<V2> + 'static + NotObserver,
     {
         incr_filter_mapi_generic_btree_map(self, MapOperator(f, PhantomData), Some(cutoff))
     }
@@ -67,7 +68,7 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
     ) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver,
     {
         incr_filter_mapi_generic_btree_map(self, FilterMapOperator(f, PhantomData), None)
     }
@@ -75,7 +76,7 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
     fn incr_filter_mapi_cutoff<F, V2>(&self, f: F, cutoff: Cutoff<V>) -> Incr<BTreeMap<K, V2>>
     where
         V2: Value,
-        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static,
+        F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver,
     {
         incr_filter_mapi_generic_btree_map(self, FilterMapOperator(f, PhantomData), Some(cutoff))
     }
@@ -84,7 +85,7 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
     where
         V2: Value,
         R: Value,
-        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static,
+        F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static + NotObserver,
     {
         let i = self.with_old_input_output2(other, move |old, new_left_map, new_right_map| {
             let mut did_change = false;
@@ -134,7 +135,7 @@ fn incr_filter_mapi_generic_btree_map<K, V, O, V2>(
 where
     K: Value + Ord,
     V: Value,
-    O: Operator<K, V, V2> + 'static,
+    O: Operator<K, V, V2> + 'static + NotObserver,
     O::Output: Value,
     V2: Value,
 {

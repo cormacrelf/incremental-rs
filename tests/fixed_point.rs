@@ -1,14 +1,13 @@
 use std::{cell::Cell, rc::Rc};
 
+use incremental::incrsan::NotObserver;
 use incremental::{Incr, IncrState, Observer, SubscriptionToken, Update, Value, WeakState};
 use test_log::test;
-
-// fn fixed_point(f: impl FnMut (Vec<Incr<T>>) -> Vec<Incr<T>>)
 
 fn fixed_point<T: Value>(
     state: &WeakState,
     init: T,
-    mut f: impl FnMut(&mut T) -> T + 'static,
+    mut f: impl FnMut(&mut T) -> T + 'static + NotObserver,
 ) -> Incr<T> {
     let var = state.var(init);
     let v = var.clone();
@@ -108,7 +107,7 @@ fn dependencies() {
 fn using_cutoff<T: Value>(
     state: &WeakState,
     init: T,
-    mut f: impl FnMut(&mut T) -> T + 'static,
+    mut f: impl FnMut(&mut T) -> T + 'static + NotObserver,
 ) -> (Incr<T>, UntilStableValue<T>) {
     let var = state.var(init);
     // TODO: Cloning var and using it in a node may make  a ref cycle.
@@ -315,7 +314,7 @@ fn transitive_closure() {
 fn using_cutoff_bind<T: Value, F>(init: Incr<T>, f: F) -> (Incr<T>, UntilStableValue<T>)
 where
     T: Default,
-    F: FnMut(&mut T) -> T + 'static + Clone,
+    F: FnMut(&mut T) -> T + 'static + Clone + NotObserver,
 {
     let state = init.state();
     let var = state.var(T::default());
