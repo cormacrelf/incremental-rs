@@ -756,6 +756,8 @@ pub(crate) trait ErasedNode: Debug {
     #[cfg(debug_assertions)]
     #[allow(unused)]
     fn assert_currently_running_node_is_parent(&self, name: &'static str);
+    #[cfg(debug_assertions)]
+    #[allow(unused)]
     fn has_child(&self, child: &WeakNode) -> bool;
     fn adjust_heights_bind_lhs_change(
         &self,
@@ -1401,6 +1403,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn has_child(&self, child: &WeakNode) -> bool {
         let Some(upgraded) = child.upgrade() else {
             return false;
