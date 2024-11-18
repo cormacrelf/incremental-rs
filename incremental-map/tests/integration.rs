@@ -3,7 +3,7 @@ use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 use test_log::test;
 
 use incremental::{Incr, IncrState};
-use incremental_map::Symmetric;
+use incremental_map::{symmetric_fold::SymmetricFoldMap, Symmetric};
 
 #[derive(Debug)]
 struct CallCounter(&'static str, Cell<u32>);
@@ -216,9 +216,11 @@ fn incr_partition_mapi() {
 }
 
 use incremental::Value;
-use incremental_map::{IncrUnorderedFoldWith, UnorderedFold};
+use incremental_map::UnorderedFold;
+
 struct SumFold;
-impl<K: Value + Ord> UnorderedFold<K, i32, i32> for SumFold {
+
+impl<K: Value + Ord> UnorderedFold<im_rc::OrdMap<K, i32>, K, i32, i32> for SumFold {
     fn add(&mut self, acc: i32, _key: &K, value: &i32) -> i32 {
         acc + value
     }

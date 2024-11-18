@@ -1,7 +1,7 @@
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
 
-use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, marker::PhantomData};
 
 use incremental::incrsan::NotObserver;
 use incremental::{Incr, Value};
@@ -9,7 +9,7 @@ use incremental::{Incr, Value};
 pub mod btree_map;
 #[cfg(feature = "im")]
 pub mod im_rc;
-pub(crate) mod symmetric_fold;
+pub mod symmetric_fold;
 
 pub use self::symmetric_fold::{DiffElement, MergeElement};
 
@@ -148,6 +148,14 @@ pub trait Symmetric<T> {
         V2: Value,
         F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
         T::OutputMap<V2>: Value;
+
+    fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, fold: F) -> Incr<R>
+    where
+        T: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        F: UnorderedFold<T, K, V, R> + 'static + NotObserver;
 
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
@@ -304,19 +312,14 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
     {
-        let add = Rc::new(RefCell::new(add));
-        let add2 = add.clone();
-        let remove = Rc::new(RefCell::new(remove));
-        let remove2 = remove.clone();
-        self.incr_unordered_fold_update(
+        self.incr_unordered_fold_with(
             init,
-            move |acc, key, data| add.borrow_mut()(acc, key, data),
-            move |acc, key, data| remove.borrow_mut()(acc, key, data),
-            move |acc, key, old, new| {
-                let acc = remove2.borrow_mut()(acc, key, old);
-                add2.borrow_mut()(acc, key, new)
+            PlainUnorderedFold {
+                add,
+                remove,
+                revert_to_init_when_empty,
+                phantom: PhantomData,
             },
-            revert_to_init_when_empty,
         )
     }
 
@@ -365,20 +368,14 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         )));
         i
     }
-}
 
-pub trait IncrUnorderedFoldWith<K: Value + Ord, V: Value> {
-    fn incr_unordered_fold_with<R, F>(&self, init: R, fold: F) -> Incr<R>
+    fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, mut fold: F) -> Incr<R>
     where
+        T: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
         R: Value,
-        F: UnorderedFold<K, V, R> + 'static + NotObserver;
-}
-
-impl<K: Value + Ord, V: Value> IncrUnorderedFoldWith<K, V> for Incr<::im_rc::OrdMap<K, V>> {
-    fn incr_unordered_fold_with<R, F>(&self, init: R, mut fold: F) -> Incr<R>
-    where
-        R: Value,
-        F: UnorderedFold<K, V, R> + 'static + NotObserver,
+        F: UnorderedFold<T, K, V, R> + 'static + NotObserver,
     {
         let i = self.with_old_input_output(move |old, new_in| match old {
             None => {
@@ -410,8 +407,9 @@ impl<K: Value + Ord, V: Value> IncrUnorderedFoldWith<K, V> for Incr<::im_rc::Ord
     }
 }
 
-pub trait UnorderedFold<K, V, R>
+pub trait UnorderedFold<M, K, V, R>
 where
+    M: SymmetricFoldMap<K, V>,
     K: Value + Ord,
     V: Value,
 {
@@ -426,26 +424,50 @@ where
     fn revert_to_init_when_empty(&self) -> bool {
         false
     }
-    fn initial_fold(&mut self, acc: R, input: &::im_rc::OrdMap<K, V>) -> R {
-        input.iter().fold(acc, |acc, (k, v)| self.add(acc, k, v))
+    fn initial_fold(&mut self, acc: R, input: &M) -> R {
+        input.nonincremental_fold(acc, |acc, (k, v)| self.add(acc, k, v))
     }
 }
 
+struct PlainUnorderedFold<M, K, V, R, FAdd, FRemove> {
+    add: FAdd,
+    remove: FRemove,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(M, K, V, R)>,
+}
+
+impl<M, K: Value + Ord, V: Value, R: Value, FAdd, FRemove> UnorderedFold<M, K, V, R>
+    for PlainUnorderedFold<M, K, V, R, FAdd, FRemove>
+where
+    M: SymmetricFoldMap<K, V>,
+    FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+    FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+}
 /// An implementation of [UnorderedFold] using a builder pattern and closures.
-pub struct ClosureFold<K, V, R, FAdd, FRemove, FUpdate, FInitial> {
+pub struct ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> {
     add: FAdd,
     remove: FRemove,
     update: Option<FUpdate>,
     specialized_initial: Option<FInitial>,
     revert_to_init_when_empty: bool,
-    phantom: PhantomData<(K, V, R)>,
+    phantom: PhantomData<(M, K, V, R)>,
 }
 
-impl ClosureFold<(), (), (), (), (), (), ()> {
-    pub fn new<K, V, R>(
-    ) -> ClosureFold<K, V, R, (), (), fn(R, &K, &V, &V) -> R, fn(R, &::im_rc::OrdMap<K, V>) -> R>
+impl ClosureFold<(), (), (), (), (), (), (), ()> {
+    pub fn new<M, K, V, R>(
+    ) -> ClosureFold<M, K, V, R, (), (), fn(R, &K, &V, &V) -> R, fn(R, &M) -> R>
 where {
-        ClosureFold {
+        ClosureFold::<M, K, V, R, _, _, _, _> {
             add: (),
             remove: (),
             update: None,
@@ -455,18 +477,10 @@ where {
         }
     }
 
-    pub fn new_add_remove<K, V, R, FAdd, FRemove>(
+    pub fn new_add_remove<M, K, V, R, FAdd, FRemove>(
         add: FAdd,
         remove: FRemove,
-    ) -> ClosureFold<
-        K,
-        V,
-        R,
-        FAdd,
-        FRemove,
-        fn(R, &K, &V, &V) -> R,
-        fn(R, &::im_rc::OrdMap<K, V>) -> R,
-    >
+    ) -> ClosureFold<M, K, V, R, FAdd, FRemove, fn(R, &K, &V, &V) -> R, fn(R, &M) -> R>
     where
         FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
         FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
@@ -482,10 +496,13 @@ where {
     }
 }
 
-impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
-    ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+    ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
 {
-    pub fn add<FAdd>(self, add: FAdd) -> ClosureFold<K, V, R, FAdd, FRemove_, FUpdate_, FInitial_>
+    pub fn add<FAdd>(
+        self,
+        add: FAdd,
+    ) -> ClosureFold<M, K, V, R, FAdd, FRemove_, FUpdate_, FInitial_>
     where
         FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
     {
@@ -501,7 +518,7 @@ impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
     pub fn remove<FRemove>(
         self,
         remove: FRemove,
-    ) -> ClosureFold<K, V, R, FAdd_, FRemove, FUpdate_, FInitial_>
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove, FUpdate_, FInitial_>
     where
         FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
     {
@@ -517,7 +534,7 @@ impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
     pub fn update<FUpdate>(
         self,
         update: FUpdate,
-    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate, FInitial_>
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate, FInitial_>
     where
         FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
     {
@@ -530,12 +547,13 @@ impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             phantom: self.phantom,
         }
     }
+
     pub fn specialized_initial<FInitial>(
         self,
         specialized_initial: FInitial,
-    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial>
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial>
     where
-        FInitial: for<'a> FnMut(R, &'a ::im_rc::OrdMap<K, V>) -> R + 'static + NotObserver,
+        FInitial: for<'a> FnMut(R, &'a M) -> R + 'static + NotObserver,
     {
         ClosureFold {
             add: self.add,
@@ -549,7 +567,7 @@ impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
     pub fn revert_to_init_when_empty(
         self,
         revert_to_init_when_empty: bool,
-    ) -> ClosureFold<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_> {
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_> {
         ClosureFold {
             add: self.add,
             remove: self.remove,
@@ -561,16 +579,17 @@ impl<K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
     }
 }
 
-impl<K, V, R, FAdd, FRemove, FUpdate, FInitial> UnorderedFold<K, V, R>
-    for ClosureFold<K, V, R, FAdd, FRemove, FUpdate, FInitial>
+impl<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> UnorderedFold<M, K, V, R>
+    for ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial>
 where
+    M: SymmetricFoldMap<K, V>,
     K: Value + Ord,
     V: Value,
     R: Value,
     FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
     FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
     FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
-    FInitial: for<'a> FnMut(R, &'a ::im_rc::OrdMap<K, V>) -> R + 'static + NotObserver,
+    FInitial: for<'a> FnMut(R, &'a M) -> R + 'static + NotObserver,
 {
     fn add(&mut self, acc: R, key: &K, value: &V) -> R {
         (self.add)(acc, key, value)
@@ -594,11 +613,11 @@ where
         self.revert_to_init_when_empty
     }
 
-    fn initial_fold(&mut self, init: R, input: &::im_rc::OrdMap<K, V>) -> R {
+    fn initial_fold(&mut self, init: R, input: &M) -> R {
         if let Some(closure) = &mut self.specialized_initial {
             closure(init, input)
         } else {
-            input.iter().fold(init, |acc, (k, v)| self.add(acc, k, v))
+            input.nonincremental_fold(init, |acc, (k, v)| self.add(acc, k, v))
         }
     }
 }
