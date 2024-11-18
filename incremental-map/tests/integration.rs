@@ -218,4 +218,5 @@ fn incr_partition_mapi() {
     incr.stabilise();
     assert_eq!(left_.value(), ordmap! { 2i32 => "Hello", 3 => "three" });
     assert_eq!(right.value(), ordmap! { 4i32 => "four", 5 => "five" });
+    left_.save_dot_to_file("/tmp/incr_partition_mapi.dot");
 }
