@@ -1,3 +1,4 @@
+use std::hint::black_box;
 use std::time::Instant;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -104,7 +105,7 @@ fn bench_node(c: &mut Criterion, kind: SequenceKind, size: u64) {
             for _ in 0..iters {
                 var.update(|x| x + 1);
                 incr.stabilise();
-                drop(obs.value());
+                black_box(obs.value());
             }
             start.elapsed()
         })
@@ -116,7 +117,7 @@ fn bench_stabilise(c: &mut Criterion, kind: SequenceKind, size: u64) {
         let (_var, incr, obs, _recomputed) = setup(kind, size);
         b.iter(|| {
             incr.stabilise();
-            drop(obs.value());
+            black_box(obs.value());
         })
     });
 }

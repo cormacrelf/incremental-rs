@@ -25,7 +25,7 @@ tracing-subscriber = { version = "0.3.16", default-features = false, features = 
   "smallvec",
   "tracing-log",
 ] }
-criterion = { version = "0.4.0", features = ["html_reports"] }
+criterion = { version = "0.5.1", features = ["html_reports"] }
 tracing = { version = "0.1.37", features = ["release_max_level_off"] }
 im-rc = { version = "15.1.0" }
 

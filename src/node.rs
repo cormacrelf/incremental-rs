@@ -304,7 +304,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             pty = parent.kind_debug_ty(),
             chty = child.kind().map(|k| k.debug_ty()),
         );
-        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize].clone()));
+        debug_assert!(parent_ref.weak().ptr_eq(&child_parents[parent_index as usize]));
 
         // unlink last_parent_index & child_index
         //
@@ -388,7 +388,6 @@ pub(crate) enum ParentError {
     ParentInvalidated,
     ChildHasNoValue,
     ParentDeallocated,
-    IndexMismatch,
 }
 
 impl fmt::Display for ParentError {
@@ -427,7 +426,7 @@ impl dyn ParentNodeDyn {
         if r_id != self_i_id {
             return Err(ParentError::DowncastFailed);
         }
-        Ok(ParentRef::Dyn(self, index_of_child_in_parent))
+        Ok(ParentRef::Dyn(self))
     }
 }
 
@@ -471,21 +470,21 @@ pub(crate) trait Parent2<I>: Debug + ErasedNode {
 pub(crate) enum ParentRef<'a, T> {
     I1(&'a dyn Parent1<T>),
     I2(&'a dyn Parent2<T>),
-    Dyn(&'a dyn ParentNodeDyn, i32),
+    Dyn(&'a dyn ParentNodeDyn),
 }
 impl<T: Value> ParentRef<'_, T> {
     fn erased(&self) -> &dyn ErasedNode {
         match self {
             Self::I1(w) => w.p1_erased(),
             Self::I2(w) => w.p2_erased(),
-            Self::Dyn(w, _i) => w.dyn_erased(),
+            Self::Dyn(w) => w.dyn_erased(),
         }
     }
     fn weak(&self) -> ParentWeak<T> {
         match self {
             Self::I1(w) => w.p1_parent_weak(),
             Self::I2(w) => w.p2_parent_weak(),
-            Self::Dyn(w, i) => ParentWeak::Dynamic(w.dyn_parent_weak(), *i),
+            Self::Dyn(w) => ParentWeak::Dynamic(w.dyn_parent_weak()),
         }
     }
 }
@@ -496,7 +495,7 @@ impl<T: Value> ParentRef<'_, T> {
 pub(crate) enum ParentWeak<T> {
     Input1(Weak<dyn Parent1<T>>),
     Input2(Weak<dyn Parent2<T>>),
-    Dynamic(Weak<dyn ParentNodeDyn>, i32),
+    Dynamic(Weak<dyn ParentNodeDyn>),
 }
 
 impl<T: Value> ParentWeak<T> {
@@ -504,15 +503,15 @@ impl<T: Value> ParentWeak<T> {
         match self {
             Self::Input1(w) => w.upgrade().map(|x| x.p1_packed()),
             Self::Input2(w) => w.upgrade().map(|x| x.p2_packed()),
-            Self::Dynamic(w, _index) => w.upgrade().map(|x| x.dyn_packed()),
+            Self::Dynamic(w) => w.upgrade().map(|x| x.dyn_packed()),
         }
         .ok_or(ParentError::ParentDeallocated)
     }
     fn ptr_eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Input1(a), Self::Input1(b)) => a.ptr_eq(b),
-            (Self::Input2(a), Self::Input2(b)) => a.ptr_eq(b),
-            (Self::Dynamic(a, ix_a), Self::Dynamic(b, ix_b)) => ix_a == ix_b && a.ptr_eq(b),
+            (Self::Input1(a), Self::Input1(b)) => crate::weak_thin_ptr_eq(a, b),
+            (Self::Input2(a), Self::Input2(b)) => crate::weak_thin_ptr_eq(a, b),
+            (Self::Dynamic(a), Self::Dynamic(b)) => crate::weak_thin_ptr_eq(a, b),
             _ => false,
         }
     }
@@ -536,15 +535,7 @@ impl<T: Value> ParentNode<T> for ParentWeak<T> {
                 i2.p2_child_changed(child, child_index, old_value_opt)?;
                 Ok(i2.p2_packed())
             }
-            Self::Dynamic(idyn, index_of_child_in_parent) => {
-                // Maybe we don't actually need to store the index, since the child does know
-                // what index it is in the parent. Alternatively, storing the
-                // `index_of_child_in_parent` in the parent ref itself is probably more robust
-                // than the array manipulation in add/remove parent, which took many tries
-                // to get right.
-                if *index_of_child_in_parent != child_index {
-                    return Err(ParentError::IndexMismatch);
-                }
+            Self::Dynamic(idyn) => {
                 let dyn_parent = idyn.upgrade().ok_or(ParentError::ParentDeallocated)?;
                 dyn_parent.dyn_child_changed(
                     child.erased_input(),
@@ -765,6 +756,8 @@ pub(crate) trait ErasedNode: Debug {
     #[cfg(debug_assertions)]
     #[allow(unused)]
     fn assert_currently_running_node_is_parent(&self, name: &'static str);
+    #[cfg(debug_assertions)]
+    #[allow(unused)]
     fn has_child(&self, child: &WeakNode) -> bool;
     fn adjust_heights_bind_lhs_change(
         &self,
@@ -1410,6 +1403,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn has_child(&self, child: &WeakNode) -> bool {
         let Some(upgraded) = child.upgrade() else {
             return false;
@@ -1770,10 +1764,15 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             expert.swap_children(edge_index as usize, last_edge_index as usize);
             // if debug then Node.invariant ignore node;
         }
-        let popped_edge = expert.pop_child_edge().unwrap();
-        debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
 
+        // OCaml: let popped_edge = expert.pop_child_edge().unwrap();
+        // debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
+        //
+        // Even though we delay popping the child edge, we do need to force stale so we can insert
+        // into the recompute heap.
+        expert.force_stale.set(true);
         debug_assert!(self.is_stale());
+
         if self.is_necessary() {
             let state = self.state();
             self.expert_remove_child(dyn_edge, last_edge_index, &state);
@@ -1784,6 +1783,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 expert.decr_invalid_children();
             }
         }
+
+        // Difference: OCaml version removes it above.
+        // But we need the last child edge to stay alive,
+        // long enough to report its type id during expert_remove_child.
+        let popped_edge = expert.pop_child_edge().unwrap();
+        debug_assert!(crate::dyn_thin_ptr_eq(&*popped_edge, dyn_edge));
     }
 
     #[rustfmt::skip]
