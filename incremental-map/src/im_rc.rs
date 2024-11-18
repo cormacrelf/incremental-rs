@@ -287,6 +287,22 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         A: Value,
         B: Value,
         F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver;
+
+    /// Partitions the input such that key-value pairs for which the predicate
+    /// returns `true` are in the left map, and pairs for which it return `false`
+    /// are on the right map.
+    fn incr_partition<F>(&self, mut pred: F) -> Incr<(OrdMap<K, V>, OrdMap<K, V>)>
+    where
+        F: FnMut(&K, &V) -> bool + 'static + NotObserver,
+    {
+        self.incr_partition_mapi(move |k, v| {
+            if pred(k, v) {
+                Either::Left(v.clone())
+            } else {
+                Either::Right(v.clone())
+            }
+        })
+    }
 }
 
 impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {

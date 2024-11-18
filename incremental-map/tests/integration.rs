@@ -204,13 +204,7 @@ fn incr_partition_mapi() {
 
     let incr = IncrState::new();
     let var = incr.var(ordmap! { 2i32 => "Hello", 3 => "three", 4 => "four", 5 => "five" });
-    let partitioned = var.watch().incr_partition_mapi(|key, value| {
-        if *key < 4 {
-            Either::Left(*value)
-        } else {
-            Either::Right(*value)
-        }
-    });
+    let partitioned = var.watch().incr_partition(|key, _value| *key < 4);
 
     let left_ = partitioned.map_ref(|(a, _)| a).observe();
     let right = partitioned.map_ref(|(_, b)| b).observe();
