@@ -10,6 +10,7 @@ license = "MIT"
 [features]
 default = []
 im = ["dep:im-rc"]
+nightly-incrsan = ["incremental/nightly-incrsan"]
 
 [dependencies]
 im-rc = { workspace = true, optional = true }
