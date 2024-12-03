@@ -130,18 +130,8 @@ where
                 .next()
                 .zip(self.b.next())
                 .map(|(a, b)| MergeElement::Both(a, b)),
-            Ordering::Less => {
-                if self.fused.is_none() {
-                    drop(self.b.next());
-                }
-                self.a.next().map(MergeElement::Left)
-            }
-            Ordering::Greater => {
-                if self.fused.is_none() {
-                    drop(self.a.next());
-                }
-                self.b.next().map(MergeElement::Right)
-            }
+            Ordering::Less => self.a.next().map(MergeElement::Left),
+            Ordering::Greater => self.b.next().map(MergeElement::Right),
         }
     }
 }
