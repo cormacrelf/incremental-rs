@@ -11,7 +11,7 @@ use crate::symmetric_fold::{
     SymmetricFoldMap, SymmetricMapMap,
 };
 
-use crate::{FilterMapOperator, IncrMap, MapOperator, Operator, WithOldIO};
+use crate::{FilterMapOperator, IncrMap, MapOperator, Operator, UnorderedFold, WithOldIO};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -402,31 +402,63 @@ impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {
         B: Value,
         F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver,
     {
-        let empty = OrdMap::new();
-        let empty2 = OrdMap::new();
-        let f1 = Rc::new(RefCell::new(f));
-        let f2 = f1.clone();
-        self.incr_unordered_fold_update(
-            (empty, empty2),
-            move |(first, second), key, data| match f1.borrow_mut()(key, data) {
-                Either::Left(data) => (OrdMap::update(&first, key.clone(), data), second),
-                Either::Right(data) => (first, OrdMap::update(&second, key.clone(), data)),
-            },
-            move |(first, second), key, _| {
-                (OrdMap::without(&first, key), OrdMap::without(&second, key))
-            },
-            move |(first, second), key, _old_data, data| match f2.borrow_mut()(key, data) {
-                Either::Left(data) => (
-                    OrdMap::update(&first, key.clone(), data),
-                    OrdMap::without(&second, key),
-                ),
-                Either::Right(data) => (
-                    OrdMap::without(&first, key),
-                    OrdMap::update(&second, key.clone(), data),
-                ),
-            },
-            true,
-        )
+        self.incr_unordered_fold_with((OrdMap::new(), OrdMap::new()), PartitionMapi(f))
+    }
+}
+
+struct PartitionMapi<F>(F);
+
+impl<K: Ord + Value, V: Value, F, A: Value, B: Value>
+    UnorderedFold<OrdMap<K, V>, K, V, (OrdMap<K, A>, OrdMap<K, B>)> for PartitionMapi<F>
+where
+    F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver,
+{
+    fn add(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        match (self.0)(key, data) {
+            Either::Left(val) => _ = left.insert(key.clone(), val),
+            Either::Right(val) => _ = right.insert(key.clone(), val),
+        }
+        (left, right)
+    }
+
+    fn remove(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        _data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        left.remove(key);
+        right.remove(key);
+        (left, right)
+    }
+
+    fn update(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        _old: &V,
+        data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        match (self.0)(key, data) {
+            Either::Left(val) => {
+                left.insert(key.clone(), val);
+                right.remove(key);
+            }
+            Either::Right(val) => {
+                left.remove(key);
+                right.insert(key.clone(), val);
+            }
+        }
+        (left, right)
+    }
+
+    fn revert_to_init_when_empty(&self) -> bool {
+        true
     }
 }
 
