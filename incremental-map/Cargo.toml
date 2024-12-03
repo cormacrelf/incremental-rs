@@ -7,6 +7,10 @@ license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# version separately from incremental
+[package.metadata.workspaces]
+independent = true
+
 [features]
 default = []
 im = ["dep:im-rc"]
