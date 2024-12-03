@@ -3,7 +3,7 @@ use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 use test_log::test;
 
 use incremental::{Incr, IncrState};
-use incremental_map::{symmetric_fold::SymmetricFoldMap, Symmetric};
+use incremental_map::prelude::*;
 
 #[derive(Debug)]
 struct CallCounter(&'static str, Cell<u32>);

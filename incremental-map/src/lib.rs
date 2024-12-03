@@ -13,6 +13,20 @@ pub mod symmetric_fold;
 
 pub use self::symmetric_fold::{DiffElement, MergeElement};
 
+pub mod prelude {
+    pub use super::btree_map::IncrBTreeMap;
+    #[cfg(feature = "im")]
+    pub use super::im_rc::IncrOrdMap;
+    pub use super::symmetric_fold::DiffElement;
+    pub use super::symmetric_fold::GenericMap;
+    pub use super::symmetric_fold::MergeElement;
+    pub use super::symmetric_fold::MutableMap;
+    pub use super::symmetric_fold::SymmetricFoldMap;
+    pub use super::symmetric_fold::SymmetricMapMap;
+    pub use super::IncrMap;
+    pub use super::UnorderedFold;
+}
+
 use symmetric_fold::{GenericMap, MutableMap, SymmetricFoldMap, SymmetricMapMap};
 
 trait Operator<K, V, V2> {
@@ -62,6 +76,7 @@ where
     }
 }
 
+/// Internal -- variations on map_with_old
 pub(crate) trait WithOldIO<T> {
     fn with_old_input_output<R, F>(&self, f: F) -> Incr<R>
     where
@@ -110,51 +125,62 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
         })
     }
 }
-
-pub trait Symmetric<T> {
-    fn incr_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+/// Incremental maps, filter maps and folds on incremental key-value containers (maps).
+///
+/// Common functions available on `Incr<BTreeMap>` etc, with blanket
+/// implementation covering `M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>`.
+///
+/// So to get a lot of functionality for a new map type, you don't have to
+/// implement much. Just those two traits, and then you get all these methods
+/// for free.
+///
+/// **NOTE**: there are additional methods available on [crate::prelude::IncrBTreeMap] and
+/// [crate::prelude::IncrOrdMap] (with the `im` feature).
+///
+pub trait IncrMap<M> {
+    fn incr_map<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
     fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, fold: F) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
-        F: UnorderedFold<T, K, V, R> + 'static + NotObserver;
+        F: UnorderedFold<M, K, V, R> + 'static + NotObserver;
 
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
@@ -164,7 +190,7 @@ pub trait Symmetric<T> {
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
@@ -180,7 +206,7 @@ pub trait Symmetric<T> {
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
@@ -189,79 +215,79 @@ pub trait Symmetric<T> {
         FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver;
 }
 
-impl<T: Value> Symmetric<T> for Incr<T> {
+impl<M: Value> IncrMap<M> for Incr<M> {
     #[inline]
-    fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_map -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
     #[inline]
-    fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_map -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
     #[inline]
-    fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_mapi -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
-    fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
             (_, 0) | (None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();
-                let _: &mut <T::OutputMap<V2> as MutableMap<K, V2>>::UnderlyingMap = old_in
+                let _: &mut <M::OutputMap<V2> as MutableMap<K, V2>>::UnderlyingMap = old_in
                     .symmetric_fold(input, old_out_mut, |out, (key, change)| {
                         did_change = true;
                         match change {
@@ -291,7 +317,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_mapi -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
@@ -304,7 +330,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
@@ -331,7 +357,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
@@ -359,11 +385,11 @@ impl<T: Value> Symmetric<T> for Incr<T> {
 
     fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, mut fold: F) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
-        F: UnorderedFold<T, K, V, R> + 'static + NotObserver,
+        F: UnorderedFold<M, K, V, R> + 'static + NotObserver,
     {
         let i = self.with_old_input_output(move |old, new_in| match old {
             None => {
@@ -397,7 +423,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
 
 /// Defines an unordered fold for a given map, key, value and output type.
 ///
-/// Used with [Symmetric::incr_unordered_fold_with].
+/// Used with [IncrMap::incr_unordered_fold_with].
 ///
 /// Implementations get &mut access to self. So you can store things in
 /// the type that implements this.

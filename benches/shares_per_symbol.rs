@@ -4,7 +4,7 @@ use im_rc::{ordmap::Entry, OrdMap};
 use incremental::incrsan::NotObserver;
 use incremental::{Incr, IncrState, Value};
 use incremental_map::im_rc::IncrOrdMap;
-use incremental_map::Symmetric;
+use incremental_map::IncrMap;
 use tracing::Level;
 
 #[derive(Copy, Clone, PartialEq, Debug)]

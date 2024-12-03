@@ -11,7 +11,7 @@ use crate::symmetric_fold::{
     SymmetricFoldMap, SymmetricMapMap,
 };
 
-use crate::{FilterMapOperator, MapOperator, Operator, Symmetric, WithOldIO};
+use crate::{FilterMapOperator, IncrMap, MapOperator, Operator, WithOldIO};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -284,6 +284,9 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         R: Value,
         F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static + NotObserver;
 
+    /// Partitions the input such that key-value pairs for which the predicate
+    /// returns [`Either::Left`] are in the left map, and pairs for which it returns
+    /// [`Either::Right`] are in the right map.
     fn incr_partition_mapi<F, A, B>(&self, f: F) -> Incr<(OrdMap<K, A>, OrdMap<K, B>)>
     where
         A: Value,
@@ -291,8 +294,8 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver;
 
     /// Partitions the input such that key-value pairs for which the predicate
-    /// returns `true` are in the left map, and pairs for which it return `false`
-    /// are on the right map.
+    /// returns `true` are in the left map, and pairs for which it returns `false`
+    /// are in the right map.
     fn incr_partition<F>(&self, mut pred: F) -> Incr<(OrdMap<K, V>, OrdMap<K, V>)>
     where
         F: FnMut(&K, &V) -> bool + 'static + NotObserver,
