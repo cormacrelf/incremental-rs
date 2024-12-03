@@ -326,9 +326,9 @@ impl<T: Value> Symmetric<T> for Incr<T> {
     fn incr_unordered_fold_update<FAdd, FRemove, FUpdate, K, V, R>(
         &self,
         init: R,
-        mut add: FAdd,
-        mut remove: FRemove,
-        mut update: FUpdate,
+        add: FAdd,
+        remove: FRemove,
+        update: FUpdate,
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
@@ -340,30 +340,19 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver,
     {
-        let i = self.with_old_input_output(move |old, new_in| match old {
-            None => {
-                let newmap = new_in.nonincremental_fold(init.clone(), |acc, (k, v)| add(acc, k, v));
-                (newmap, true)
-            }
-            Some((old_in, old_out)) => {
-                if revert_to_init_when_empty && new_in.is_empty() {
-                    return (init.clone(), !old_in.is_empty());
-                }
-                let mut did_change = false;
-                let folded: R = old_in.symmetric_fold(new_in, old_out, |acc, (key, difference)| {
-                    did_change = true;
-                    match difference {
-                        DiffElement::Left(value) => remove(acc, key, value),
-                        DiffElement::Right(value) => add(acc, key, value),
-                        DiffElement::Unequal(lv, rv) => update(acc, key, lv, rv),
-                    }
-                });
-                (folded, did_change)
-            }
-        });
+        let i = self.incr_unordered_fold_with(
+            init,
+            UpdateUnorderedFold {
+                add,
+                remove,
+                update,
+                revert_to_init_when_empty,
+                phantom: PhantomData,
+            },
+        );
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
-            "incr_unordered_fold -> {}",
+            "incr_unordered_fold_update -> {}",
             std::any::type_name::<R>()
         )));
         i
@@ -400,7 +389,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         });
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
-            "incr_unordered_fold -> {}",
+            "incr_unordered_fold_with -> {}",
             std::any::type_name::<R>()
         )));
         i
@@ -453,6 +442,37 @@ where
         self.revert_to_init_when_empty
     }
 }
+
+struct UpdateUnorderedFold<M, K, V, R, FAdd, FRemove, FUpdate> {
+    add: FAdd,
+    remove: FRemove,
+    update: FUpdate,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(M, K, V, R)>,
+}
+
+impl<M, K: Value + Ord, V: Value, R: Value, FAdd, FRemove, FUpdate> UnorderedFold<M, K, V, R>
+    for UpdateUnorderedFold<M, K, V, R, FAdd, FRemove, FUpdate>
+where
+    M: SymmetricFoldMap<K, V>,
+    FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+    FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver,
+    FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
+        (self.update)(acc, key, old, new)
+    }
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+}
+
 /// An implementation of [UnorderedFold] using a builder pattern and closures.
 pub struct ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> {
     add: FAdd,
