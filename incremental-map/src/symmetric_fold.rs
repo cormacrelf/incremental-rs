@@ -236,6 +236,33 @@ pub enum MergeElement<L, R> {
     Both(L, R),
 }
 
+impl<L, R> MergeElement<L, R> {
+    pub fn left(&self) -> Option<&L> {
+        match self {
+            Self::Left(l) | Self::Both(l, _) => Some(l),
+            _ => None,
+        }
+    }
+    pub fn into_left(self) -> Option<L> {
+        match self {
+            Self::Left(l) | Self::Both(l, _) => Some(l),
+            _ => None,
+        }
+    }
+    pub fn right(&self) -> Option<&R> {
+        match self {
+            Self::Right(r) | Self::Both(_, r) => Some(r),
+            _ => None,
+        }
+    }
+    pub fn into_right(self) -> Option<R> {
+        match self {
+            Self::Right(r) | Self::Both(_, r) => Some(r),
+            _ => None,
+        }
+    }
+}
+
 impl<L, R> MergeElement<&L, &R>
 where
     L: Clone,

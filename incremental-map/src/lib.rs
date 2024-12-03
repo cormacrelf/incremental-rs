@@ -23,6 +23,7 @@ pub mod prelude {
     pub use super::symmetric_fold::MutableMap;
     pub use super::symmetric_fold::SymmetricFoldMap;
     pub use super::symmetric_fold::SymmetricMapMap;
+    pub use super::ClosureFold;
     pub use super::IncrMap;
     pub use super::UnorderedFold;
 }
