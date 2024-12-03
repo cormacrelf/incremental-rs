@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use im_rc::{ordmap::Entry, OrdMap};
+use incremental::incrsan::NotObserver;
 use incremental::{Incr, IncrState, Value};
 use incremental_map::im_rc::IncrOrdMap;
 use incremental_map::Symmetric;
@@ -38,7 +39,7 @@ impl std::fmt::Debug for Order {
 
 fn index_by<KInner: Value + Ord, KOuter: Value + Ord, V: Value>(
     map: Incr<OrdMap<KInner, V>>,
-    get_outer_index: impl Fn(&V) -> KOuter + Clone + 'static,
+    get_outer_index: impl Fn(&V) -> KOuter + Clone + 'static + NotObserver,
 ) -> Incr<OrdMap<KOuter, OrdMap<KInner, V>>> {
     let get_outer_index_ = get_outer_index.clone();
     let add = move |mut acc: OrdMap<KOuter, OrdMap<KInner, V>>, key_inner: &KInner, value: &V| {
@@ -151,7 +152,7 @@ fn shares_per_symbol(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u3
 fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
     fn update_sym_map(
         op: fn(u32, u32) -> u32,
-    ) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> {
+    ) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> + NotObserver {
         move |mut acc, _k, o| {
             match acc.entry(*_k) {
                 Entry::Vacant(e) => {
