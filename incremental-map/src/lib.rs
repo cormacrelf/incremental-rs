@@ -523,7 +523,7 @@ pub struct ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> {
     add: FAdd,
     remove: FRemove,
     update: Option<FUpdate>,
-    specialized_initial: Option<FInitial>,
+    initial: Option<FInitial>,
     revert_to_init_when_empty: bool,
     phantom: PhantomData<(M, K, V, R)>,
 }
@@ -536,7 +536,7 @@ where {
             add: (),
             remove: (),
             update: None,
-            specialized_initial: None,
+            initial: None,
             revert_to_init_when_empty: false,
             phantom: PhantomData,
         }
@@ -554,7 +554,7 @@ where {
             add,
             remove,
             update: None,
-            specialized_initial: None,
+            initial: None,
             revert_to_init_when_empty: false,
             phantom: PhantomData,
         }
@@ -575,7 +575,7 @@ impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             add,
             remove: self.remove,
             update: None,
-            specialized_initial: None,
+            initial: None,
             revert_to_init_when_empty: false,
             phantom: PhantomData,
         }
@@ -591,7 +591,7 @@ impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             add: self.add,
             remove,
             update: None,
-            specialized_initial: None,
+            initial: None,
             revert_to_init_when_empty: false,
             phantom: PhantomData,
         }
@@ -607,15 +607,15 @@ impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             add: self.add,
             remove: self.remove,
             update: Some(update),
-            specialized_initial: self.specialized_initial,
+            initial: self.initial,
             revert_to_init_when_empty: self.revert_to_init_when_empty,
             phantom: self.phantom,
         }
     }
 
-    pub fn specialized_initial<FInitial>(
+    pub fn initial<FInitial>(
         self,
-        specialized_initial: FInitial,
+        initial: FInitial,
     ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial>
     where
         FInitial: for<'a> FnMut(R, &'a M) -> R + 'static + NotObserver,
@@ -624,7 +624,7 @@ impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             add: self.add,
             remove: self.remove,
             update: self.update,
-            specialized_initial: Some(specialized_initial),
+            initial: Some(initial),
             revert_to_init_when_empty: self.revert_to_init_when_empty,
             phantom: self.phantom,
         }
@@ -637,7 +637,7 @@ impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
             add: self.add,
             remove: self.remove,
             update: self.update,
-            specialized_initial: self.specialized_initial,
+            initial: self.initial,
             revert_to_init_when_empty,
             phantom: self.phantom,
         }
@@ -679,7 +679,7 @@ where
     }
 
     fn initial_fold(&mut self, init: R, input: &M) -> R {
-        if let Some(closure) = &mut self.specialized_initial {
+        if let Some(closure) = &mut self.initial {
             closure(init, input)
         } else {
             input.nonincremental_fold(init, |acc, (k, v)| self.add(acc, k, v))

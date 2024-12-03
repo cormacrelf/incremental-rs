@@ -269,7 +269,8 @@ fn test_types() {
     let fold = ClosureFold::new()
         .add(|acc, _k, v| acc + v)
         .remove(|acc, _k, v| acc - v)
-        .update(|acc, _k, old, new| acc - old + new);
+        .update(|acc, _k, old, new| acc - old + new)
+        .revert_to_init_when_empty(true);
     let folded = var.watch().incr_unordered_fold_with(0, fold);
     let obs = folded.observe();
     state.stabilise();
