@@ -7,8 +7,8 @@ use incremental::incrsan::NotObserver;
 use incremental::{Cutoff, Incr, Value};
 
 use crate::symmetric_fold::{
-    DiffElement, GenericMap, MergeElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap,
-    SymmetricMapMap,
+    DiffElement, GenericMap, MergeElement, MergeOnceWith, MutableMap, SymmetricDiffMap,
+    SymmetricFoldMap, SymmetricMapMap,
 };
 
 use crate::{FilterMapOperator, MapOperator, Operator, Symmetric, WithOldIO};
@@ -100,15 +100,17 @@ impl<K: Ord + Clone, V: Clone> GenericMap<K, V> for OrdMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> SymmetricMapMap<K, V> for OrdMap<K, V> {
+impl<K: Ord + Clone, V: Clone> MutableMap<K, V> for OrdMap<K, V> {
     type UnderlyingMap = Self;
-
-    type OutputMap<V2: PartialEq + Clone> = OrdMap<K, V2>;
 
     #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         self
     }
+}
+
+impl<K: Ord + Clone, V: Clone> SymmetricMapMap<K, V> for OrdMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone> = OrdMap<K, V2>;
 
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,

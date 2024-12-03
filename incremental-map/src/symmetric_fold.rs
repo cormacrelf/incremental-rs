@@ -358,6 +358,7 @@ impl<K: Ord, V: PartialEq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
     }
 }
 
+/// A trait implemented by `BTreeMap` and `im_rc::OrdMap`.
 pub trait GenericMap<K, V> {
     fn remove(&mut self, key: &K) -> Option<V>;
     fn insert(&mut self, key: K, value: V) -> Option<V>;
@@ -366,19 +367,27 @@ pub trait GenericMap<K, V> {
 impl<K: Ord, V> GenericMap<K, V> for BTreeMap<K, V> {
     #[inline]
     fn remove(&mut self, key: &K) -> Option<V> {
-        self.remove(key)
+        BTreeMap::remove(self, key)
     }
 
     #[inline]
     fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.insert(key, value)
+        BTreeMap::insert(self, key, value)
     }
 }
 
-pub trait SymmetricMapMap<K, V> {
+/// A trait implemented by `BTreeMap`, `im_rc::OrdMap` and `Rc<BTreeMap>`.
+///
+/// You frequently want to clone incrementals a lot. Making it so
+pub trait MutableMap<K, V> {
     type UnderlyingMap: GenericMap<K, V>;
-    type OutputMap<V2: PartialEq + Clone>: SymmetricMapMap<K, V2>;
+    /// For Rc<BTreeMap>, this is BTreeMap.
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap;
+}
+
+pub trait SymmetricMapMap<K, V>: MutableMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone>: SymmetricMapMap<K, V2>;
+
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,
@@ -396,16 +405,20 @@ pub trait SymmetricFoldMap<K, V> {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Basically `self.iter().fold(init, f)`.
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R;
 }
 
-impl<K: Ord + Clone, V: PartialEq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+impl<K: Ord + Clone, V: Clone> MutableMap<K, V> for Rc<BTreeMap<K, V>> {
     type UnderlyingMap = BTreeMap<K, V>;
-    type OutputMap<V2: PartialEq + Clone> = Rc<BTreeMap<K, V2>>;
     #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         Rc::make_mut(self)
     }
+}
+
+impl<K: Ord + Clone, V: PartialEq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+    type OutputMap<V2: PartialEq + Clone> = Rc<BTreeMap<K, V2>>;
     #[inline]
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
@@ -435,12 +448,16 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
     }
 }
 
-impl<K: Ord + Clone, V: PartialEq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     type UnderlyingMap = Self;
-    type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
+    #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         self
     }
+}
+
+impl<K: Ord + Clone, V> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,

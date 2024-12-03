@@ -13,7 +13,7 @@ pub mod symmetric_fold;
 
 pub use self::symmetric_fold::{DiffElement, MergeElement};
 
-use symmetric_fold::{GenericMap, SymmetricFoldMap, SymmetricMapMap};
+use symmetric_fold::{GenericMap, MutableMap, SymmetricFoldMap, SymmetricMapMap};
 
 trait Operator<K, V, V2> {
     type Output;
@@ -262,7 +262,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();
-                let _: &mut <T::OutputMap<V2> as SymmetricMapMap<K, V2>>::UnderlyingMap = old_in
+                let _: &mut <T::OutputMap<V2> as MutableMap<K, V2>>::UnderlyingMap = old_in
                     .symmetric_fold(input, old_out_mut, |out, (key, change)| {
                         did_change = true;
                         match change {
@@ -396,23 +396,42 @@ impl<T: Value> Symmetric<T> for Incr<T> {
     }
 }
 
+/// Defines an unordered fold for a given map, key, value and output type.
+///
+/// Used with [Symmetric::incr_unordered_fold_with].
+///
+/// Implementations get &mut access to self. So you can store things in
+/// the type that implements this.
 pub trait UnorderedFold<M, K, V, R>
 where
     M: SymmetricFoldMap<K, V>,
     K: Value + Ord,
     V: Value,
 {
+    /// How to add a key/value pair to the fold value
+    ///
+    /// E.g. `|acc, _, value| acc + value` for a signed integer.
     fn add(&mut self, acc: R, key: &K, value: &V) -> R;
+
+    /// How to remove a key/value pair from the fold value
+    ///
+    /// E.g. `|acc, _, value| acc - value` for a signed integer.
     fn remove(&mut self, acc: R, key: &K, value: &V) -> R;
-    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
-        let r = self.remove(acc, key, old);
-        let r = self.add(r, key, new);
-        r
+
+    /// Default implementation is `self.add(self.remove(acc, key, old), key, new)`
+    fn update(&mut self, mut acc: R, key: &K, old: &V, new: &V) -> R {
+        acc = self.remove(acc, key, old);
+        self.add(acc, key, new)
     }
+
+    /// If we have emptied the map, can we just reset to the initial value?
+    /// Or do we have to call remove() on everything that was removed?
     #[inline]
     fn revert_to_init_when_empty(&self) -> bool {
         false
     }
+
+    /// Optimize the initial fold
     fn initial_fold(&mut self, acc: R, input: &M) -> R {
         input.nonincremental_fold(acc, |acc, (k, v)| self.add(acc, k, v))
     }
