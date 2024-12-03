@@ -1,7 +1,7 @@
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
 
-use std::{cell::RefCell, marker::PhantomData};
+use std::marker::PhantomData;
 
 use incremental::incrsan::NotObserver;
 use incremental::{Incr, Value};
@@ -81,9 +81,9 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
         R: Value,
         F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static + NotObserver,
     {
-        let old_input: RefCell<Option<T>> = RefCell::new(None);
+        let mut old_input: Option<T> = None;
         self.map_with_old(move |old_opt, a| {
-            let mut oi = old_input.borrow_mut();
+            let oi = &mut old_input;
             let (b, didchange) = f(old_opt.and_then(|x| oi.take().map(|oi| (oi, x))), a);
             *oi = Some(a.clone());
             (b, didchange)
@@ -96,11 +96,11 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
         T2: Value,
         F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static + NotObserver,
     {
-        let old_input: RefCell<Option<(T, T2)>> = RefCell::new(None);
+        let mut old_input: Option<(T, T2)> = None;
         // TODO: too much cloning
         self.map2(other, |a, b| (a.clone(), b.clone()))
             .map_with_old(move |old_opt, (a, b)| {
-                let mut oi = old_input.borrow_mut();
+                let oi = &mut old_input;
                 let (r, didchange) = f(
                     old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
                     a,
