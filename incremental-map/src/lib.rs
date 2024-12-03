@@ -98,17 +98,16 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
     {
         let mut old_input: Option<(T, T2)> = None;
         // TODO: too much cloning
-        self.map2(other, |a, b| (a.clone(), b.clone()))
-            .map_with_old(move |old_opt, (a, b)| {
-                let oi = &mut old_input;
-                let (r, didchange) = f(
-                    old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
-                    a,
-                    b,
-                );
-                *oi = Some((a.clone(), b.clone()));
-                (r, didchange)
-            })
+        self.zip(other).map_with_old(move |old_opt, (a, b)| {
+            let oi = &mut old_input;
+            let (r, didchange) = f(
+                old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
+                a,
+                b,
+            );
+            *oi = Some((a.clone(), b.clone()));
+            (r, didchange)
+        })
     }
 }
 
