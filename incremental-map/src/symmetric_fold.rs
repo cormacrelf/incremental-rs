@@ -228,8 +228,11 @@ where
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MergeElement<L, R> {
+    /// A key in `incr_merge` was present only in the left map
     Left(L),
+    /// A key in `incr_merge` was present only in the right map
     Right(R),
+    /// A key in `incr_merge` was present in both maps
     Both(L, R),
 }
 

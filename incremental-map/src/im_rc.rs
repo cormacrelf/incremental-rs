@@ -278,6 +278,14 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver;
 
+    /// Merge two maps incrementally, where
+    ///
+    /// - if a key appears only in self, the predicate runs with [`MergeElement::Left`]
+    /// - if a key appears only in other, the predicate runs with [`MergeElement::Right`]
+    /// - if a key appears in both, the predicate runs with [`MergeElement::Both`]
+    ///
+    /// The predicate is only re-run for added/removed/modified keys in each map, using the
+    /// symmetric diff property.
     fn incr_merge<F, V2, R>(&self, other: &Incr<OrdMap<K, V2>>, f: F) -> Incr<OrdMap<K, R>>
     where
         V2: Value,
