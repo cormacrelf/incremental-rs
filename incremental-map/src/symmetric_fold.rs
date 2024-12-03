@@ -84,26 +84,26 @@ where
 {
     a: Peekable<I>,
     b: Peekable<J>,
-    f: F,
+    fcmp: F,
     fused: Option<bool>,
 }
 
-impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering> MergeOnceWith<I, J, F> {
-    pub(crate) fn new(a: I, b: J, f: F) -> Self {
+impl<I: Iterator, J: Iterator, FCmp: Fn(&I::Item, &J::Item) -> Ordering> MergeOnceWith<I, J, FCmp> {
+    pub(crate) fn new(a: I, b: J, fcmp: FCmp) -> Self {
         Self {
             a: a.peekable(),
             b: b.peekable(),
-            f,
+            fcmp,
             fused: None,
         }
     }
 }
 
-impl<I, J, F> Iterator for MergeOnceWith<I, J, F>
+impl<I, J, FCmp> Iterator for MergeOnceWith<I, J, FCmp>
 where
     I: Iterator,
     J: Iterator,
-    F: Fn(&I::Item, &J::Item) -> Ordering,
+    FCmp: Fn(&I::Item, &J::Item) -> Ordering,
 {
     type Item = MergeElement<I::Item, J::Item>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -111,7 +111,7 @@ where
             Some(true) => Ordering::Less,
             Some(false) => Ordering::Greater,
             None => match (self.a.peek(), self.b.peek()) {
-                (Some(a), Some(b)) => (self.f)(a, b),
+                (Some(a), Some(b)) => (self.fcmp)(a, b),
                 (Some(_), None) => {
                     self.fused = Some(true);
                     Ordering::Less
