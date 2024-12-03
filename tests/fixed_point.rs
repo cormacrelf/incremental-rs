@@ -269,7 +269,7 @@ fn two_fixedpoints_combined() {
     assert_eq!(combined.value(), 0);
 }
 
-#[cfg(feature = "im-rc")]
+#[cfg(feature = "im")]
 #[test]
 fn transitive_closure() {
     use im_rc::{hashmap, hashset, HashMap, HashSet};
@@ -346,7 +346,7 @@ where
     (output, until)
 }
 
-#[cfg(feature = "im-rc")]
+#[cfg(feature = "im")]
 mod transitive_closure {
     use super::*;
     use im_rc::{hashmap, hashset, HashMap, HashSet};

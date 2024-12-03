@@ -2,8 +2,9 @@ use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
 use test_log::test;
 
+use incremental::Incr;
 use incremental::IncrState;
-use incremental_map::Symmetric;
+use incremental_map::prelude::*;
 
 #[derive(Debug)]
 struct CallCounter(&'static str, Cell<u32>);
@@ -194,4 +195,162 @@ fn incr_filter_mapi() {
     var.set(rc);
     incr.stabilise();
     assert_eq!(*counter, 3);
+}
+
+#[cfg(feature = "im")]
+#[test]
+fn incr_partition_mapi() {
+    use im_rc::ordmap;
+
+    let incr = IncrState::new();
+    let var = incr.var(ordmap! { 2i32 => "Hello", 3 => "three", 4 => "four", 5 => "five" });
+    let partitioned = var.watch().incr_partition(|key, _value| *key < 4);
+
+    let left_ = partitioned.map_ref(|(a, _)| a).observe();
+    let right = partitioned.map_ref(|(_, b)| b).observe();
+
+    incr.stabilise();
+    assert_eq!(left_.value(), ordmap! { 2i32 => "Hello", 3 => "three" });
+    assert_eq!(right.value(), ordmap! { 4i32 => "four", 5 => "five" });
+    left_.save_dot_to_file("/tmp/incr_partition_mapi.dot");
+}
+
+#[cfg(feature = "im")]
+#[test]
+fn incr_unordered_fold_struct() {
+    use incremental::Value;
+
+    struct SumFold;
+
+    impl<K: Value + Ord> UnorderedFold<im_rc::OrdMap<K, i32>, K, i32, i32> for SumFold {
+        fn add(&mut self, acc: i32, _key: &K, value: &i32) -> i32 {
+            acc + value
+        }
+
+        fn remove(&mut self, acc: i32, _key: &K, value: &i32) -> i32 {
+            acc - value
+        }
+        fn revert_to_init_when_empty(&self) -> bool {
+            true
+        }
+        fn initial_fold(&mut self, init: i32, input: &im_rc::OrdMap<K, i32>) -> i32 {
+            input.iter().fold(init, |acc, (_k, v)| acc + v)
+        }
+    }
+
+    use im_rc::ordmap;
+    let state = IncrState::new();
+    let var = state.var(ordmap! { 1 => 1, 2 => 3 });
+
+    let folded: Incr<i32> = var.watch().incr_unordered_fold_with(0, SumFold);
+    let obs = folded.observe();
+    state.stabilise();
+    assert_eq!(obs.value(), 4);
+
+    var.modify(|omap| {
+        omap.insert(100, 7);
+    });
+    state.stabilise();
+    assert_eq!(obs.value(), 11);
+    var.modify(|omap| {
+        omap.insert(100, 7);
+    });
+    state.stabilise();
+    assert_eq!(obs.value(), 11);
+}
+
+#[cfg(feature = "im")]
+#[test]
+fn test_types() {
+    use ::im_rc::ordmap;
+
+    let state = IncrState::new();
+    let var = state.var(ordmap! { 1 => 2, 2 => 4, 3 => 6 });
+    let fold = ClosureFold::new()
+        .add(|acc, _k, v| acc + v)
+        .remove(|acc, _k, v| acc - v)
+        .update(|acc, _k, old, new| acc - old + new)
+        .revert_to_init_when_empty(true);
+    let folded = var.watch().incr_unordered_fold_with(0, fold);
+    let obs = folded.observe();
+    state.stabilise();
+    assert_eq!(obs.value(), 12);
+}
+
+#[test]
+#[cfg(feature = "im")]
+fn test_merge() {
+    use ::im_rc::ordmap;
+    let state = IncrState::new();
+    let left = state.var(ordmap! { 1i32 => "a", 2 => "a" });
+    let right = state.var(ordmap! {             2 => "b", 3 => "b" });
+
+    let l = left.incr_merge(&right, |_key, merge| merge.into_left().cloned());
+    let r = left.incr_merge(&right, |_key, merge| merge.into_right().cloned());
+
+    let m = left.incr_merge(&right, |_key, merge| match merge {
+        MergeElement::Left(left) => Some(format!("left: {left}")),
+        MergeElement::Right(right) => Some(format!("right: {right}")),
+        MergeElement::Both(left, right) => Some(format!("both: {left} + {right}")),
+    });
+
+    let l_obs = l.observe();
+    state.stabilise();
+    assert_eq!(
+        l_obs.value(),
+        ordmap! {
+            1 => "a",
+            2 => "a"
+        }
+    );
+
+    let r_obs = r.observe();
+    state.stabilise();
+    assert_eq!(
+        r_obs.value(),
+        ordmap! {
+            2 => "b",
+            3 => "b"
+        }
+    );
+
+    let m_obs = m.observe();
+    state.stabilise();
+    assert_eq!(
+        m_obs.value(),
+        ordmap! {
+            1 => "left: a".to_owned(),
+            2 => "both: a + b".to_owned(),
+            3 => "right: b".to_owned()
+        }
+    );
+
+    // Now update. We should merge again with the updated key
+    right.modify(|map| _ = map.insert(2, "b (updated)"));
+    state.stabilise();
+
+    assert_eq!(
+        m_obs.value(),
+        ordmap! {
+            1 => "left: a".to_owned(),
+            2 => "both: a + b (updated)".to_owned(),
+            3 => "right: b".to_owned()
+        }
+    );
+
+    // concurrent modify delete
+    left.modify(|map| _ = map.remove(&2));
+    right.modify(|map| {
+        map.insert(2, "b (updated 2)");
+        map.remove(&3);
+    });
+    state.stabilise();
+
+    assert_eq!(
+        m_obs.value(),
+        ordmap! {
+            1 => "left: a".to_owned(),
+            2 => "right: b (updated 2)".to_owned()
+        }
+    );
 }

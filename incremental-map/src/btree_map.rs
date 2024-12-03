@@ -81,6 +81,14 @@ impl<K: Value + Ord, V: Value> IncrBTreeMap<K, V> for Incr<BTreeMap<K, V>> {
         incr_filter_mapi_generic_btree_map(self, FilterMapOperator(f, PhantomData), Some(cutoff))
     }
 
+    /// Merge two maps incrementally, where
+    ///
+    /// - if a key appears only in self, the predicate runs with [`MergeElement::Left`]
+    /// - if a key appears only in other, the predicate runs with [`MergeElement::Right`]
+    /// - if a key appears in both, the predicate runs with [`MergeElement::Both`]
+    ///
+    /// The predicate is only re-run for added/removed/modified keys in each map, using the
+    /// symmetric diff property.
     fn incr_merge<F, V2, R>(&self, other: &Incr<BTreeMap<K, V2>>, mut f: F) -> Incr<BTreeMap<K, R>>
     where
         V2: Value,
