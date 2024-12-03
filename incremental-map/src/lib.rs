@@ -16,6 +16,8 @@ pub use self::symmetric_fold::{DiffElement, MergeElement};
 pub mod prelude {
     pub use super::btree_map::IncrBTreeMap;
     #[cfg(feature = "im")]
+    pub use super::im_rc::Either;
+    #[cfg(feature = "im")]
     pub use super::im_rc::IncrOrdMap;
     pub use super::symmetric_fold::DiffElement;
     pub use super::symmetric_fold::GenericMap;
