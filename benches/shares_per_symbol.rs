@@ -13,8 +13,10 @@ enum Dir {
     Sell,
 }
 
-type Symbol = u32;
-type Oid = u32;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Symbol(u32);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Oid(u32);
 
 #[derive(Clone, PartialEq)]
 struct Order {
@@ -42,15 +44,16 @@ fn index_by<KInner: Value + Ord, KOuter: Value + Ord, V: Value>(
     get_outer_index: impl Fn(&V) -> KOuter + Clone + 'static + NotObserver,
 ) -> Incr<OrdMap<KOuter, OrdMap<KInner, V>>> {
     let get_outer_index_ = get_outer_index.clone();
-    let add = move |mut acc: OrdMap<KOuter, OrdMap<KInner, V>>, key_inner: &KInner, value: &V| {
-        let index = get_outer_index_(value);
-        acc.entry(index)
-            .or_insert_with(|| OrdMap::new())
-            .insert(key_inner.clone(), value.clone());
-        acc
-    };
-    let remove =
-        move |mut acc: OrdMap<KOuter, OrdMap<KInner, V>>, key_inner: &KInner, value: &V| {
+    let indexed = map.incr_unordered_fold(
+        OrdMap::new(),
+        move |mut acc, key_inner, value| {
+            let index = get_outer_index_(value);
+            acc.entry(index)
+                .or_insert_with(|| OrdMap::new())
+                .insert(key_inner.clone(), value.clone());
+            acc
+        },
+        move |mut acc, key_inner, value| {
             let index = get_outer_index(value);
             match acc.entry(index) {
                 Entry::Vacant(_) => panic!(),
@@ -63,8 +66,9 @@ fn index_by<KInner: Value + Ord, KOuter: Value + Ord, V: Value>(
                 }
             }
             acc
-        };
-    let indexed = map.incr_unordered_fold(OrdMap::new(), add, remove, false);
+        },
+        false,
+    );
     #[cfg(debug_assertions)]
     indexed.set_graphviz_user_data("index_by");
     indexed
@@ -134,27 +138,26 @@ fn test_index_by() {
     );
 }
 
-fn shares(orders: Incr<OrdMap<Oid, Order>>) -> Incr<u32> {
-    orders.incr_unordered_fold(
-        0,
-        |acc, _k, x| acc + x.size,
-        |acc, _k, x| acc - x.size,
-        false,
-    )
-}
-
 fn shares_per_symbol(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
-    orders
-        .pipe1(index_by, |x| x.sym)
-        .incr_mapi_(|_k, v| shares(v))
+    fn shares(_k: &Symbol, orders: Incr<OrdMap<Oid, Order>>) -> Incr<u32> {
+        orders.incr_unordered_fold(
+            0,
+            |acc, _k, x| acc + x.size,
+            |acc, _k, x| acc - x.size,
+            false,
+        )
+    }
+
+    let x = index_by(orders, |x| x.sym);
+    x.incr_mapi_(shares)
 }
 
 fn shares_per_symbol_flat(orders: Incr<OrdMap<Oid, Order>>) -> Incr<OrdMap<Symbol, u32>> {
     fn update_sym_map(
         op: fn(u32, u32) -> u32,
-    ) -> impl FnMut(OrdMap<Symbol, u32>, &Symbol, &Order) -> OrdMap<Symbol, u32> + NotObserver {
+    ) -> impl FnMut(OrdMap<Symbol, u32>, &Oid, &Order) -> OrdMap<Symbol, u32> + NotObserver {
         move |mut acc, _k, o| {
-            match acc.entry(*_k) {
+            match acc.entry(o.sym) {
                 Entry::Vacant(e) => {
                     e.insert(o.size);
                 }
@@ -185,11 +188,11 @@ fn random_order(rng: &mut impl rand::Rng) -> Order {
     };
     let id = rng.gen_range(0..u32::MAX);
     Order {
-        id,
+        id: Oid(id),
         dir,
         price,
         size,
-        sym,
+        sym: Symbol(sym),
     }
 }
 
