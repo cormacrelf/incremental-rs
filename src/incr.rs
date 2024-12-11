@@ -278,7 +278,6 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::BindLhsChange {
                 casts: kind::BindLhsId {
-                    input_lhs_i2: refl::refl(),
                     r_unit: refl::refl(),
                 },
                 bind: bind.clone(),

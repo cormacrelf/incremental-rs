@@ -1,5 +1,5 @@
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     cell::{Cell, RefCell},
     marker::PhantomData,
     rc::Rc,
@@ -16,7 +16,6 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
     fn erased_input(&self) -> &dyn ErasedIncremental;
-    fn edge_input_type_id(&self) -> TypeId;
 }
 
 pub(crate) trait IsEdge: ExpertEdge + Any {}
@@ -68,10 +67,6 @@ impl<T: Value> ExpertEdge for Edge<T> {
     fn erased_input(&self) -> &dyn ErasedIncremental {
         self.child.node.erased_input()
     }
-
-    fn edge_input_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
-    }
 }
 
 pub(crate) struct ExpertNode<T, F, ObsChange> {
@@ -118,16 +113,6 @@ where
     }
     pub(crate) fn decr_invalid_children(&self) {
         self.num_invalid_children.increment();
-    }
-
-    pub(crate) fn expert_input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
-        let borrow_span = tracing::debug_span!("expert.children.borrow() in expert_input_type_id");
-        borrow_span.in_scope(|| {
-            let children = self.children.borrow();
-            assert!(index_of_child_in_parent >= 0);
-            let edge = &children[index_of_child_in_parent as usize];
-            edge.edge_input_type_id()
-        })
     }
 
     pub(crate) fn make_stale(&self) -> MakeStale {

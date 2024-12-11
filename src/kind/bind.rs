@@ -128,7 +128,6 @@ where
 
 pub(crate) struct BindLhsId<G: NodeGenerics> {
     pub(crate) r_unit: Id<(), G::R>,
-    pub(crate) input_lhs_i2: Id<Input<G::BindLhs>, Input<G::I2>>,
 }
 
 impl<G: NodeGenerics> fmt::Debug for BindLhsId<G> {
