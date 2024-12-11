@@ -194,7 +194,9 @@ impl<G: NodeGenerics> ErasedIncremental for Node<G> {
     }
 }
 
-pub(crate) trait Incremental<R>: ErasedNode + Debug + NotObserver {
+pub(crate) trait Incremental<R>:
+    ErasedNode + ErasedIncremental + Debug + NotObserver
+{
     fn as_input(&self) -> Input<R>;
     fn erased_input(&self) -> &dyn ErasedIncremental;
     fn latest(&self) -> R;
