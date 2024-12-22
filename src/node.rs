@@ -341,7 +341,6 @@ impl fmt::Display for ParentError {
 
 pub(crate) trait ErasedNode: Debug + NotObserver {
     fn id(&self) -> NodeId;
-    fn ptr_eq(&self, other: &dyn ErasedNode) -> bool;
     fn kind_debug_ty(&self) -> String;
     fn weak_state(&self) -> &Weak<State>;
     fn is_valid(&self) -> bool;
@@ -449,12 +448,15 @@ impl<G: NodeGenerics> Debug for Node<G> {
     }
 }
 
+impl dyn ErasedNode {
+    fn ptr_eq(&self, other: &dyn ErasedNode) -> bool {
+        self.weak().ptr_eq(&other.weak())
+    }
+}
+
 impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn id(&self) -> NodeId {
         self.id
-    }
-    fn ptr_eq(&self, other: &dyn ErasedNode) -> bool {
-        self.weak().ptr_eq(&other.weak())
     }
     fn kind_debug_ty(&self) -> String {
         let Some(dbg) = self.kind().map(|k| k.debug_ty()) else {
