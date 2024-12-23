@@ -3,6 +3,7 @@ use std::any::Any;
 use std::cell::Ref;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
+use std::ops::ControlFlow;
 use std::rc::Weak;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
@@ -394,6 +395,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn weak(&self) -> WeakNode;
     fn packed(&self) -> NodeRef;
     fn erased(&self) -> &dyn ErasedNode;
+    fn node_erased_input(&self) -> &dyn ErasedIncremental;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
     fn iter_descendants_internal_one(
         &self,
@@ -482,6 +484,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn erased(&self) -> &dyn ErasedNode {
         self
     }
+    fn node_erased_input(&self) -> &dyn ErasedIncremental {
+        self
+    }
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices> {
         &self.parent_child_indices
     }
@@ -537,12 +542,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             }
         }
     }
-    fn has_invalid_child(&self) -> bool {
-        let mut any = false;
-        self.foreach_child(&mut |_ix, child| {
-            any = any || !child.is_valid();
+    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef)) {
+        self.try_fold_children((), |(), ix, node_ref| {
+            f(ix, node_ref);
+            ControlFlow::<()>::Continue(())
         });
-        any
+    }
+    fn has_invalid_child(&self) -> bool {
+        self.any_child(&|_ix, child| !child.is_valid())
     }
     fn height(&self) -> i32 {
         self.height.get()
@@ -607,17 +614,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
     fn is_stale_with_respect_to_a_child(&self) -> bool {
-        let mut is_stale = false;
-        // TODO: make a version of try_fold for this, to short-circuit it
-        self.foreach_child(&mut |_ix, child| {
+        self.any_child(&|_ix, child| {
             tracing::trace!(
                 "child.changed_at {:?} >? self.recomputed_at {:?}",
                 child.changed_at().get(),
                 self.recomputed_at.get()
             );
-            is_stale = is_stale || child.changed_at().get() > self.recomputed_at.get()
-        });
-        is_stale
+            child.changed_at().get() > self.recomputed_at.get()
+        })
     }
     fn edge_is_stale(&self, parent: &dyn ErasedNode) -> bool {
         self.changed_at.get() > parent.recomputed_at().get()
@@ -656,13 +660,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         state.set_height(self.packed(), self.created_in.height() + 1);
         let h = &Cell::new(self.height());
         let pdyn = self.as_parent_dyn_ref();
-        self.foreach_child_typed(ForeachChild {
-            idyn: &mut move |index, child| {
-                child.add_parent_without_adjusting_heights(index, pdyn, state);
-                if child.height() >= h.get() {
-                    h.set(child.height() + 1);
-                }
-            },
+        self.foreach_child(&mut move |index, child| {
+            let child = child.node_erased_input();
+            child.add_parent_without_adjusting_heights(index, pdyn, state);
+            if child.height() >= h.get() {
+                h.set(child.height() + 1);
+            }
         });
         state.set_height(self.packed(), h.get());
         debug_assert!(!self.is_in_recompute_heap());
@@ -693,92 +696,6 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         debug_assert!(!self.needs_to_be_computed());
         if self.is_in_recompute_heap() {
             state.recompute_heap.remove(self.packed());
-        }
-    }
-
-    fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef)) {
-        let Some(kind) = self.kind() else { return };
-        match kind {
-            Kind::Constant(_) => {}
-            Kind::Map(kind::MapNode { input, .. })
-            | Kind::MapRef(kind::MapRefNode { input, .. })
-            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => f(0, input.packed()),
-            Kind::Map2(kind::Map2Node { one, two, .. }) => {
-                f(0, one.clone().packed());
-                f(1, two.clone().packed());
-            }
-            Kind::Map3(kind::Map3Node {
-                one, two, three, ..
-            }) => {
-                f(0, one.clone().packed());
-                f(1, two.clone().packed());
-                f(2, three.clone().packed());
-            }
-            Kind::Map4(kind::Map4Node {
-                one,
-                two,
-                three,
-                four,
-                ..
-            }) => {
-                f(0, one.clone().packed());
-                f(1, two.clone().packed());
-                f(2, three.clone().packed());
-                f(3, four.clone().packed());
-            }
-            Kind::Map5(kind::Map5Node {
-                one,
-                two,
-                three,
-                four,
-                five,
-                ..
-            }) => {
-                f(0, one.clone().packed());
-                f(1, two.clone().packed());
-                f(2, three.clone().packed());
-                f(3, four.clone().packed());
-                f(4, five.clone().packed());
-            }
-            Kind::Map6(kind::Map6Node {
-                one,
-                two,
-                three,
-                four,
-                five,
-                six,
-                ..
-            }) => {
-                f(0, one.clone().packed());
-                f(1, two.clone().packed());
-                f(2, three.clone().packed());
-                f(3, four.clone().packed());
-                f(4, five.clone().packed());
-                f(5, six.clone().packed());
-            }
-            Kind::BindLhsChange { bind, .. } => f(0, bind.lhs.packed()),
-            Kind::BindMain {
-                bind, lhs_change, ..
-            } => {
-                f(0, lhs_change.packed());
-                if let Some(rhs) = bind.rhs.borrow().as_ref() {
-                    f(1, rhs.node.packed())
-                }
-            }
-            Kind::ArrayFold(af) => {
-                for (ix, child) in af.children.iter().enumerate() {
-                    f(ix as i32, child.node.packed())
-                }
-            }
-            Kind::Var(_var) => {}
-            Kind::Expert(e) => {
-                let borrow_span = tracing::debug_span!("expert.children.borrow() in foreach_child");
-                borrow_span.in_scope(|| {
-                    for (ix, child) in e.children.borrow().iter().enumerate() {
-                        f(ix as i32, child.packed())
-                    }
-                });
-            }
         }
     }
     fn is_in_recompute_heap(&self) -> bool {
@@ -1057,11 +974,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         let Some(upgraded) = child.upgrade() else {
             return false;
         };
-        let mut any = false;
-        self.foreach_child(&mut |_ix, child| {
-            any = any || crate::rc_thin_ptr_eq(&child, &upgraded);
-        });
-        any
+        self.any_child(&|_ix, child| crate::rc_thin_ptr_eq(&child, &upgraded))
     }
 
     #[tracing::instrument(skip_all, fields(id = ?self.id))]
@@ -1523,6 +1436,126 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 }
 
+impl<G: NodeGenerics> Node<G> {
+    fn any_child(&self, pred: &dyn Fn(i32, NodeRef) -> bool) -> bool {
+        self.try_fold_children((), &mut |(), ix, node| {
+            if pred(ix, node) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
+    fn find_child(&self, pred: &dyn Fn(i32, &NodeRef) -> bool) -> Option<NodeRef> {
+        self.try_fold_children((), |(), ix, child| {
+            if pred(ix, &child) {
+                ControlFlow::Break(child)
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .break_value()
+    }
+    fn try_fold_children<B, R>(
+        &self,
+        init: R,
+        mut f: impl FnMut(R, i32, NodeRef) -> ControlFlow<B, R>,
+    ) -> ControlFlow<B, R> {
+        let Some(kind) = self.kind() else {
+            return ControlFlow::Continue(init);
+        };
+        let mut ret = init;
+        match kind {
+            Kind::Constant(_) => {}
+            Kind::Map(kind::MapNode { input, .. })
+            | Kind::MapRef(kind::MapRefNode { input, .. })
+            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => ret = f(ret, 0, input.packed())?,
+            Kind::Map2(kind::Map2Node { one, two, .. }) => {
+                ret = f(ret, 0, one.clone().packed())?;
+                ret = f(ret, 1, two.clone().packed())?;
+            }
+            Kind::Map3(kind::Map3Node {
+                one, two, three, ..
+            }) => {
+                ret = f(ret, 0, one.clone().packed())?;
+                ret = f(ret, 1, two.clone().packed())?;
+                ret = f(ret, 2, three.clone().packed())?;
+            }
+            Kind::Map4(kind::Map4Node {
+                one,
+                two,
+                three,
+                four,
+                ..
+            }) => {
+                ret = f(ret, 0, one.clone().packed())?;
+                ret = f(ret, 1, two.clone().packed())?;
+                ret = f(ret, 2, three.clone().packed())?;
+                ret = f(ret, 3, four.clone().packed())?;
+            }
+            Kind::Map5(kind::Map5Node {
+                one,
+                two,
+                three,
+                four,
+                five,
+                ..
+            }) => {
+                ret = f(ret, 0, one.clone().packed())?;
+                ret = f(ret, 1, two.clone().packed())?;
+                ret = f(ret, 2, three.clone().packed())?;
+                ret = f(ret, 3, four.clone().packed())?;
+                ret = f(ret, 4, five.clone().packed())?;
+            }
+            Kind::Map6(kind::Map6Node {
+                one,
+                two,
+                three,
+                four,
+                five,
+                six,
+                ..
+            }) => {
+                ret = f(ret, 0, one.clone().packed())?;
+                ret = f(ret, 1, two.clone().packed())?;
+                ret = f(ret, 2, three.clone().packed())?;
+                ret = f(ret, 3, four.clone().packed())?;
+                ret = f(ret, 4, five.clone().packed())?;
+                ret = f(ret, 5, six.clone().packed())?;
+            }
+            Kind::BindLhsChange { bind, .. } => ret = f(ret, 0, bind.lhs.packed())?,
+            Kind::BindMain {
+                bind, lhs_change, ..
+            } => {
+                ret = f(ret, 0, lhs_change.packed())?;
+                if let Some(rhs) = bind.rhs.borrow().as_ref() {
+                    ret = f(ret, 1, rhs.node.packed())?;
+                }
+            }
+            Kind::ArrayFold(af) => {
+                ret = af
+                    .children
+                    .iter()
+                    .enumerate()
+                    .try_fold(ret, |ret, (ix, child)| {
+                        f(ret, ix as i32, child.node.packed())
+                    })?;
+            }
+            Kind::Var(_var) => {}
+            Kind::Expert(e) => {
+                let borrow_span =
+                    tracing::debug_span!("expert.children.borrow() in try_fold_children");
+                let _guard = borrow_span.enter();
+                for (ix, child) in e.children.borrow().iter().enumerate() {
+                    ret = f(ret, ix as i32, child.packed())?;
+                }
+            }
+        }
+        ControlFlow::Continue(ret)
+    }
+}
+
 fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode>, state: &State) {
     tracing::info!("draining all_nodes_created_on_rhs for invalidation");
     for node in all_nodes_created_on_rhs.drain(..) {
@@ -1784,100 +1817,12 @@ impl<G: NodeGenerics> Node<G> {
     fn as_parent_dyn_ref(&self) -> &dyn ErasedNode {
         self
     }
-    fn foreach_child_typed<'b>(&'b self, f: ForeachChild<'b>) {
-        let Some(kind) = self.kind() else { return };
-        match kind {
-            Kind::Constant(_) => {}
-            Kind::Map(kind::MapNode { input, .. })
-            | Kind::MapRef(kind::MapRefNode { input, .. })
-            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => {
-                (f.idyn)(0, input.clone().erased_input())
-            }
-            Kind::Map2(kind::Map2Node { one, two, .. }) => {
-                (f.idyn)(0, one.clone().erased_input());
-                (f.idyn)(1, two.clone().erased_input());
-            }
-            Kind::Map3(kind::Map3Node {
-                one, two, three, ..
-            }) => {
-                (f.idyn)(0, one.clone().erased_input());
-                (f.idyn)(1, two.clone().erased_input());
-                (f.idyn)(2, three.clone().erased_input());
-            }
-            Kind::Map4(kind::Map4Node {
-                one,
-                two,
-                three,
-                four,
-                ..
-            }) => {
-                (f.idyn)(0, one.clone().erased_input());
-                (f.idyn)(1, two.clone().erased_input());
-                (f.idyn)(2, three.clone().erased_input());
-                (f.idyn)(3, four.clone().erased_input());
-            }
-            Kind::Map5(kind::Map5Node {
-                one,
-                two,
-                three,
-                four,
-                five,
-                ..
-            }) => {
-                (f.idyn)(0, one.clone().erased_input());
-                (f.idyn)(1, two.clone().erased_input());
-                (f.idyn)(2, three.clone().erased_input());
-                (f.idyn)(3, four.clone().erased_input());
-                (f.idyn)(4, five.clone().erased_input());
-            }
-            Kind::Map6(kind::Map6Node {
-                one,
-                two,
-                three,
-                four,
-                five,
-                six,
-                ..
-            }) => {
-                (f.idyn)(0, one.clone().erased_input());
-                (f.idyn)(1, two.clone().erased_input());
-                (f.idyn)(2, three.clone().erased_input());
-                (f.idyn)(3, four.clone().erased_input());
-                (f.idyn)(4, five.clone().erased_input());
-                (f.idyn)(5, six.clone().erased_input());
-            }
-            Kind::BindLhsChange { bind, .. } => (f.idyn)(0, bind.lhs.erased_input()),
-            Kind::BindMain {
-                bind, lhs_change, ..
-            } => {
-                (f.idyn)(0, lhs_change.erased_input());
-                if let Some(rhs) = bind.rhs.borrow().as_ref() {
-                    (f.idyn)(1, rhs.node.erased_input())
-                }
-            }
-            Kind::ArrayFold(af) => {
-                for (ix, child) in af.children.iter().enumerate() {
-                    (f.idyn)(ix as i32, child.node.erased_input())
-                }
-            }
-            Kind::Var(_var) => {}
-            Kind::Expert(e) => {
-                let borrow_span = tracing::debug_span!("expert.children.borrow() in foreach_child");
-                borrow_span.in_scope(|| {
-                    for (ix, child) in e.children.borrow().iter().enumerate() {
-                        (f.idyn)(ix as i32, child.erased_input());
-                    }
-                });
-            }
-        }
-    }
 
     fn remove_children(&self, state: &State) {
-        self.foreach_child_typed(ForeachChild {
-            idyn: &mut |index, child| {
-                child.remove_parent(index, self.as_parent_dyn_ref());
-                child.check_if_unnecessary(state);
-            },
+        self.foreach_child(&mut |index, child| {
+            let child = child.node_erased_input();
+            child.remove_parent(index, self.as_parent_dyn_ref());
+            child.check_if_unnecessary(state);
         })
     }
 
@@ -1887,21 +1832,11 @@ impl<G: NodeGenerics> Node<G> {
         match kind {
             Kind::Expert(e) => e.children.borrow()[child_index as usize].packed(),
             Kind::ArrayFold(af) => af.children[child_index as usize].node.packed(),
-            _ => {
-                let mut found = None;
-                self.foreach_child(&mut |ix, child| {
-                    if ix == child_index {
-                        found.replace(child);
-                    }
-                });
-                found.unwrap()
-            }
+            _ => self
+                .find_child(&|ix, _child| ix == child_index)
+                .unwrap_or_else(|| panic!("Could not find node at with child_index {child_index}")),
         }
     }
-}
-
-struct ForeachChild<'a> {
-    idyn: &'a mut dyn FnMut(i32, &dyn ErasedIncremental),
 }
 
 #[test]
