@@ -761,7 +761,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::Constant(v) => self.maybe_change_value(v.clone(), state),
             Kind::MapRef(mapref) => {
                 // don't run child_changed on our parents, because we already did that in OUR child_changed.
-                self.maybe_change_value_manual(None, None, mapref.did_change.get(), false, state)
+                self.value_opt.replace(None);
+                self.maybe_change_value_manual(None, mapref.did_change.get(), false, state)
             }
             Kind::MapWithOld(map) => {
                 let input = map.input.value_as_ref().unwrap();
@@ -771,7 +772,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     tracing::trace!("<- old: {current_value:?}");
                     f(current_value.take(), &input)
                 };
-                self.maybe_change_value_manual(None, Some(new_value), did_change, true, state)
+                self.value_opt.replace(Some(new_value));
+                self.maybe_change_value_manual(None, did_change, true, state)
             }
             Kind::Map2(map2) => {
                 let i1 = map2.one.value_as_ref().unwrap();
@@ -1627,9 +1629,9 @@ impl<G: NodeGenerics> Node<G> {
         let should_change = old_value_opt
             .as_ref()
             .map_or(true, |old| !cutoff.should_cutoff(old, &value));
+        self.value_opt.replace(Some(value));
         return self.maybe_change_value_manual(
-            old_value_opt.as_ref(),
-            Some(value),
+            old_value_opt.as_ref().map(|t| t as &dyn Any),
             should_change,
             true,
             state,
@@ -1638,14 +1640,12 @@ impl<G: NodeGenerics> Node<G> {
 
     fn maybe_change_value_manual(
         &self,
-        old_value_opt: Option<&G::R>,
-        new_value_opt: Option<G::R>,
+        old_value_opt: Option<&dyn Any>,
         did_change: bool,
         run_child_changed: bool,
         state: &State,
     ) -> Option<NodeRef> {
         if did_change {
-            self.value_opt.replace(new_value_opt);
             self.changed_at.set(state.stabilisation_num.get());
             state.num_nodes_changed.increment();
             self.maybe_handle_after_stabilisation(state);
@@ -1661,8 +1661,7 @@ impl<G: NodeGenerics> Node<G> {
                     return None;
                 };
                 if run_child_changed {
-                    let result =
-                        p.child_changed(self, child_index, old_value_opt.map(|t| t as &dyn Any));
+                    let result = p.child_changed(self, child_index, old_value_opt);
                     match result {
                         Ok(()) => {}
                         // TODO: handle this somehow
@@ -1707,8 +1706,7 @@ impl<G: NodeGenerics> Node<G> {
                     return None;
                 };
                 if run_child_changed {
-                    let result =
-                        p.child_changed(self, child_index, old_value_opt.map(|t| t as &dyn Any));
+                    let result = p.child_changed(self, child_index, old_value_opt);
                     match result {
                         Ok(()) => {}
                         // TODO: handle this somehow
@@ -1726,7 +1724,6 @@ impl<G: NodeGenerics> Node<G> {
             }
         } else {
             tracing::info!("cutoff applied to value change");
-            self.value_opt.replace(new_value_opt);
         }
         None
     }
