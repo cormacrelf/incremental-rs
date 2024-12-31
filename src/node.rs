@@ -9,7 +9,7 @@ use std::rc::Weak;
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
 use super::internal_observer::{InternalObserver, ObserverId};
-use super::kind::expert::{Invalid, IsEdge, MakeStale, PackedEdge};
+use super::kind::expert::{ExpertEdge, Invalid, MakeStale, PackedEdge};
 use super::kind::{self, Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
@@ -390,7 +390,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
         child2: &NodeRef,
         child2_index: i32,
     );
-    fn expert_remove_child(&self, packed_edge: &dyn IsEdge, child_index: i32, state: &State);
+    fn expert_remove_child(&self, packed_edge: &dyn ExpertEdge, child_index: i32, state: &State);
     fn state_opt(&self) -> Option<Rc<State>>;
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
@@ -430,7 +430,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
 
     fn expert_make_stale(&self);
     fn expert_add_dependency(&self, packed_edge: PackedEdge);
-    fn expert_remove_dependency(&self, dyn_edge: &dyn IsEdge);
+    fn expert_remove_dependency(&self, dyn_edge: &dyn ExpertEdge);
 
     fn child_changed(
         &self,
@@ -1305,7 +1305,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }
     }
 
-    fn expert_remove_dependency(&self, dyn_edge: &dyn IsEdge) {
+    fn expert_remove_dependency(&self, dyn_edge: &dyn ExpertEdge) {
         let Some(Kind::Expert(expert)) = self.kind() else {
             return;
         };
@@ -1386,7 +1386,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         parent_pci.my_parent_index_in_child_at_index[child_index2 as usize] = index_of_parent_in_child1;
     }
 
-    fn expert_remove_child(&self, dyn_edge: &dyn IsEdge, child_index: i32, state: &State) {
+    fn expert_remove_child(&self, dyn_edge: &dyn ExpertEdge, child_index: i32, state: &State) {
         let child = dyn_edge.erased_input();
         child.remove_parent(child_index, self);
         child.check_if_unnecessary(state);

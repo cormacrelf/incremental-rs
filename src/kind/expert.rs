@@ -18,10 +18,7 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
     fn erased_input(&self) -> &dyn ErasedIncremental;
 }
 
-pub(crate) trait IsEdge: ExpertEdge + Any {}
-impl<T> IsEdge for T where T: ExpertEdge + Any {}
-
-pub(crate) type PackedEdge = Rc<dyn IsEdge>;
+pub(crate) type PackedEdge = Rc<dyn ExpertEdge>;
 
 #[cfg(not(feature = "nightly-incrsan"))]
 type BoxedOnChange<T> = Box<dyn FnMut(&T)>;

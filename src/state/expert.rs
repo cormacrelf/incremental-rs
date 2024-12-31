@@ -1,8 +1,8 @@
 use super::*;
-use crate::kind;
+use crate::kind::{self, expert::ExpertEdge};
 use crate::node::Incremental;
 use crate::WeakIncr;
-use kind::expert::{IsEdge, PackedEdge};
+use kind::expert::PackedEdge;
 
 pub(crate) fn create<T, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
@@ -74,6 +74,6 @@ pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
     node.expert_add_dependency(edge);
 }
 
-pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn IsEdge) {
+pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn ExpertEdge) {
     node.expert_remove_dependency(dyn_edge);
 }
