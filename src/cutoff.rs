@@ -68,4 +68,11 @@ where
             Self::FnBoxed(comparator) => comparator(a, b),
         }
     }
+
+    pub(crate) fn erased(self) -> ErasedCutoff
+    where
+        T: Clone + 'static,
+    {
+        ErasedCutoff::new(self)
+    }
 }

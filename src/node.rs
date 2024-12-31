@@ -16,6 +16,7 @@ use super::scope::Scope;
 use super::state::{IncrStatus, State};
 use super::CellIncrement;
 use super::{Incr, NodeRef, WeakNode};
+use crate::cutoff::ErasedCutoff;
 use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
 
@@ -51,7 +52,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
-    pub cutoff: RefCell<Cutoff<G::R>>,
+    pub cutoff: RefCell<ErasedCutoff>,
     /// The time at which our value changed. -1 if never.
     ///
     /// Set to self.recomputed_at when the node's value changes. (Cutoff = don't set changed_at).
@@ -286,7 +287,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         self.value_as_ref().map(|x| G::R::clone(&x))
     }
     fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
-        self.cutoff.replace(cutoff);
+        self.cutoff.replace(cutoff.erased());
     }
 
     fn set_graphviz_user_data(&self, user_data: BoxedDebugData) {
@@ -1604,7 +1605,7 @@ impl<G: NodeGenerics> Node<G> {
             observers: HashMap::new().into(),
             on_update_handlers: Default::default(),
             graphviz_user_data: None.into(),
-            cutoff: Cutoff::PartialEq.into(),
+            cutoff: Cutoff::<G::R>::PartialEq.erased().into(),
             is_valid: true.into(),
         }
     }
