@@ -48,7 +48,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     pub is_valid: Cell<bool>,
     // Don't use this field directly. Use `self::kind()` to be forced to confront
     // the !is_valid case.
-    pub _kind: Kind<G>,
+    _kind: Kind<G>,
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
