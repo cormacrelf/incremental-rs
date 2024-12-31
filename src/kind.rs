@@ -33,7 +33,7 @@ macro_rules! node_generics_default {
     (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
     (@single FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
     (@single Recompute) => { type Recompute = fn() -> Self::R; };
-    (@single ObsChange) => { type ObsChange = fn(bool); };
+    (@single ObsChange) => { /* snipped */ };
 
     ($($ident:ident),*) => {
         $(
@@ -75,7 +75,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R + NotObserver;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
     type Recompute: FnMut() -> Self::R + NotObserver;
-    type ObsChange: FnMut(bool) + NotObserver;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
@@ -105,7 +104,7 @@ pub(crate) enum Kind<G: NodeGenerics> {
         // BindNode holds weak refs to both
         lhs_change: Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
     },
-    Expert(expert::ExpertNode<G::R, G::Recompute, G::ObsChange>),
+    Expert(expert::ExpertNode<G::R, G::Recompute>),
 }
 
 impl<G: NodeGenerics> Debug for Kind<G> {

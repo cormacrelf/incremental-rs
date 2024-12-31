@@ -69,17 +69,21 @@ impl<T: Value> ExpertEdge for Edge<T> {
     }
 }
 
-pub(crate) struct ExpertNode<T, F, ObsChange> {
+pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
+
+impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
+
+pub(crate) struct ExpertNode<T, F> {
     pub _f: PhantomData<T>,
     pub recompute: RefCell<Option<F>>,
-    pub on_observability_change: RefCell<Option<ObsChange>>,
+    pub on_observability_change: RefCell<Option<Box<dyn ObservabilityChange>>>,
     pub children: RefCell<Vec<PackedEdge>>,
     pub force_stale: Cell<bool>,
     pub num_invalid_children: Cell<i32>,
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T, F, O> Drop for ExpertNode<T, F, O> {
+impl<T, F> Drop for ExpertNode<T, F> {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -92,16 +96,18 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T, F, ObsChange> ExpertNode<T, F, ObsChange>
+impl<T, F> ExpertNode<T, F>
 where
     F: FnMut() -> T,
-    ObsChange: FnMut(bool),
 {
-    pub(crate) fn new_obs(recompute: F, on_observability_change: ObsChange) -> Self {
+    pub(crate) fn new_obs(
+        recompute: F,
+        on_observability_change: impl FnMut(bool) + 'static + NotObserver,
+    ) -> Self {
         Self {
             _f: PhantomData,
             recompute: Some(recompute).into(),
-            on_observability_change: Some(on_observability_change).into(),
+            on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
             force_stale: false.into(),
             num_invalid_children: 0.into(),
@@ -218,7 +224,7 @@ where
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T, R, O> Debug for ExpertNode<T, R, O>
+impl<T, R> Debug for ExpertNode<T, R>
 where
     T: Debug,
 {
@@ -227,15 +233,13 @@ where
     }
 }
 
-impl<T, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, FRecompute, FObsChange>
+impl<T, FRecompute> NodeGenerics for ExpertNode<T, FRecompute>
 where
     T: Value,
     FRecompute: FnMut() -> T + 'static + NotObserver,
-    FObsChange: FnMut(bool) + 'static + NotObserver,
 {
     type R = T;
     type Recompute = FRecompute;
-    type ObsChange = FObsChange;
     node_generics_default! { I1, I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs }
