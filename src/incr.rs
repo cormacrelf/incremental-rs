@@ -126,21 +126,6 @@ impl<T: Value> Incr<T> {
         })
     }
 
-    pub fn map<R: Value, F: FnMut(&T) -> R + 'static + NotObserver>(&self, f: F) -> Incr<R> {
-        let mapper = kind::MapNode {
-            input: self.clone().node,
-            mapper: f.into(),
-        };
-        let state = self.node.state();
-        let node = Node::<kind::MapNode<F, T, R>>::create_rc(
-            state.weak(),
-            state.current_scope.borrow().clone(),
-            Kind::Map(mapper),
-        );
-
-        Incr { node }
-    }
-
     /// Turn two incrementals into a tuple incremental.
     /// Aka `both` in OCaml. This is named `zip` to match [Option::zip] and [Iterator::zip].
     pub fn zip<T2: Value>(&self, other: &Incr<T2>) -> Incr<(T, T2)> {
@@ -222,26 +207,6 @@ impl<T: Value> Incr<T> {
             state.weak(),
             state.current_scope(),
             Kind::MapWithOld(kind::MapWithOld::new(self.node.clone(), f)),
-        );
-        Incr { node }
-    }
-
-    pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
-    where
-        T2: Value,
-        R: Value,
-        F: FnMut(&T, &T2) -> R + 'static + NotObserver,
-    {
-        let mapper = kind::Map2Node {
-            one: self.clone().node,
-            two: other.clone().node,
-            mapper: f.into(),
-        };
-        let state = self.node.state();
-        let node = Node::<kind::Map2Node<F, T, T2, R>>::create_rc(
-            state.weak(),
-            state.current_scope.borrow().clone(),
-            Kind::Map2(mapper),
         );
         Incr { node }
     }

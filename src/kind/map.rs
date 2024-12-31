@@ -8,40 +8,6 @@ use crate::node::Input;
 use crate::Incr;
 use crate::Value;
 
-pub(crate) struct MapNode<F, T, R>
-where
-    F: FnMut(&T) -> R + NotObserver,
-{
-    pub input: Input<T>,
-    pub mapper: RefCell<F>,
-}
-
-impl<F, T, R> NodeGenerics for MapNode<F, T, R>
-where
-    T: Value,
-    R: Value,
-    F: FnMut(&T) -> R + 'static + NotObserver,
-{
-    type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = T;
-    type F1 = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
-    node_generics_default! { F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
-
-impl<F, T, R> fmt::Debug for MapNode<F, T, R>
-where
-    F: FnMut(&T) -> R + NotObserver,
-    R: Value,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("MapNode").finish()
-    }
-}
-
 pub(crate) struct MapRefNode<F, T, R>
 where
     F: Fn(&T) -> &R + 'static + NotObserver,
@@ -79,44 +45,6 @@ where
     }
 }
 
-pub(crate) struct Map2Node<F, T1, T2, R>
-where
-    F: FnMut(&T1, &T2) -> R + NotObserver,
-{
-    pub(crate) one: Input<T1>,
-    pub(crate) two: Input<T2>,
-    pub(crate) mapper: RefCell<F>,
-}
-
-impl<F, T1, T2, R> NodeGenerics for Map2Node<F, T1, T2, R>
-where
-    T1: Value,
-    T2: Value,
-    R: Value,
-    F: FnMut(&T1, &T2) -> R + 'static + NotObserver,
-{
-    type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = T1;
-    type I2 = T2;
-    type F1 = fn(&Self::I1) -> R;
-    type F2 = F;
-    node_generics_default! { I3, I4, I5, I6 }
-    node_generics_default! { F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
-
-impl<F, T1, T2, R> fmt::Debug for Map2Node<F, T1, T2, R>
-where
-    F: FnMut(&T1, &T2) -> R + NotObserver,
-    R: Value,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Map2Node").finish()
-    }
-}
-
 macro_rules! map_node {
     (@rest) => {
         node_generics_default! { B1, BindLhs, BindRhs }
@@ -143,10 +71,10 @@ macro_rules! map_node {
              $tfield1:ident: $t1:ident = $i1:ident,
              $(
                  $tfield:ident : $t:ident = $i:ident,
-             )+
+             )*
          }
          fn {
-             $ffield:ident : $fparam:ident(.., $($t2:ident),*) -> $r:ident,
+             $ffield:ident : $fparam:ident(.. $(, $t2:ident)*) -> $r:ident,
          }
      > {
          default < $($d:ident),* >,
@@ -214,6 +142,31 @@ macro_rules! map_node {
             }
         }
     };
+}
+
+map_node! {
+    pub(crate) struct MapNode<
+        inputs {
+            input: T1 = I1,
+        }
+        fn { mapper: F1(..) -> R, }
+    > {
+        default < F2, F3, F4, F5, F6, I2, I3, I4, I5, I6 >,
+        impl Incr::map, Kind::Map
+    }
+}
+
+map_node! {
+    pub(crate) struct Map2Node<
+        inputs {
+            one: T1 = I1,
+            two: T2 = I2,
+        }
+        fn { mapper: F2(.., T2) -> R, }
+    > {
+        default < F1, F3, F4, F5, F6, I3, I4, I5, I6 >,
+        impl Incr::map2, Kind::Map2
+    }
 }
 
 map_node! {
