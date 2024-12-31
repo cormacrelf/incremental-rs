@@ -70,12 +70,14 @@ impl<T: Value> ExpertEdge for Edge<T> {
 }
 
 pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
-
 impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
 
-pub(crate) struct ExpertNode<T, F> {
+pub(crate) trait Recompute<R>: FnMut() -> R + 'static + NotObserver {}
+impl<T, R> Recompute<R> for T where T: FnMut() -> R + 'static + NotObserver {}
+
+pub(crate) struct ExpertNode<T> {
     pub _f: PhantomData<T>,
-    pub recompute: RefCell<Option<F>>,
+    pub recompute: RefCell<Option<Box<dyn Recompute<T>>>>,
     pub on_observability_change: RefCell<Option<Box<dyn ObservabilityChange>>>,
     pub children: RefCell<Vec<PackedEdge>>,
     pub force_stale: Cell<bool>,
@@ -83,7 +85,7 @@ pub(crate) struct ExpertNode<T, F> {
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T, F> Drop for ExpertNode<T, F> {
+impl<T> Drop for ExpertNode<T> {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -96,17 +98,14 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T, F> ExpertNode<T, F>
-where
-    F: FnMut() -> T,
-{
+impl<T> ExpertNode<T> {
     pub(crate) fn new_obs(
-        recompute: F,
-        on_observability_change: impl FnMut(bool) + 'static + NotObserver,
+        recompute: impl Recompute<T>,
+        on_observability_change: impl ObservabilityChange,
     ) -> Self {
         Self {
             _f: PhantomData,
-            recompute: Some(recompute).into(),
+            recompute: RefCell::new(Some(Box::new(recompute))),
             on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
             force_stale: false.into(),
@@ -224,7 +223,7 @@ where
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T, R> Debug for ExpertNode<T, R>
+impl<T> Debug for ExpertNode<T>
 where
     T: Debug,
 {
@@ -233,13 +232,11 @@ where
     }
 }
 
-impl<T, FRecompute> NodeGenerics for ExpertNode<T, FRecompute>
+impl<T> NodeGenerics for ExpertNode<T>
 where
     T: Value,
-    FRecompute: FnMut() -> T + 'static + NotObserver,
 {
     type R = T;
-    type Recompute = FRecompute;
     node_generics_default! { I1, I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs }
