@@ -11,12 +11,12 @@ macro_rules! node_generics_default {
     (@fn $name:ident ( $($param:ident),* )) => {
         type $name = fn($(&Self::$param,)*) -> Self::R;
     };
-    (@single F1) => { node_generics_default!{ @fn F1 (I1) } };
-    (@single F2) => { node_generics_default!{ @fn F2 (I1, I2) } };
-    (@single F3) => { node_generics_default!{ @fn F3 (I1, I2, I3) } };
-    (@single F4) => { node_generics_default!{ @fn F4 (I1, I2, I3, I4) } };
-    (@single F5) => { node_generics_default!{ @fn F5 (I1, I2, I3, I4, I5) } };
-    (@single F6) => { node_generics_default!{ @fn F6 (I1, I2, I3, I4, I5, I6) } };
+    (@single F1) => { /* snipped */ };
+    (@single F2) => { /* snipped */ };
+    (@single F3) => { /* snipped */ };
+    (@single F4) => { /* snipped */ };
+    (@single F5) => { /* snipped */ };
+    (@single F6) => { /* snipped */ };
 
     (@single I1) => { type I1 = (); };
     (@single I2) => { type I2 = (); };
@@ -62,14 +62,7 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type I4: Value;
     type I5: Value;
     type I6: Value;
-    type F1: FnMut(&Self::I1) -> Self::R + NotObserver;
     type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
-    type F2: FnMut(&Self::I1, &Self::I2) -> Self::R + NotObserver;
-    type F3: FnMut(&Self::I1, &Self::I2, &Self::I3) -> Self::R + NotObserver;
-    type F4: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4) -> Self::R + NotObserver;
-    type F5: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5) -> Self::R + NotObserver;
-    type F6: FnMut(&Self::I1, &Self::I2, &Self::I3, &Self::I4, &Self::I5, &Self::I6) -> Self::R
-        + NotObserver;
     type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs> + NotObserver;
     type Fold: FnMut(Self::R, &Self::I1) -> Self::R + NotObserver;
     type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R + NotObserver;
@@ -82,14 +75,14 @@ pub(crate) enum Kind<G: NodeGenerics> {
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
-    Map(map::MapNode<G::F1, G::I1, G::R>),
+    Map(map::MapNode<G::I1, G::R>),
     MapWithOld(map::MapWithOld<G::WithOld, G::I1, G::R>),
     MapRef(map::MapRefNode<G::FRef, G::I1, G::R>),
-    Map2(map::Map2Node<G::F2, G::I1, G::I2, G::R>),
-    Map3(map::Map3Node<G::F3, G::I1, G::I2, G::I3, G::R>),
-    Map4(map::Map4Node<G::F4, G::I1, G::I2, G::I3, G::I4, G::R>),
-    Map5(map::Map5Node<G::F5, G::I1, G::I2, G::I3, G::I4, G::I5, G::R>),
-    Map6(map::Map6Node<G::F6, G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
+    Map2(map::Map2Node<G::I1, G::I2, G::R>),
+    Map3(map::Map3Node<G::I1, G::I2, G::I3, G::R>),
+    Map4(map::Map4Node<G::I1, G::I2, G::I3, G::I4, G::R>),
+    Map5(map::Map5Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::R>),
+    Map6(map::Map6Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
         bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,

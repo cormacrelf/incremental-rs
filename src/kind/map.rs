@@ -63,7 +63,7 @@ macro_rules! map_node {
         $mapnode {
             $tfield1: $self.clone().node,
             $($tfield2: $tfield2.clone().node,)*
-            mapper: $f.into(),
+            mapper: Box::new(RefCell::new($f)),
         }
     };
     ($vis:vis struct $mapnode:ident <
@@ -80,34 +80,30 @@ macro_rules! map_node {
          default < $($d:ident),* >,
          impl Incr::$methodname:ident, Kind::$kind:ident
      }) => {
-        $vis struct $mapnode <$fparam, $t1, $($t,)* $r>
+        $vis struct $mapnode <$t1, $($t,)* $r>
         where
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r,
             $r: Value,
         {
             $vis $tfield1: Input<$t1>,
             $($vis $tfield: Input<$t>,)*
-            $vis $ffield: RefCell<$fparam>,
+            $vis $ffield: Box<RefCell<dyn FnMut(&$t1, $(&$t2,)*) -> $r>>,
         }
 
-        impl<$fparam, $t1, $($t,)* $r> NodeGenerics for $mapnode<$fparam, $t1, $($t2,)* $r>
+        impl<$t1, $($t,)* $r> NodeGenerics for $mapnode<$t1, $($t2,)* $r>
         where
             $t1: Value,
             $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
             $r: Value,
         {
             map_node!{ @rest }
             type R = $r;
             type $i1 = $t1;
             $(type $i = $t2;)*
-            type $fparam = $fparam;
-            crate::node_generics_default! { $($d),* }
+            crate::node_generics_default! { $($d,)* $fparam }
         }
-        impl<$fparam, $t1, $($t,)* $r> fmt::Debug for $mapnode<$fparam, $t1, $($t,)* $r>
+        impl<$t1, $($t,)* $r> fmt::Debug for $mapnode<$t1, $($t,)* $r>
         where
             $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
             $r: Value,
         {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -133,7 +129,7 @@ macro_rules! map_node {
                     }
                 };
                 let state = self.node.state();
-                let node = crate::node::Node::<$mapnode<$fparam, $t1, $($t2,)* $r>>::create_rc(
+                let node = crate::node::Node::<$mapnode<$t1, $($t2,)* $r>>::create_rc(
                     state.weak(),
                     state.current_scope.borrow().clone(),
                     crate::kind::Kind::$kind(mapper),
@@ -155,6 +151,12 @@ map_node! {
         impl Incr::map, Kind::Map
     }
 }
+
+// impl<T1, F> MapNode<T1, F> {
+//     fn thing(&self) {
+//         self.mapper
+//     }
+// }
 
 map_node! {
     pub(crate) struct Map2Node<

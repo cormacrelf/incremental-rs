@@ -170,10 +170,10 @@ impl<T: Value> Incr<T> {
             };
             let mapper = kind::MapNode {
                 input: self.clone().node,
-                mapper: f.into(),
+                mapper: Box::new(RefCell::new(f)),
             };
             let state = self.node.state();
-            let mut node = Node::<kind::MapNode<_, T, R>>::create(
+            let mut node = Node::<kind::MapNode<T, R>>::create(
                 state.weak(),
                 state.current_scope.borrow().clone(),
                 Kind::Map(mapper),
