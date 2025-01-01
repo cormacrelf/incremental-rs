@@ -29,7 +29,7 @@ macro_rules! node_generics_default {
     (@single BindRhs) => { type BindRhs = (); };
     (@single B1) => { type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>; };
     (@single Fold) => { type Fold = fn(Self::R, &Self::I1) -> Self::R; };
-    (@single Update) => { type Update = fn(Self::R, &Self::I1, &Self::I1) -> Self::R; };
+    (@single Update) => { /* snipped */ };
     (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
     (@single FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
     (@single Recompute) => { /* snipped */ };
@@ -65,7 +65,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
     type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs> + NotObserver;
     type Fold: FnMut(Self::R, &Self::I1) -> Self::R + NotObserver;
-    type Update: FnMut(Self::R, &Self::I1, &Self::I1) -> Self::R + NotObserver;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
 }
 
