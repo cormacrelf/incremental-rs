@@ -28,7 +28,7 @@ macro_rules! node_generics_default {
     (@single BindLhs) => { type BindLhs = (); };
     (@single BindRhs) => { type BindRhs = (); };
     (@single B1) => { type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>; };
-    (@single Fold) => { type Fold = fn(Self::R, &Self::I1) -> Self::R; };
+    (@single Fold) => { /* snipped */ };
     (@single Update) => { /* snipped */ };
     (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
     (@single FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
@@ -64,13 +64,12 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type I6: Value;
     type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
     type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs> + NotObserver;
-    type Fold: FnMut(Self::R, &Self::I1) -> Self::R + NotObserver;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
     Constant(G::R),
-    ArrayFold(array_fold::ArrayFold<G::Fold, G::I1, G::R>),
+    ArrayFold(array_fold::ArrayFold<G::I1, G::R>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),

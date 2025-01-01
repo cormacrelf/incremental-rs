@@ -180,12 +180,12 @@ impl State {
         if vec.is_empty() {
             return self.constant(init);
         }
-        let node = Node::<kind::ArrayFold<F, T, R>>::create_rc(
+        let node = Node::<kind::ArrayFold<T, R>>::create_rc(
             self.weak(),
             self.current_scope(),
             Kind::ArrayFold(kind::ArrayFold {
                 init,
-                fold: f.into(),
+                fold: RefCell::new(Box::new(f)),
                 children: vec,
             }),
         );

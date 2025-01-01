@@ -5,15 +5,17 @@ use super::NodeGenerics;
 use super::{Incr, Value};
 use crate::incrsan::NotObserver;
 
-pub(crate) struct ArrayFold<F, I, R> {
+pub(crate) trait FoldFunction<I, R>: FnMut(R, &I) -> R + NotObserver {}
+impl<F, I, R> FoldFunction<I, R> for F where F: FnMut(R, &I) -> R + NotObserver {}
+
+pub(crate) struct ArrayFold<I, R> {
     pub(crate) init: R,
-    pub(crate) fold: RefCell<F>,
+    pub(crate) fold: RefCell<Box<dyn FoldFunction<I, R>>>,
     pub(crate) children: Vec<Incr<I>>,
 }
 
-impl<F, I, R> ArrayFold<F, I, R>
+impl<I, R> ArrayFold<I, R>
 where
-    F: FnMut(R, &I) -> R + NotObserver,
     I: Value,
     R: Value,
 {
@@ -27,19 +29,15 @@ where
     }
 }
 
-impl<F, I: Value, R: Value> NodeGenerics for ArrayFold<F, I, R>
-where
-    F: FnMut(R, &I) -> R + 'static + NotObserver,
-{
+impl<I: Value, R: Value> NodeGenerics for ArrayFold<I, R> {
     type R = R;
     type I1 = I;
-    type Fold = F;
     node_generics_default! { I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
-impl<F, I, R> Debug for ArrayFold<F, I, R>
+impl<I, R> Debug for ArrayFold<I, R>
 where
     R: Debug,
 {
