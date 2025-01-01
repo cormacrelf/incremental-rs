@@ -21,6 +21,7 @@ use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
 
 use super::stabilisation_num::StabilisationNum;
+use miny::Miny;
 use refl::Id;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -42,7 +43,7 @@ pub(crate) struct Node<G: NodeGenerics> {
     // {{{
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
-    pub value_opt: RefCell<Option<G::R>>,
+    pub value_opt: RefCell<Option<Miny<G::R>>>,
     /// We use this flag instead of making kind mutable with an Invalid variant. That makes it much
     /// easier to implement `value_as_ref` for `Kind::MapRef`.
     pub is_valid: Cell<bool>,
@@ -303,7 +304,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             return mapped;
         }
         let v = self.value_opt.borrow();
-        Ref::filter_map(v, |o| o.as_ref()).ok()
+        Ref::filter_map(v, |o| o.as_deref()).ok()
     }
     fn constant(&self) -> Option<&G::R> {
         if let Some(Kind::Constant(value)) = self.kind() {
@@ -749,16 +750,16 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let input = map.input.value_as_ref().unwrap();
                     f(&input)
                 };
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::Var(var) => {
                 let new_value = {
                     let value = var.value.borrow();
-                    value.clone()
+                    Miny::new(value.clone())
                 };
                 self.maybe_change_value(new_value, state)
             }
-            Kind::Constant(v) => self.maybe_change_value(v.clone(), state),
+            Kind::Constant(v) => self.maybe_change_value(Miny::new(v.clone()), state),
             Kind::MapRef(mapref) => {
                 // don't run child_changed on our parents, because we already did that in OUR child_changed.
                 self.value_opt.replace(None);
@@ -770,9 +771,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let (new_value, did_change) = {
                     let mut current_value = self.value_opt.borrow_mut();
                     tracing::trace!("<- old: {current_value:?}");
-                    f(current_value.take(), &input)
+                    f(current_value.take().map(Miny::into_inner), &input)
                 };
-                self.value_opt.replace(Some(new_value));
+                self.value_opt.replace(Some(Miny::new(new_value)));
                 self.maybe_change_value_manual(None, did_change, true, state)
             }
             Kind::Map2(map2) => {
@@ -780,7 +781,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i2 = map2.two.value_as_ref().unwrap();
                 let mut f = map2.mapper.borrow_mut();
                 let new_value = f(&i1, &i2);
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::Map3(map) => {
                 let i1 = map.one.value_as_ref().unwrap();
@@ -788,7 +789,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i3 = map.three.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&i1, &i2, &i3);
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::Map4(map) => {
                 let i1 = map.one.value_as_ref().unwrap();
@@ -797,7 +798,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i4 = map.four.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&i1, &i2, &i3, &i4);
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::Map5(map) => {
                 let i1 = map.one.value_as_ref().unwrap();
@@ -807,7 +808,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i5 = map.five.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&i1, &i2, &i3, &i4, &i5);
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::Map6(map) => {
                 let i1 = map.one.value_as_ref().unwrap();
@@ -818,7 +819,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i6 = map.six.value_as_ref().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&i1, &i2, &i3, &i4, &i5, &i6);
-                self.maybe_change_value(new_value, state)
+                self.maybe_change_value(Miny::new(new_value), state)
             }
             Kind::BindLhsChange { casts, bind } => {
                 // leaves an empty vec for next time
@@ -878,13 +879,13 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 debug_assert!(self.is_valid());
-                self.maybe_change_value(casts.r_unit.cast(()), state)
+                self.maybe_change_value(Miny::new(casts.r_unit.cast(())), state)
             }
             Kind::BindMain { casts, bind, .. } => {
                 let rhs = bind.rhs.borrow().as_ref().unwrap().clone();
                 self.copy_child_bindrhs(&rhs.node, casts.rhs_r, state)
             }
-            Kind::ArrayFold(af) => self.maybe_change_value(af.compute(), state),
+            Kind::ArrayFold(af) => self.maybe_change_value(Miny::new(af.compute()), state),
             Kind::Expert(e) => match e.before_main_computation() {
                 Err(Invalid) => {
                     self.invalidate_node(state);
@@ -894,7 +895,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 Ok(()) => {
                     let value = {
                         if let Some(r) = e.recompute.borrow_mut().as_mut() {
-                            r()
+                            Miny::new(r())
                         } else {
                             panic!()
                         }
@@ -1623,7 +1624,7 @@ impl<G: NodeGenerics> Node<G> {
         Some(&self._kind)
     }
 
-    fn maybe_change_value(&self, value: G::R, state: &State) -> Option<NodeRef> {
+    fn maybe_change_value(&self, value: Miny<G::R>, state: &State) -> Option<NodeRef> {
         let old_value_opt = self.value_opt.take();
         let mut cutoff = self.cutoff.borrow_mut();
         let should_change = old_value_opt
@@ -1780,7 +1781,7 @@ impl<G: NodeGenerics> Node<G> {
     ) -> Option<NodeRef> {
         if child.is_valid() {
             let latest = child.latest();
-            self.maybe_change_value(token.cast(latest), state)
+            self.maybe_change_value(Miny::new(token.cast(latest)), state)
         } else {
             self.invalidate_node(state);
             state.propagate_invalidity();
