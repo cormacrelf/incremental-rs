@@ -78,6 +78,7 @@ macro_rules! map_node {
          }
      > {
          default < $($d:ident),* >,
+         $(#[$method_meta:meta])*
          impl Incr::$methodname:ident, Kind::$kind:ident
      }) => {
         $vis struct $mapnode <$t1, $($t,)* $r>
@@ -111,9 +112,7 @@ macro_rules! map_node {
             }
         }
         impl<$t1: Value> Incr<$t1> {
-            /// Like [Incr::map] and [Incr::map2], but with more input incrementals.
-            ///
-            /// If you don't feel like counting, try using the `(i1 % i2 % ...).map((|_, _, ...| ...))` syntax.
+            $(#[$method_meta])*
             pub fn $methodname<$fparam, $($t2,)* $r>(&self, $($tfield: &Incr<$t>,)* f: $fparam) -> Incr<R>
             where
                 $($t: Value,)*
@@ -140,6 +139,16 @@ macro_rules! map_node {
     };
 }
 
+macro_rules! default_doc {
+    () => {
+        r#"
+Like [Incr::map] and [Incr::map2], but with more input incrementals.
+
+If you don't feel like counting, try using the `(i1 % i2 % ...).map(|_, _, ...| ...)` syntax.
+"#
+    };
+}
+
 map_node! {
     pub(crate) struct MapNode<
         inputs {
@@ -148,6 +157,26 @@ map_node! {
         fn { mapper: F1(..) -> R, }
     > {
         default < F2, F3, F4, F5, F6, I2, I3, I4, I5, I6 >,
+        /// Takes an incremental (self), and produces a new incremental whose value
+        /// is the result of applying a function `f` to the first value.
+        ///
+        /// ## Example
+        ///
+        /// ```
+        /// # use incremental::*;
+        /// let state = IncrState::new();
+        /// let var = state.var(20);
+        ///
+        /// // produce a new incremental that adds ten
+        /// let plus10 = var.map(|x| *x + 10);
+        ///
+        /// let observer = plus10.observe();
+        /// state.stabilise();
+        /// assert_eq!(observer.value(), 30);
+        /// var.set(400);
+        /// state.stabilise();
+        /// assert_eq!(observer.value(), 410);
+        /// ```
         impl Incr::map, Kind::Map
     }
 }
@@ -167,6 +196,15 @@ map_node! {
         fn { mapper: F2(.., T2) -> R, }
     > {
         default < F1, F3, F4, F5, F6, I3, I4, I5, I6 >,
+        /// Like [Incr::map], but with two inputs.
+        ///
+        /// ```
+        /// # use incremental::*;
+        /// let state = IncrState::new();
+        /// let v1 = state.var(1);
+        /// let v2 = state.var(1);
+        /// let add = v1.map2(&v2, |a, b| *a + *b);
+        /// ```
         impl Incr::map2, Kind::Map2
     }
 }
@@ -181,6 +219,7 @@ map_node! {
         fn { mapper: F3(.., T2, T3) -> R, }
     > {
         default < F1, F2, F4, F5, F6, I4, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map3, Kind::Map3
     }
 }
@@ -196,6 +235,7 @@ map_node! {
         fn { mapper: F4(.., T2, T3, T4) -> R, }
     > {
         default < F1, F2, F3, F5, F6, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map4, Kind::Map4
     }
 }
@@ -212,6 +252,7 @@ map_node! {
         fn { mapper: F5(.., T2, T3, T4, T5) -> R, }
     > {
         default < F1, F2, F3, F4, F6, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map5, Kind::Map5
     }
 }
@@ -229,6 +270,7 @@ map_node! {
         fn { mapper: F6(.., T2, T3, T4, T5, T6) -> R, }
     > {
         default < F1, F2, F3, F4, F5 >,
+        #[doc = default_doc!()]
         impl Incr::map6, Kind::Map6
     }
 }
