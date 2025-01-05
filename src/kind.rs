@@ -25,7 +25,7 @@ macro_rules! node_generics_default {
     (@single I5) => { type I5 = (); };
     (@single I6) => { type I6 = (); };
 
-    (@single BindLhs) => { type BindLhs = (); };
+    (@single BindLhs) => { /* snipped */ };
     (@single BindRhs) => { type BindRhs = (); };
     (@single B1) => { /* snipped */ };
     (@single Fold) => { /* snipped */ };
@@ -54,7 +54,6 @@ pub(crate) use map::*;
 
 pub(crate) trait NodeGenerics: 'static + NotObserver {
     type R: Value;
-    type BindLhs: Value;
     type BindRhs: Value;
     type I1: Value;
     type I2: Value;
@@ -82,16 +81,16 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Map6(map::Map6Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
-        bind: Rc<bind::BindNode<G::BindLhs, G::BindRhs>>,
+        bind: Rc<bind::BindNode<G::BindRhs>>,
     },
     BindMain {
         casts: bind::BindMainId<G>,
-        bind: Rc<bind::BindNode<G::BindLhs, G::BindRhs>>,
+        bind: Rc<bind::BindNode<G::BindRhs>>,
         // Ownership goes
         // a Kind::BindMain holds a BindNode & the BindLhsChange
         // a Kind::BindLhsChange holds a BindNode
         // BindNode holds weak refs to both
-        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::BindLhs, G::BindRhs>>>,
+        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::BindRhs>>>,
     },
     Expert(expert::ExpertNode<G::R>),
 }
@@ -216,13 +215,12 @@ impl<G: NodeGenerics> Kind<G> {
                         )
                     }
                     Kind::BindLhsChange { .. } => {
-                        write!(f, "BindLhsChange<{}>", std::any::type_name::<G::BindLhs>(),)
+                        write!(f, "BindLhsChange",)
                     }
                     Kind::BindMain { .. } => {
                         write!(
                             f,
-                            "BindMain<({}) -> {}>",
-                            std::any::type_name::<G::BindLhs>(),
+                            "BindMain<(lhs: dynamic) -> {}>",
                             std::any::type_name::<G::BindRhs>()
                         )
                     }

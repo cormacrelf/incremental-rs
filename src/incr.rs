@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::Hash;
@@ -222,15 +223,20 @@ impl<T: Value> Incr<T> {
         self.bind(move |value: &T| f(&cloned, value))
     }
 
-    pub fn bind<F, R>(&self, f: F) -> Incr<R>
+    pub fn bind<F, R>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
         F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
-            lhs: self.clone().node,
-            mapper: RefCell::new(Box::new(f)),
+            lhs: self.node.packed(),
+            mapper: RefCell::new(Box::new(move |any_ref: &dyn Any| -> Incr<R> {
+                let downcast = any_ref
+                    .downcast_ref::<T>()
+                    .expect("Type mismatch in bind function");
+                f(downcast)
+            })),
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
@@ -238,7 +244,7 @@ impl<T: Value> Incr<T> {
             id_lhs_change: Cell::new(NodeId(0)),
             main: Weak::new().into(),
         });
-        let lhs_change = Node::<kind::BindLhsChangeGen<T, R>>::create_rc(
+        let lhs_change = Node::<kind::BindLhsChangeGen<R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindLhsChange {
@@ -248,14 +254,14 @@ impl<T: Value> Incr<T> {
                 bind: bind.clone(),
             },
         );
-        let main = Node::<kind::BindNodeMainGen<T, R>>::create_rc(
+        let main = Node::<kind::BindNodeMainGen<R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindMain {
                 casts: kind::BindMainId {
                     rhs_r: refl::refl(),
                     input_rhs_i1: refl::refl(),
-                    input_lhs_i2: refl::refl(),
+                    // input_lhs_i2: refl::refl(),
                 },
                 bind: bind.clone(),
                 lhs_change: lhs_change.clone(),

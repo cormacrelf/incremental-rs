@@ -24,13 +24,12 @@ where
     F: Fn(&T) -> &R + 'static + NotObserver,
 {
     type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
     type I1 = T;
     type FRef = F;
     node_generics_default! { I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, Fold, Update, WithOld, Recompute, ObsChange }
+    node_generics_default! { BindLhs, BindRhs }
 }
 
 impl<F, T, R> fmt::Debug for MapRefNode<F, T, R>

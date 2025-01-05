@@ -848,12 +848,12 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 // leaves an empty vec for next time
                 // TODO: we could double-buffer this to save allocations.
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
-                let lhs = bind.lhs.value_as_ref().unwrap();
+                let lhs = bind.lhs.value_as_any().unwrap();
                 let rhs = {
                     let old_scope = state.current_scope();
                     *state.current_scope.borrow_mut() = bind.rhs_scope.borrow().clone();
                     let mut f = bind.mapper.borrow_mut();
-                    let rhs = f(&lhs);
+                    let rhs = f(&*lhs);
                     *state.current_scope.borrow_mut() = old_scope;
                     // Check that the returned RHS node is from the same world.
                     assert!(crate::weak_thin_ptr_eq(
