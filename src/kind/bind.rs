@@ -11,27 +11,25 @@ use crate::scope::{BindScope, Scope};
 use crate::WeakNode;
 use crate::{Incr, Value};
 
-pub(crate) struct BindNode<F, T, R>
+pub(crate) struct BindNode<T, R>
 where
     R: Value,
     T: Value,
-    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
 {
     pub id_lhs_change: Cell<NodeId>,
-    pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<F, T, R>>>>,
-    pub main: RefCell<Weak<Node<BindNodeMainGen<F, T, R>>>>,
+    pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<T, R>>>>,
+    pub main: RefCell<Weak<Node<BindNodeMainGen<T, R>>>>,
     pub lhs: Input<T>,
-    pub mapper: RefCell<F>,
+    pub mapper: RefCell<Box<dyn LhsChangeFn<T, R>>>,
     pub rhs: RefCell<Option<Incr<R>>>,
     pub rhs_scope: RefCell<Scope>,
     pub all_nodes_created_on_rhs: RefCell<Vec<WeakNode>>,
 }
 
-impl<F, T, R> BindScope for BindNode<F, T, R>
+impl<T, R> BindScope for BindNode<T, R>
 where
     R: Value,
     T: Value,
-    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
 {
     fn id(&self) -> NodeId {
         self.id_lhs_change.get()
@@ -66,13 +64,15 @@ where
     }
 }
 
-pub(crate) struct BindLhsChangeGen<F, T, R> {
-    _phantom: std::marker::PhantomData<(F, T, R)>,
+pub(crate) struct BindLhsChangeGen<T, R> {
+    _phantom: std::marker::PhantomData<(T, R)>,
 }
 
-impl<F, T, R> NodeGenerics for BindLhsChangeGen<F, T, R>
+pub(crate) trait LhsChangeFn<T, R>: FnMut(&T) -> Incr<R> + 'static + NotObserver {}
+impl<F, T, R> LhsChangeFn<T, R> for F where F: FnMut(&T) -> Incr<R> + 'static + NotObserver {}
+
+impl<T, R> NodeGenerics for BindLhsChangeGen<T, R>
 where
-    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     T: Value,
     R: Value,
 {
@@ -83,19 +83,17 @@ where
     // swap order so we can use as_parent with I1
     type I1 = ();
     type I2 = T;
-    type B1 = F;
     node_generics_default! { I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
-pub(crate) struct BindNodeMainGen<F, T, R> {
-    _phantom: std::marker::PhantomData<(F, T, R)>,
+pub(crate) struct BindNodeMainGen<T, R> {
+    _phantom: std::marker::PhantomData<(T, R)>,
 }
 
-impl<F, T, R> NodeGenerics for BindNodeMainGen<F, T, R>
+impl<T, R> NodeGenerics for BindNodeMainGen<T, R>
 where
-    F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     T: Value,
     R: Value,
 {
@@ -107,15 +105,13 @@ where
     type I1 = R;
     /// BindLhsChange (a sentinel)
     type I2 = ();
-    type B1 = F;
     node_generics_default! { I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
-impl<F, T, R> fmt::Debug for BindNode<F, T, R>
+impl<T, R> fmt::Debug for BindNode<T, R>
 where
-    F: FnMut(&T) -> Incr<R> + NotObserver,
     R: Value,
     T: Value,
 {

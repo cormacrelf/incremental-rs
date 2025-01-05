@@ -27,7 +27,7 @@ macro_rules! node_generics_default {
 
     (@single BindLhs) => { type BindLhs = (); };
     (@single BindRhs) => { type BindRhs = (); };
-    (@single B1) => { type B1 = fn(&Self::BindLhs) -> Incr<Self::BindRhs>; };
+    (@single B1) => { /* snipped */ };
     (@single Fold) => { /* snipped */ };
     (@single Update) => { /* snipped */ };
     (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
@@ -63,7 +63,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type I5: Value;
     type I6: Value;
     type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
-    type B1: FnMut(&Self::BindLhs) -> Incr<Self::BindRhs> + NotObserver;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
 }
 
@@ -83,16 +82,16 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Map6(map::Map6Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
-        bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        bind: Rc<bind::BindNode<G::BindLhs, G::BindRhs>>,
     },
     BindMain {
         casts: bind::BindMainId<G>,
-        bind: Rc<bind::BindNode<G::B1, G::BindLhs, G::BindRhs>>,
+        bind: Rc<bind::BindNode<G::BindLhs, G::BindRhs>>,
         // Ownership goes
         // a Kind::BindMain holds a BindNode & the BindLhsChange
         // a Kind::BindLhsChange holds a BindNode
         // BindNode holds weak refs to both
-        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::B1, G::BindLhs, G::BindRhs>>>,
+        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::BindLhs, G::BindRhs>>>,
     },
     Expert(expert::ExpertNode<G::R>),
 }

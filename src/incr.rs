@@ -230,7 +230,7 @@ impl<T: Value> Incr<T> {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
             lhs: self.clone().node,
-            mapper: f.into(),
+            mapper: RefCell::new(Box::new(f)),
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
@@ -238,7 +238,7 @@ impl<T: Value> Incr<T> {
             id_lhs_change: Cell::new(NodeId(0)),
             main: Weak::new().into(),
         });
-        let lhs_change = Node::<kind::BindLhsChangeGen<F, T, R>>::create_rc(
+        let lhs_change = Node::<kind::BindLhsChangeGen<T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindLhsChange {
@@ -248,7 +248,7 @@ impl<T: Value> Incr<T> {
                 bind: bind.clone(),
             },
         );
-        let main = Node::<kind::BindNodeMainGen<F, T, R>>::create_rc(
+        let main = Node::<kind::BindNodeMainGen<T, R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::BindMain {
