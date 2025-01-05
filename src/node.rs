@@ -8,7 +8,7 @@ use std::rc::Weak;
 
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
-use super::internal_observer::{InternalObserver, ObserverId};
+use super::internal_observer::ObserverId;
 use super::kind::expert::{ExpertEdge, Invalid, MakeStale, PackedEdge};
 use super::kind::{self, Kind, NodeGenerics};
 use super::node_update::NodeUpdateDelayed;
@@ -18,7 +18,8 @@ use super::CellIncrement;
 use super::{Incr, NodeRef, WeakNode};
 use crate::cutoff::ErasedCutoff;
 use crate::incrsan::NotObserver;
-use crate::node_update::OnUpdateHandler;
+use crate::internal_observer::ErasedObserver;
+use crate::node_update::{ErasedOnUpdateHandler, OnUpdateHandler};
 
 use super::stabilisation_num::StabilisationNum;
 use miny::Miny;
@@ -99,8 +100,8 @@ pub(crate) struct Node<G: NodeGenerics> {
 
     /// A node knows its own observers. This way, in order to schedule a notification at the end
     /// of stabilisation, all you need to do is add the node to a queue.
-    pub observers: RefCell<HashMap<ObserverId, Weak<InternalObserver<G::R>>>>,
-    pub on_update_handlers: RefCell<Vec<OnUpdateHandler<G::R>>>,
+    pub observers: RefCell<HashMap<ObserverId, Weak<dyn ErasedObserver>>>,
+    pub on_update_handlers: RefCell<Vec<ErasedOnUpdateHandler>>,
     pub graphviz_user_data: RefCell<Option<BoxedDebugData>>,
 }
 
@@ -277,7 +278,7 @@ pub(crate) trait Incremental<R>:
     fn set_graphviz_user_data(&self, user_data: BoxedDebugData);
     fn value_as_ref(&self) -> Option<Ref<R>>;
     fn constant(&self) -> Option<&R>;
-    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<R>>);
+    fn add_observer(&self, id: ObserverId, weak: Weak<dyn ErasedObserver>);
     fn remove_observer(&self, id: ObserverId);
     fn add_on_update_handler(&self, handler: OnUpdateHandler<R>);
 }
@@ -321,7 +322,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
             None
         }
     }
-    fn add_observer(&self, id: ObserverId, weak: Weak<InternalObserver<G::R>>) {
+    fn add_observer(&self, id: ObserverId, weak: Weak<dyn ErasedObserver>) {
         let mut os = self.observers.borrow_mut();
         os.insert(id, weak);
     }
@@ -333,7 +334,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     fn add_on_update_handler(&self, handler: OnUpdateHandler<G::R>) {
         self.num_on_update_handlers.increment();
         let mut ouh = self.on_update_handlers.borrow_mut();
-        ouh.push(handler);
+        ouh.push(Box::new(handler));
     }
 }
 
@@ -355,6 +356,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn kind_debug_ty(&self) -> String;
     fn weak_state(&self) -> &Weak<State>;
     fn is_valid(&self) -> bool;
+    fn value_as_any(&self) -> Option<Ref<dyn Any>>;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
@@ -505,6 +507,16 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
     fn state(&self) -> Rc<State> {
         self.weak_state.upgrade().unwrap()
+    }
+    fn value_as_any(&self) -> Option<Ref<dyn Any>> {
+        if let Some(Kind::MapRef(mapref)) = self.kind() {
+            let mapper = &mapref.mapper;
+            let input = mapref.input.value_as_ref()?;
+            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref) as &dyn Any)).ok();
+            return mapped;
+        }
+        let v = self.value_opt.borrow();
+        Ref::filter_map(v, |o| o.as_deref()).ok()
     }
     fn is_valid(&self) -> bool {
         self.is_valid.get()
@@ -1068,7 +1080,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         self.created_in.clone()
     }
     fn run_on_update_handlers(&self, node_update: NodeUpdateDelayed, now: StabilisationNum) {
-        let input = self.as_input();
+        let input = self.erased();
         let mut ouh = self.on_update_handlers.borrow_mut();
         for handler in ouh.iter_mut() {
             handler.run(self, node_update, now)

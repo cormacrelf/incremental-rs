@@ -2,7 +2,7 @@ use super::node::ErasedNode;
 use super::node_update::{NodeUpdateDelayed, OnUpdateHandler};
 use super::stabilisation_num::StabilisationNum;
 use super::state::{IncrStatus, State};
-use crate::node::Incremental;
+use crate::node_update::HandleUpdate;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -54,6 +54,12 @@ pub(crate) trait ErasedObserver: Debug + NotObserver {
     fn add_to_observed_node(&self);
     fn remove_from_observed_node(&self);
     fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError>;
+    fn run_all(
+        &self,
+        input: &dyn ErasedNode,
+        node_update: NodeUpdateDelayed,
+        now: StabilisationNum,
+    );
 }
 
 impl<T: Value> ErasedObserver for InternalObserver<T> {
@@ -137,6 +143,25 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
             }
         }
     }
+    fn run_all(
+        &self,
+        input: &dyn ErasedNode,
+        node_update: NodeUpdateDelayed,
+        now: StabilisationNum,
+    ) {
+        let mut handlers = self.on_update_handlers.borrow_mut();
+        for (id, handler) in handlers.iter_mut() {
+            tracing::trace!("running update handler with id {id:?}");
+            /* We have to test [state] before each on-update handler, because an on-update
+            handler might disable its own observer, which should prevent other on-update
+            handlers in the same observer from running. */
+            match self.state.get() {
+                Created | Unlinked => panic!(),
+                Disallowed => (),
+                InUse => handler.run(input, node_update, now),
+            }
+        }
+    }
 }
 
 impl<T: Value> Debug for InternalObserver<T> {
@@ -210,25 +235,6 @@ impl<T: Value> InternalObserver<T> {
                     _ => unreachable!(),
                 }
                 Ok(token)
-            }
-        }
-    }
-    pub(crate) fn run_all(
-        &self,
-        input: &dyn Incremental<T>,
-        node_update: NodeUpdateDelayed,
-        now: StabilisationNum,
-    ) {
-        let mut handlers = self.on_update_handlers.borrow_mut();
-        for (id, handler) in handlers.iter_mut() {
-            tracing::trace!("running update handler with id {id:?}");
-            /* We have to test [state] before each on-update handler, because an on-update
-            handler might disable its own observer, which should prevent other on-update
-            handlers in the same observer from running. */
-            match self.state.get() {
-                Created | Unlinked => panic!(),
-                Disallowed => (),
-                InUse => handler.run(input, node_update, now),
             }
         }
     }
