@@ -127,18 +127,3 @@ impl<G: NodeGenerics> fmt::Debug for BindLhsId<G> {
         f.debug_struct("BindLhsId").finish()
     }
 }
-
-pub(crate) struct BindMainId<G: NodeGenerics> {
-    pub(crate) rhs_r: Id<G::BindRhs, G::R>,
-    // pub(crate) input_rhs_i1: Id<Input<G::BindRhs>, Input<G::I1>>,
-    // pub(crate) input_lhs_i2: Id<Input<()>, Input<G::I2>>,
-}
-
-impl<G: NodeGenerics> fmt::Debug for BindMainId<G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindMainId")
-            .field("d_eq_r", &self.rhs_r)
-            // .field("input_lhs_change_unit", &self.input_lhs_i2)
-            .finish()
-    }
-}

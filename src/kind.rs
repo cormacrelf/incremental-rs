@@ -84,13 +84,12 @@ pub(crate) enum Kind<G: NodeGenerics> {
         bind: Rc<bind::BindNode<G::BindRhs>>,
     },
     BindMain {
-        casts: bind::BindMainId<G>,
-        bind: Rc<bind::BindNode<G::BindRhs>>,
+        bind: Rc<bind::BindNode<G::R>>,
         // Ownership goes
         // a Kind::BindMain holds a BindNode & the BindLhsChange
         // a Kind::BindLhsChange holds a BindNode
         // BindNode holds weak refs to both
-        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::BindRhs>>>,
+        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::R>>>,
     },
     Expert(expert::ExpertNode<G::R>),
 }

@@ -258,11 +258,6 @@ impl<T: Value> Incr<T> {
             state.weak(),
             state.current_scope(),
             Kind::BindMain {
-                casts: kind::BindMainId {
-                    rhs_r: refl::refl(),
-                    // input_rhs_i1: refl::refl(),
-                    // input_lhs_i2: refl::refl(),
-                },
                 bind: bind.clone(),
                 lhs_change: lhs_change.clone(),
             },

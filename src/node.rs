@@ -23,7 +23,6 @@ use crate::node_update::{ErasedOnUpdateHandler, OnUpdateHandler};
 
 use super::stabilisation_num::StabilisationNum;
 use miny::Miny;
-use refl::Id;
 use smallvec::{smallvec, SmallVec};
 use std::{
     cell::{Cell, RefCell},
@@ -769,10 +768,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 debug_assert!(self.is_valid());
                 self.maybe_change_value(Miny::new_unsized(casts.r_unit.cast(())), state)
             }
-            Kind::BindMain { casts, bind, .. } => {
+            Kind::BindMain { bind, .. } => {
                 let rhs = bind.rhs.borrow();
                 let rhs_ref = rhs.as_ref().unwrap();
-                self.copy_child_bindrhs(rhs_ref, casts.rhs_r, state)
+                self.copy_child_bindrhs(rhs_ref, state)
             }
             Kind::ArrayFold(af) => self.maybe_change_value(Miny::new_unsized(af.compute()), state),
             Kind::Expert(e) => match e.before_main_computation() {
@@ -1777,16 +1776,11 @@ impl<G: NodeGenerics> Node<G> {
         None
     }
 
-    fn copy_child_bindrhs(
-        &self,
-        child: &NodeRef,
-        token: Id<G::BindRhs, G::R>,
-        state: &State,
-    ) -> Option<NodeRef> {
+    fn copy_child_bindrhs(&self, child: &NodeRef, state: &State) -> Option<NodeRef> {
         if child.is_valid() {
             let latest = child.value_as_any()?;
-            let down = latest.downcast_ref::<G::BindRhs>()?.clone();
-            self.maybe_change_value(Miny::new_unsized(token.cast(down)), state)
+            let down = latest.downcast_ref::<G::R>()?.clone();
+            self.maybe_change_value(Miny::new_unsized(down), state)
         } else {
             self.invalidate_node(state);
             state.propagate_invalidity();
