@@ -112,7 +112,10 @@ macro_rules! map_node {
         }
         impl<$t1: Value> Incr<$t1> {
             $(#[$method_meta])*
-            pub fn $methodname<$fparam, $($t2,)* $r>(&self, $($tfield: &Incr<$t>,)* f: $fparam) -> Incr<R>
+            pub fn $methodname<$fparam, $($t2,)* $r>(
+                &self,
+                $($tfield: &Incr<$t>,)*
+                f: $fparam) -> Incr<R>
             where
                 $($t: Value,)*
                 $r: Value,
