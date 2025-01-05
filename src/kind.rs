@@ -2,7 +2,6 @@ use std::any::Any;
 use std::fmt::{self, Debug};
 use std::rc::Rc;
 
-use super::node::Node;
 use crate::incrsan::NotObserver;
 use crate::var::ErasedVariable;
 use crate::{Incr, NodeRef, Value};
@@ -90,7 +89,7 @@ pub(crate) enum Kind<G: NodeGenerics> {
         // a Kind::BindMain holds a BindNode & the BindLhsChange
         // a Kind::BindLhsChange holds a BindNode
         // BindNode holds weak refs to both
-        lhs_change: Rc<Node<bind::BindLhsChangeGen<G::R>>>,
+        lhs_change: NodeRef,
     },
     Expert(expert::ExpertNode<G::R>),
 }

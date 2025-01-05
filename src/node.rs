@@ -1569,7 +1569,7 @@ impl<G: NodeGenerics> Node<G> {
             Kind::BindMain {
                 bind, lhs_change, ..
             } => {
-                ret = f(ret, 0, lhs_change.packed())?;
+                ret = f(ret, 0, lhs_change.clone())?;
                 if let Some(rhs) = bind.rhs.borrow().as_ref() {
                     ret = f(ret, 1, rhs.clone())?;
                 }

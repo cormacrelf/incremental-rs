@@ -276,7 +276,7 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::BindMain {
                 bind: bind.clone(),
-                lhs_change: lhs_change.clone(),
+                lhs_change: lhs_change.packed(),
             },
         );
         {
