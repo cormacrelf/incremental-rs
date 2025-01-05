@@ -7,7 +7,7 @@ use std::{
 
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
-use crate::node::ErasedIncremental;
+use crate::node::ErasedNode;
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any + NotObserver {
@@ -15,7 +15,7 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
     fn on_change(&self);
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
-    fn erased_input(&self) -> &dyn ErasedIncremental;
+    fn erased_input(&self) -> &dyn ErasedNode;
 }
 
 pub(crate) type PackedEdge = Rc<dyn ExpertEdge>;
@@ -61,8 +61,8 @@ impl<T: Value> ExpertEdge for Edge<T> {
         &self.index
     }
 
-    fn erased_input(&self) -> &dyn ErasedIncremental {
-        self.child.node.erased_input()
+    fn erased_input(&self) -> &dyn ErasedNode {
+        self.child.node.erased()
     }
 }
 

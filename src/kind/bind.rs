@@ -7,7 +7,7 @@ use refl::Id;
 
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
-use crate::node::{ErasedNode, Input, Node, NodeId};
+use crate::node::{Node, NodeId};
 use crate::scope::{BindScope, Scope};
 use crate::{Incr, Value};
 use crate::{NodeRef, WeakNode};
@@ -18,10 +18,10 @@ where
 {
     pub id_lhs_change: Cell<NodeId>,
     pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<R>>>>,
-    pub main: RefCell<Weak<Node<BindNodeMainGen<R>>>>,
+    pub main: RefCell<WeakNode>,
     pub lhs: NodeRef,
     pub mapper: RefCell<Box<dyn LhsChangeFn<R>>>,
-    pub rhs: RefCell<Option<Incr<R>>>,
+    pub rhs: RefCell<Option<NodeRef>>,
     pub rhs_scope: RefCell<Scope>,
     pub all_nodes_created_on_rhs: RefCell<Vec<WeakNode>>,
 }
@@ -113,7 +113,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BindNode")
-            .field("output", &self.rhs.borrow().as_ref().map(|x| &x.node))
+            // .field("output", &self.rhs.borrow().as_ref().map(|x| &x.node))
             .finish()
     }
 }
@@ -130,7 +130,7 @@ impl<G: NodeGenerics> fmt::Debug for BindLhsId<G> {
 
 pub(crate) struct BindMainId<G: NodeGenerics> {
     pub(crate) rhs_r: Id<G::BindRhs, G::R>,
-    pub(crate) input_rhs_i1: Id<Input<G::BindRhs>, Input<G::I1>>,
+    // pub(crate) input_rhs_i1: Id<Input<G::BindRhs>, Input<G::I1>>,
     // pub(crate) input_lhs_i2: Id<Input<()>, Input<G::I2>>,
 }
 

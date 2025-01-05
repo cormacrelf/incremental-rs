@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::rc::{Rc, Weak};
 
 use super::kind::{self, Kind};
-use super::node::{Incremental, Input, Node, NodeId};
+use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
 use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
@@ -242,7 +242,7 @@ impl<T: Value> Incr<T> {
             all_nodes_created_on_rhs: RefCell::new(vec![]),
             lhs_change: Weak::new().into(),
             id_lhs_change: Cell::new(NodeId(0)),
-            main: Weak::new().into(),
+            main: RefCell::new(Weak::<Node<kind::BindLhsChangeGen<R>>>::new()),
         });
         let lhs_change = Node::<kind::BindLhsChangeGen<R>>::create_rc(
             state.weak(),
@@ -260,7 +260,7 @@ impl<T: Value> Incr<T> {
             Kind::BindMain {
                 casts: kind::BindMainId {
                     rhs_r: refl::refl(),
-                    input_rhs_i1: refl::refl(),
+                    // input_rhs_i1: refl::refl(),
                     // input_lhs_i2: refl::refl(),
                 },
                 bind: bind.clone(),
@@ -271,7 +271,7 @@ impl<T: Value> Incr<T> {
             let mut bind_lhs_change = bind.lhs_change.borrow_mut();
             let mut bind_main = bind.main.borrow_mut();
             *bind_lhs_change = Rc::downgrade(&lhs_change);
-            *bind_main = Rc::downgrade(&main);
+            *bind_main = main.weak();
             bind.id_lhs_change.set(lhs_change.id);
         }
 
