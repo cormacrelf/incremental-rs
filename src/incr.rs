@@ -4,6 +4,8 @@ use std::fmt;
 use std::hash::Hash;
 use std::rc::{Rc, Weak};
 
+use miny::Miny;
+
 use super::kind::{self, Kind};
 use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
@@ -217,10 +219,14 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::MapWithOld(kind::MapWithOld {
                 input: self.node.packed(),
-                mapper: RefCell::new(Box::new(move |opt_r, x: &dyn Any| {
-                    let x = x.downcast_ref::<T>().unwrap();
-                    f(opt_r, x)
-                })),
+                mapper: RefCell::new(Box::new(
+                    move |opt_r: Option<Miny<dyn Any>>, x: &dyn Any| {
+                        let opt_r = opt_r.and_then(|x| Miny::downcast(x).ok());
+                        let x = x.downcast_ref::<T>().unwrap();
+                        let (r, b) = f(opt_r, x);
+                        (Miny::new_unsized(r), b)
+                    },
+                )),
                 _p: std::marker::PhantomData,
             }),
         );

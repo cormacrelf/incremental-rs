@@ -285,17 +285,21 @@ map_node! {
     }
 }
 
-pub(crate) trait FWithOld<R>:
-    FnMut(Option<R>, &dyn Any) -> (R, bool) + 'static + NotObserver
+pub(crate) trait FWithOld:
+    FnMut(Option<miny::Miny<dyn Any>>, &dyn Any) -> (miny::Miny<dyn Any>, bool) + 'static + NotObserver
 {
 }
-impl<F, R> FWithOld<R> for F where F: FnMut(Option<R>, &dyn Any) -> (R, bool) + 'static + NotObserver
-{}
+impl<F> FWithOld for F where
+    F: FnMut(Option<miny::Miny<dyn Any>>, &dyn Any) -> (miny::Miny<dyn Any>, bool)
+        + 'static
+        + NotObserver
+{
+}
 
 /// Lets you dismantle the old R for parts.
 pub(crate) struct MapWithOld<R> {
     pub input: NodeRef,
-    pub mapper: RefCell<Box<dyn FWithOld<R>>>,
+    pub mapper: RefCell<Box<dyn FWithOld>>,
     pub _p: PhantomData<R>,
 }
 
