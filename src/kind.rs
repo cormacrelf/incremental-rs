@@ -19,7 +19,7 @@ macro_rules! node_generics_default {
     (@single F6) => { /* snipped */ };
 
     (@single I1) => { type I1 = (); };
-    (@single I2) => { type I2 = (); };
+    (@single I2) => { /* snipped */ };
     (@single I3) => { /* snipped */ };
     (@single I4) => { /* snipped */ };
     (@single I5) => { /* snipped */ };
@@ -56,7 +56,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type R: Value;
     type BindRhs: Value;
     type I1: Value;
-    type I2: Value;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {

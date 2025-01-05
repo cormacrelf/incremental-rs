@@ -100,8 +100,8 @@ where
     type BindRhs = R;
     /// Rhs
     type I1 = R;
-    /// BindLhsChange (a sentinel)
-    type I2 = ();
+    // BindLhsChange (a sentinel)
+    // type I2 = ();
     node_generics_default! { I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
