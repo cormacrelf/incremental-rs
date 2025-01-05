@@ -82,7 +82,6 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Map5(map::Map5Node<G::R>),
     Map6(map::Map6Node<G::R>),
     BindLhsChange {
-        casts: bind::BindLhsId<G>,
         bind: Rc<bind::BindNode>,
     },
     BindMain {

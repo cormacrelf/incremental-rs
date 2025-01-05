@@ -269,12 +269,7 @@ impl<T: Value> Incr<T> {
         let lhs_change = Node::<kind::BindLhsChangeGen<R>>::create_rc(
             state.weak(),
             state.current_scope(),
-            Kind::BindLhsChange {
-                casts: kind::BindLhsId {
-                    r_unit: refl::refl(),
-                },
-                bind: bind.clone(),
-            },
+            Kind::BindLhsChange { bind: bind.clone() },
         );
         let main = Node::<kind::BindNodeMainGen<R>>::create_rc(
             state.weak(),

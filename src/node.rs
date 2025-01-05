@@ -707,7 +707,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let new_value = f(&*i1, &*i2, &*i3, &*i4, &*i5, &*i6);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
-            Kind::BindLhsChange { casts, bind } => {
+            Kind::BindLhsChange { bind } => {
                 // leaves an empty vec for next time
                 // TODO: we could double-buffer this to save allocations.
                 let mut old_all_nodes_created_on_rhs = bind.all_nodes_created_on_rhs.take();
@@ -762,7 +762,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 debug_assert!(self.is_valid());
-                self.maybe_change_value(Miny::new_unsized(casts.r_unit.cast(())), state)
+                self.maybe_change_value(Miny::new_unsized(()), state)
             }
             Kind::BindMain { bind, .. } => {
                 let rhs = bind.rhs.borrow();

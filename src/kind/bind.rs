@@ -2,8 +2,6 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::{cell::Cell, fmt};
 
-use refl::Id;
-
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
 use crate::node::NodeId;
@@ -105,15 +103,5 @@ impl fmt::Debug for BindNode {
         f.debug_struct("BindNode")
             // .field("output", &self.rhs.borrow().as_ref().map(|x| &x.node))
             .finish()
-    }
-}
-
-pub(crate) struct BindLhsId<G: NodeGenerics> {
-    pub(crate) r_unit: Id<(), G::R>,
-}
-
-impl<G: NodeGenerics> fmt::Debug for BindLhsId<G> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BindLhsId").finish()
     }
 }
