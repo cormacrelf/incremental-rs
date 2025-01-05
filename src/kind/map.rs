@@ -58,6 +58,7 @@ macro_rules! map_node {
             $tfield1: $self.node.packed(),
             $($tfield2: $tfield2.node.packed(),)*
             mapper: Box::new(RefCell::new($f)),
+            phantom: std::marker::PhantomData,
         }
     };
     (@any $type:ty) => {dyn ::std::any::Any};
@@ -82,7 +83,9 @@ macro_rules! map_node {
         {
             $vis $tfield1: crate::NodeRef,
             $($vis $tfield: crate::NodeRef,)*
-            $vis $ffield: Box<RefCell<dyn FnMut(&dyn ::std::any::Any, $(&map_node!(@any $t2),)*) -> $r>>,
+            $vis $ffield: Box<RefCell<dyn FnMut(&dyn ::std::any::Any, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn std::any::Any>>>,
+
+            $vis phantom: std::marker::PhantomData<fn() -> $r>,
         }
 
         impl<$r> NodeGenerics for $mapnode<$r>
@@ -121,13 +124,13 @@ macro_rules! map_node {
                             $(
                                 $tfield: &dyn ::std::any::Any,
                             )*
-                            | -> $r
+                            | -> miny::Miny<dyn Any>
                         {
                             let $tfield1 = $tfield1.downcast_ref::<$t1>().expect("Type error in map function");
                             $(
                                 let $tfield = $tfield.downcast_ref::<$t>().expect("Type error in map function");
                             )*
-                            f( $tfield1, $($tfield,)* )
+                            miny::Miny::new_unsized(f( $tfield1, $($tfield,)* ))
                         },
                         self,
                         $tfield1,

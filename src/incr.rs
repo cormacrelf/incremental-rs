@@ -172,12 +172,13 @@ impl<T: Value> Incr<T> {
                 let weak = WeakIncr(node_weak.clone());
                 move |t: &dyn Any| {
                     let t = t.downcast_ref().unwrap();
-                    cyclic(weak.clone(), t)
+                    miny::Miny::new_unsized(cyclic(weak.clone(), t))
                 }
             };
             let mapper = kind::MapNode {
                 input: self.node.packed(),
                 mapper: Box::new(RefCell::new(f)),
+                phantom: Default::default(),
             };
             let state = self.node.state();
             let mut node = Node::<kind::MapNode<R>>::create(
