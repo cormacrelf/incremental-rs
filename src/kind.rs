@@ -83,10 +83,10 @@ pub(crate) enum Kind<G: NodeGenerics> {
     Map6(map::Map6Node<G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
-        bind: Rc<bind::BindNode<G::BindRhs>>,
+        bind: Rc<bind::BindNode>,
     },
     BindMain {
-        bind: Rc<bind::BindNode<G::R>>,
+        bind: Rc<bind::BindNode>,
         // Ownership goes
         // a Kind::BindMain holds a BindNode & the BindLhsChange
         // a Kind::BindLhsChange holds a BindNode

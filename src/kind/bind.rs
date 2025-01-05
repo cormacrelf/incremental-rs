@@ -1,23 +1,19 @@
 use std::any::Any;
 use std::cell::RefCell;
-use std::rc::Weak;
 use std::{cell::Cell, fmt};
 
 use refl::Id;
 
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
-use crate::node::{Node, NodeId};
+use crate::node::NodeId;
 use crate::scope::{BindScope, Scope};
 use crate::Value;
 use crate::{NodeRef, WeakNode};
 
-pub(crate) struct BindNode<R>
-where
-    R: Value,
-{
+pub(crate) struct BindNode {
     pub id_lhs_change: Cell<NodeId>,
-    pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<R>>>>,
+    pub lhs_change: RefCell<WeakNode>,
     pub main: RefCell<WeakNode>,
     pub lhs: NodeRef,
     pub mapper: RefCell<Box<dyn LhsChangeFn>>,
@@ -26,10 +22,7 @@ where
     pub all_nodes_created_on_rhs: RefCell<Vec<WeakNode>>,
 }
 
-impl<R> BindScope for BindNode<R>
-where
-    R: Value,
-{
+impl BindScope for BindNode {
     fn id(&self) -> NodeId {
         self.id_lhs_change.get()
     }
@@ -50,7 +43,7 @@ where
     fn height(&self) -> i32 {
         let lhs_change_ = self.lhs_change.borrow();
         let lhs_change = lhs_change_.upgrade().unwrap();
-        lhs_change.height.get()
+        lhs_change.height()
     }
     fn add_node(&self, node: WeakNode) {
         tracing::info!(
@@ -107,10 +100,7 @@ where
     node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
-impl<R> fmt::Debug for BindNode<R>
-where
-    R: Value,
-{
+impl fmt::Debug for BindNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BindNode")
             // .field("output", &self.rhs.borrow().as_ref().map(|x| &x.node))

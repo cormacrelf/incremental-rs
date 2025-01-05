@@ -8,6 +8,7 @@ use super::kind::{self, Kind};
 use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
 use crate::incrsan::NotObserver;
+use crate::kind::BindLhsChangeGen;
 use crate::node_update::OnUpdateHandler;
 use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, WeakState};
 
@@ -254,9 +255,9 @@ impl<T: Value> Incr<T> {
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
-            lhs_change: Weak::new().into(),
+            lhs_change: RefCell::new(Weak::<Node<BindLhsChangeGen<R>>>::new()),
             id_lhs_change: Cell::new(NodeId(0)),
-            main: RefCell::new(Weak::<Node<kind::BindLhsChangeGen<R>>>::new()),
+            main: RefCell::new(Weak::<Node<kind::BindNodeMainGen<R>>>::new()),
         });
         let lhs_change = Node::<kind::BindLhsChangeGen<R>>::create_rc(
             state.weak(),
@@ -279,7 +280,7 @@ impl<T: Value> Incr<T> {
         {
             let mut bind_lhs_change = bind.lhs_change.borrow_mut();
             let mut bind_main = bind.main.borrow_mut();
-            *bind_lhs_change = Rc::downgrade(&lhs_change);
+            *bind_lhs_change = lhs_change.weak();
             *bind_main = main.weak();
             bind.id_lhs_change.set(lhs_change.id);
         }
