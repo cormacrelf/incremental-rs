@@ -143,13 +143,16 @@ impl<T: Value> Incr<T> {
         F: for<'a> Fn(&'a T) -> &'a R + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapRefNode<F, T, R>>::create_rc(
+        let node = Node::<kind::MapRefNode<R>>::create_rc(
             state.weak(),
             state.current_scope(),
             Kind::MapRef(kind::MapRefNode {
-                input: self.node.clone(),
+                input: self.node.packed(),
                 did_change: true.into(),
-                mapper: f,
+                mapper: Box::new(move |x: &dyn Any| {
+                    let x = x.downcast_ref::<T>().unwrap();
+                    f(x)
+                }),
             }),
         );
         Incr { node }
@@ -201,16 +204,23 @@ impl<T: Value> Incr<T> {
     /// (without relying on PartialEq, for example) whether the
     /// incremental node should propagate its changes.
     ///
-    pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
+    pub fn map_with_old<R, F>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapWithOld<F, T, R>>::create_rc(
+        let node = Node::<kind::MapWithOld<R>>::create_rc(
             state.weak(),
             state.current_scope(),
-            Kind::MapWithOld(kind::MapWithOld::new(self.node.clone(), f)),
+            Kind::MapWithOld(kind::MapWithOld {
+                input: self.node.packed(),
+                mapper: RefCell::new(Box::new(move |opt_r, x: &dyn Any| {
+                    let x = x.downcast_ref::<T>().unwrap();
+                    f(opt_r, x)
+                })),
+                _p: std::marker::PhantomData,
+            }),
         );
         Incr { node }
     }

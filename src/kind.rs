@@ -30,8 +30,8 @@ macro_rules! node_generics_default {
     (@single B1) => { /* snipped */ };
     (@single Fold) => { /* snipped */ };
     (@single Update) => { /* snipped */ };
-    (@single WithOld) => { type WithOld = fn(Option<Self::R>, &Self::I1) -> (Self::R, bool); };
-    (@single FRef) => { type FRef = fn(&Self::I1) -> &Self::R; };
+    (@single WithOld) => { /* snipped */ };
+    (@single FRef) => { /* snipped */ };
     (@single Recompute) => { /* snipped */ };
     (@single ObsChange) => { /* snipped */ };
 
@@ -57,8 +57,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type BindRhs: Value;
     type I1: Value;
     type I2: Value;
-    type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
-    type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
@@ -68,8 +66,8 @@ pub(crate) enum Kind<G: NodeGenerics> {
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
     Map(map::MapNode<G::R>),
-    MapWithOld(map::MapWithOld<G::WithOld, G::I1, G::R>),
-    MapRef(map::MapRefNode<G::FRef, G::I1, G::R>),
+    MapWithOld(map::MapWithOld<G::R>),
+    MapRef(map::MapRefNode<G::R>),
     Map2(map::Map2Node<G::R>),
     Map3(map::Map3Node<G::R>),
     Map4(map::Map4Node<G::R>),

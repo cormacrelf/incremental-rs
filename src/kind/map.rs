@@ -1,40 +1,35 @@
+use std::any::Any;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::{cell::Cell, fmt};
 
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
-use crate::node::Input;
-use crate::Incr;
 use crate::Value;
+use crate::{Incr, NodeRef};
 
-pub(crate) struct MapRefNode<F, T, R>
-where
-    F: Fn(&T) -> &R + 'static + NotObserver,
-{
-    pub(crate) input: Input<T>,
-    pub(crate) mapper: F,
+pub(crate) trait FRef<R>: Fn(&dyn Any) -> &R + 'static + NotObserver {}
+impl<F, R> FRef<R> for F where F: Fn(&dyn Any) -> &R + 'static + NotObserver {}
+
+pub(crate) struct MapRefNode<R> {
+    pub(crate) input: NodeRef,
+    pub(crate) mapper: Box<dyn FRef<R>>,
     pub(crate) did_change: Cell<bool>,
 }
 
-impl<F, T, R> NodeGenerics for MapRefNode<F, T, R>
+impl<R> NodeGenerics for MapRefNode<R>
 where
-    T: Value,
     R: Value,
-    F: Fn(&T) -> &R + 'static + NotObserver,
 {
     type R = R;
-    type I1 = T;
-    type FRef = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { I1, I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, Fold, Update, WithOld, Recompute, ObsChange }
     node_generics_default! { BindLhs, BindRhs }
 }
 
-impl<F, T, R> fmt::Debug for MapRefNode<F, T, R>
+impl<R> fmt::Debug for MapRefNode<R>
 where
-    F: Fn(&T) -> &R + 'static + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -287,48 +282,33 @@ map_node! {
     }
 }
 
-/// Lets you dismantle the old R for parts.
-pub(crate) struct MapWithOld<F, T, R>
-where
-    F: FnMut(Option<R>, &T) -> (R, bool),
+pub(crate) trait FWithOld<R>:
+    FnMut(Option<R>, &dyn Any) -> (R, bool) + 'static + NotObserver
 {
-    pub input: Input<T>,
-    pub mapper: RefCell<F>,
+}
+impl<F, R> FWithOld<R> for F where F: FnMut(Option<R>, &dyn Any) -> (R, bool) + 'static + NotObserver
+{}
+
+/// Lets you dismantle the old R for parts.
+pub(crate) struct MapWithOld<R> {
+    pub input: NodeRef,
+    pub mapper: RefCell<Box<dyn FWithOld<R>>>,
     pub _p: PhantomData<R>,
 }
 
-impl<F, T, R> MapWithOld<F, T, R>
+impl<R> NodeGenerics for MapWithOld<R>
 where
-    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
-{
-    pub fn new(input: Input<T>, mapper: F) -> Self {
-        Self {
-            input,
-            mapper: RefCell::new(mapper),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<F, T, R> NodeGenerics for MapWithOld<F, T, R>
-where
-    T: Value,
     R: Value,
-    // WARN: we ignore this boolean now
-    F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
 {
-    type I1 = T;
     type R = R;
-    type WithOld = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
+    node_generics_default! { I1, I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
     node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, FRef, Recompute, ObsChange }
+    node_generics_default! { WithOld, Fold, Update, FRef, Recompute, ObsChange }
 }
 
-impl<F, T, R> fmt::Debug for MapWithOld<F, T, R>
+impl<R> fmt::Debug for MapWithOld<R>
 where
-    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
     R: Value,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -155,8 +155,8 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
 
     fn value_as_ref(&self) -> Option<Ref<G::R>> {
         if let Some(Kind::MapRef(mapref)) = self.kind() {
-            let mapper = &mapref.mapper;
-            let input = mapref.input.value_as_ref()?;
+            let mapper = &*mapref.mapper;
+            let input = mapref.input.value_as_any()?;
             let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
             return mapped;
         }
@@ -376,7 +376,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn value_as_any(&self) -> Option<Ref<dyn Any>> {
         if let Some(Kind::MapRef(mapref)) = self.kind() {
             let mapper = &mapref.mapper;
-            let input = mapref.input.value_as_ref()?;
+            let input = mapref.input.value_as_any()?;
             let mapped = Ref::filter_map(input, |iref| Some(mapper(iref) as &dyn Any)).ok();
             return mapped;
         }
@@ -650,14 +650,14 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.maybe_change_value_manual(None, mapref.did_change.get(), false, state)
             }
             Kind::MapWithOld(map) => {
-                let input = map.input.value_as_ref().unwrap();
+                let input = map.input.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let (new_value, did_change) = {
                     let mut current_value = self.value_opt.borrow_mut();
                     tracing::trace!("<- old: {current_value:?}");
                     f(
                         current_value.take().and_then(|x| Miny::downcast(x).ok()),
-                        &input,
+                        &*input,
                     )
                 };
                 self.value_opt.replace(Some(Miny::new_unsized(new_value)));
@@ -1295,15 +1295,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::MapRef(mapref) => {
                 // mapref is the only node that uses old_value_opt in child_changed.
                 //
-                let self_old = old_value_opt
-                    .map(|v| v.downcast_ref::<G::I1>().ok_or(ParentError::DowncastFailed))
-                    .transpose()?
-                    .map(|v| (mapref.mapper)(v));
+                let self_old = old_value_opt.map(|v| (mapref.mapper)(v));
                 let child_new = child.value_as_any().ok_or(ParentError::ChildHasNoValue)?;
-                let child_downcast = child_new
-                    .downcast_ref::<G::I1>()
-                    .ok_or(ParentError::DowncastFailed)?;
-                let self_new = (mapref.mapper)(child_downcast);
+                let self_new = (mapref.mapper)(&*child_new);
 
                 let did_change = self_old.map_or(true, |old| {
                     !self.cutoff.borrow_mut().should_cutoff(old, self_new)
@@ -1519,9 +1513,9 @@ impl<G: NodeGenerics> Node<G> {
         let mut ret = init;
         match kind {
             Kind::Constant(_) => {}
+            Kind::MapWithOld(kind::MapWithOld { input, .. }) => ret = f(ret, 0, input.packed())?,
             Kind::MapRef(kind::MapRefNode { input, .. })
-            | Kind::MapWithOld(kind::MapWithOld { input, .. }) => ret = f(ret, 0, input.packed())?,
-            Kind::Map(kind::MapNode { input, .. }) => ret = f(ret, 0, input.clone())?,
+            | Kind::Map(kind::MapNode { input, .. }) => ret = f(ret, 0, input.clone())?,
             Kind::Map2(kind::Map2Node { one, two, .. }) => {
                 ret = f(ret, 0, one.clone().packed())?;
                 ret = f(ret, 1, two.clone().packed())?;
