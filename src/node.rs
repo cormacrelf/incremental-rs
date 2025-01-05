@@ -157,7 +157,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         if let Some(Kind::MapRef(mapref)) = self.kind() {
             let mapper = &*mapref.mapper;
             let input = mapref.input.value_as_any()?;
-            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
+            let mapped = Ref::filter_map(input, |iref| mapper(iref).downcast_ref()).ok();
             return mapped;
         }
         let v = self.value_opt.borrow();

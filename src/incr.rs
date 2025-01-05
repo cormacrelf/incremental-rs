@@ -149,13 +149,14 @@ impl<T: Value> Incr<T> {
         let node = Node::<kind::MapRefNode<R>>::create_rc(
             state.weak(),
             state.current_scope(),
-            Kind::MapRef(kind::MapRefNode {
+            Kind::MapRef(kind::MapRefNode::<R> {
                 input: self.node.packed(),
                 did_change: true.into(),
                 mapper: Box::new(move |x: &dyn Any| {
                     let x = x.downcast_ref::<T>().unwrap();
-                    f(x)
+                    f(x) as &dyn Any
                 }),
+                phantom: std::marker::PhantomData,
             }),
         );
         Incr { node }

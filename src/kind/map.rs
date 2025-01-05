@@ -8,13 +8,14 @@ use crate::incrsan::NotObserver;
 use crate::Value;
 use crate::{Incr, NodeRef};
 
-pub(crate) trait FRef<R>: Fn(&dyn Any) -> &R + 'static + NotObserver {}
-impl<F, R> FRef<R> for F where F: Fn(&dyn Any) -> &R + 'static + NotObserver {}
+pub(crate) trait FRef: (Fn(&dyn Any) -> &dyn Any) + 'static + NotObserver {}
+impl<F> FRef for F where F: (Fn(&dyn Any) -> &dyn Any) + 'static + NotObserver {}
 
 pub(crate) struct MapRefNode<R> {
     pub(crate) input: NodeRef,
-    pub(crate) mapper: Box<dyn FRef<R>>,
+    pub(crate) mapper: Box<dyn FRef>,
     pub(crate) did_change: Cell<bool>,
+    pub(crate) phantom: PhantomData<fn() -> R>,
 }
 
 impl<R> NodeGenerics for MapRefNode<R>
