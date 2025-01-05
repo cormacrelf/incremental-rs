@@ -9,7 +9,7 @@ use super::NodeGenerics;
 use crate::incrsan::NotObserver;
 use crate::node::{Node, NodeId};
 use crate::scope::{BindScope, Scope};
-use crate::{Incr, Value};
+use crate::Value;
 use crate::{NodeRef, WeakNode};
 
 pub(crate) struct BindNode<R>
@@ -20,7 +20,7 @@ where
     pub lhs_change: RefCell<Weak<Node<BindLhsChangeGen<R>>>>,
     pub main: RefCell<WeakNode>,
     pub lhs: NodeRef,
-    pub mapper: RefCell<Box<dyn LhsChangeFn<R>>>,
+    pub mapper: RefCell<Box<dyn LhsChangeFn>>,
     pub rhs: RefCell<Option<NodeRef>>,
     pub rhs_scope: RefCell<Scope>,
     pub all_nodes_created_on_rhs: RefCell<Vec<WeakNode>>,
@@ -67,8 +67,8 @@ pub(crate) struct BindLhsChangeGen<R> {
     _phantom: std::marker::PhantomData<R>,
 }
 
-pub(crate) trait LhsChangeFn<R>: FnMut(&dyn Any) -> Incr<R> + 'static + NotObserver {}
-impl<F, R> LhsChangeFn<R> for F where F: FnMut(&dyn Any) -> Incr<R> + 'static + NotObserver {}
+pub(crate) trait LhsChangeFn: FnMut(&dyn Any) -> NodeRef + 'static + NotObserver {}
+impl<F> LhsChangeFn for F where F: FnMut(&dyn Any) -> NodeRef + 'static + NotObserver {}
 
 impl<R> NodeGenerics for BindLhsChangeGen<R>
 where

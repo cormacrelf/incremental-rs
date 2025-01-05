@@ -9,7 +9,7 @@ use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
 use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
-use crate::{Cutoff, NodeUpdate, Observer, Value, WeakState};
+use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, WeakState};
 
 #[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
@@ -245,11 +245,11 @@ impl<T: Value> Incr<T> {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
             lhs: self.node.packed(),
-            mapper: RefCell::new(Box::new(move |any_ref: &dyn Any| -> Incr<R> {
+            mapper: RefCell::new(Box::new(move |any_ref: &dyn Any| -> NodeRef {
                 let downcast = any_ref
                     .downcast_ref::<T>()
                     .expect("Type mismatch in bind function");
-                f(downcast)
+                f(downcast).node.packed()
             })),
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),

@@ -719,11 +719,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let rhs = f(&*lhs);
                     *state.current_scope.borrow_mut() = old_scope;
                     // Check that the returned RHS node is from the same world.
-                    assert!(crate::weak_thin_ptr_eq(
-                        rhs.node.weak_state(),
-                        &state.weak_self
-                    ));
-                    rhs.node.packed()
+                    assert!(crate::weak_thin_ptr_eq(rhs.weak_state(), &state.weak_self));
+                    rhs
                 };
 
                 // TODO: let mut old_rhs = bind.rhs.borrow_mut().replace(rhs.clone());
