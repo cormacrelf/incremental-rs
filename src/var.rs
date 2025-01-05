@@ -13,6 +13,7 @@ use super::state::State;
 use super::CellIncrement;
 use super::Incr;
 use crate::incrsan::NotObserver;
+use crate::kind::KindTrait;
 use crate::node_generics_default;
 use crate::Value;
 
@@ -30,10 +31,11 @@ impl<R: Value> NodeGenerics for VarGenerics<R> {
 // Rc-cycle-breaking on public::Var.
 pub(crate) type WeakVar = Weak<dyn ErasedVariable>;
 
-pub(crate) trait ErasedVariable: Debug + NotObserver {
+pub(crate) trait ErasedVariable: Debug + NotObserver + KindTrait {
     fn set_var_stabilise_end(&self);
     fn id(&self) -> NodeId;
     fn break_rc_cycle(&self);
+    fn set_at(&self) -> StabilisationNum;
 }
 
 impl<T: Value> ErasedVariable for Var<T> {
@@ -50,6 +52,32 @@ impl<T: Value> ErasedVariable for Var<T> {
     }
     fn break_rc_cycle(&self) {
         self.node.take();
+    }
+    fn set_at(&self) -> StabilisationNum {
+        self.set_at.get()
+    }
+}
+
+impl<T: Value> KindTrait for Var<T> {
+    fn compute(&self) -> miny::Miny<dyn std::any::Any> {
+        miny::Miny::new_unsized((*self.value.borrow()).clone())
+    }
+
+    fn children_len(&self) -> usize {
+        0
+    }
+
+    // not used
+    fn iter_children_packed(&self) -> Box<dyn Iterator<Item = crate::NodeRef> + '_> {
+        Box::new(std::iter::empty())
+    }
+
+    fn slow_get_child(&self, _index: usize) -> crate::NodeRef {
+        panic!()
+    }
+
+    fn debug_ty(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Var<{}>", std::any::type_name::<T>())
     }
 }
 

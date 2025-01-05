@@ -471,7 +471,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         };
         match kind {
             Kind::Var(var) => {
-                let set_at = var.set_at.get();
+                let set_at = var.set_at();
                 let recomputed_at = self.recomputed_at.get();
                 set_at > recomputed_at
             }
@@ -636,10 +636,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::Var(var) => {
-                let new_value = {
-                    let value = var.value.borrow();
-                    Miny::new_unsized(value.clone())
-                };
+                let new_value = var.compute();
                 self.maybe_change_value(new_value, state)
             }
             Kind::Constant(v) => {

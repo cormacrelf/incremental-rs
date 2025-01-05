@@ -1,18 +1,14 @@
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::{self, Debug};
+
+use miny::Miny;
 
 use super::NodeGenerics;
 use super::{Incr, Value};
 use crate::incrsan::NotObserver;
+use crate::kind::KindTrait;
 use crate::NodeRef;
-
-pub(crate) trait ArrayFoldTrait<R>: 'static + NotObserver + Debug {
-    fn compute(&self) -> R;
-    fn children_len(&self) -> usize;
-    fn iter_children_packed(&self) -> Box<dyn Iterator<Item = NodeRef> + '_>;
-    fn slow_get_child(&self, index: usize) -> NodeRef;
-    fn debug_ty(&self, f: &mut fmt::Formatter) -> fmt::Result;
-}
 
 pub(crate) struct ArrayFold<F, I, R> {
     pub(crate) init: R,
@@ -20,19 +16,20 @@ pub(crate) struct ArrayFold<F, I, R> {
     pub(crate) children: Vec<Incr<I>>,
 }
 
-impl<F, I, R> ArrayFoldTrait<R> for ArrayFold<F, I, R>
+impl<F, I, R> KindTrait for ArrayFold<F, I, R>
 where
     F: FnMut(R, &I) -> R + 'static + NotObserver,
     I: Value,
     R: Value,
 {
-    fn compute(&self) -> R {
-        let acc = self.init.clone();
+    fn compute(&self) -> Miny<dyn Any> {
+        let mut acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
-        self.children.iter().fold(acc, |acc, x| {
+        acc = self.children.iter().fold(acc, |acc, x| {
             let v = x.node.value_as_ref().unwrap();
             f(acc, &v)
-        })
+        });
+        Miny::new_unsized(acc)
     }
     fn children_len(&self) -> usize {
         self.children.len()

@@ -1,11 +1,19 @@
 use std::any::Any;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::rc::Rc;
 
 use super::node::Node;
-use super::var::Var;
 use crate::incrsan::NotObserver;
-use crate::{Incr, Value};
+use crate::var::ErasedVariable;
+use crate::{Incr, NodeRef, Value};
+
+pub(crate) trait KindTrait: 'static + NotObserver + Debug {
+    fn compute(&self) -> miny::Miny<dyn Any>;
+    fn children_len(&self) -> usize;
+    fn iter_children_packed(&self) -> Box<dyn Iterator<Item = NodeRef> + '_>;
+    fn slow_get_child(&self, index: usize) -> NodeRef;
+    fn debug_ty(&self, f: &mut fmt::Formatter) -> fmt::Result;
+}
 
 #[macro_export]
 macro_rules! node_generics_default {
@@ -61,10 +69,10 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
 
 pub(crate) enum Kind<G: NodeGenerics> {
     Constant(Miny<dyn Any>),
-    ArrayFold(Box<dyn array_fold::ArrayFoldTrait<G::R>>),
+    ArrayFold(Box<dyn KindTrait>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
-    Var(Rc<Var<G::R>>),
+    Var(Rc<dyn ErasedVariable>),
     Map(map::MapNode<G::R>),
     MapWithOld(map::MapWithOld<G::R>),
     MapRef(map::MapRefNode<G::R>),
@@ -118,7 +126,7 @@ impl<G: NodeGenerics> Kind<G> {
                 match self.0 {
                     Kind::Constant(_) => write!(f, "Constant"),
                     Kind::ArrayFold(af) => af.debug_ty(f),
-                    Kind::Var(_) => write!(f, "Var<{}>", std::any::type_name::<G::R>()),
+                    Kind::Var(var) => var.debug_ty(f),
                     Kind::Map(..) => {
                         write!(f, "Map<(...) -> {}>", std::any::type_name::<G::R>())
                     }
