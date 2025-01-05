@@ -18,7 +18,7 @@ macro_rules! node_generics_default {
     (@single F5) => { /* snipped */ };
     (@single F6) => { /* snipped */ };
 
-    (@single I1) => { type I1 = (); };
+    (@single I1) => { /* snipped */ };
     (@single I2) => { /* snipped */ };
     (@single I3) => { /* snipped */ };
     (@single I4) => { /* snipped */ };
@@ -55,12 +55,11 @@ pub(crate) use map::*;
 pub(crate) trait NodeGenerics: 'static + NotObserver {
     type R: Value;
     type BindRhs: Value;
-    type I1: Value;
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
     Constant(G::R),
-    ArrayFold(array_fold::ArrayFold<G::I1, G::R>),
+    ArrayFold(Box<dyn array_fold::ArrayFoldTrait<G::R>>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
@@ -118,14 +117,7 @@ impl<G: NodeGenerics> Kind<G> {
                     Kind::Constant(_) => {
                         write!(f, "Constant<{}>", std::any::type_name::<G::R>())
                     }
-                    Kind::ArrayFold(_) => {
-                        write!(
-                            f,
-                            "ArrayFold<[{}] -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::R>()
-                        )
-                    }
+                    Kind::ArrayFold(af) => af.debug_ty(f),
                     Kind::Var(_) => write!(f, "Var<{}>", std::any::type_name::<G::R>()),
                     Kind::Map(..) => {
                         write!(f, "Map<(...) -> {}>", std::any::type_name::<G::R>())
@@ -173,7 +165,7 @@ impl<G: NodeGenerics> Kind<G> {
     pub(crate) fn initial_num_children(&self) -> usize {
         match self {
             Self::Constant(_) => 0,
-            Self::ArrayFold(af) => af.children.len(),
+            Self::ArrayFold(af) => af.children_len(),
             Self::Var(_) => 0,
             Self::Map(_) | Self::MapWithOld(_) | Self::MapRef(_) => 1,
             Self::Map2(_) => 2,

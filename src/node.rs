@@ -188,7 +188,6 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
 
 #[derive(Debug)]
 pub(crate) enum ParentError {
-    DowncastFailed,
     ParentInvalidated,
     ChildHasNoValue,
 }
@@ -1580,12 +1579,9 @@ impl<G: NodeGenerics> Node<G> {
             }
             Kind::ArrayFold(af) => {
                 ret = af
-                    .children
-                    .iter()
+                    .iter_children_packed()
                     .enumerate()
-                    .try_fold(ret, |ret, (ix, child)| {
-                        f(ret, ix as i32, child.node.packed())
-                    })?;
+                    .try_fold(ret, |ret, (ix, child)| f(ret, ix as i32, child))?;
             }
             Kind::Var(_var) => {}
             Kind::Expert(e) => {
@@ -1822,7 +1818,7 @@ impl<G: NodeGenerics> Node<G> {
         let Some(kind) = self.kind() else { panic!() };
         match kind {
             Kind::Expert(e) => e.children.borrow()[child_index as usize].packed(),
-            Kind::ArrayFold(af) => af.children[child_index as usize].node.packed(),
+            Kind::ArrayFold(af) => af.slow_get_child(child_index as usize),
             _ => self
                 .find_child(&|ix, _child| ix == child_index)
                 .unwrap_or_else(|| panic!("Could not find node at with child_index {child_index}")),

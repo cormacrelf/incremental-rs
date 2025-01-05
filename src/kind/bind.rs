@@ -79,7 +79,7 @@ where
     // type BindLhs = T;
     type BindRhs = R;
     // swap order so we can use as_parent with I1
-    type I1 = ();
+    // type I1 = ();
     // type I2 = T;
     node_generics_default! { I2, I3, I4, I5, I6 }
     node_generics_default! { F1, F2, F3, F4, F5, F6 }
@@ -98,8 +98,8 @@ where
     type R = R;
     // type BindLhs = T;
     type BindRhs = R;
-    /// Rhs
-    type I1 = R;
+    // Rhs
+    // type I1 = R;
     // BindLhsChange (a sentinel)
     // type I2 = ();
     node_generics_default! { I3, I4, I5, I6 }
