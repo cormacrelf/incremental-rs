@@ -5,6 +5,8 @@ use std::{
     rc::Rc,
 };
 
+use miny::Miny;
+
 use super::NodeGenerics;
 use crate::incrsan::NotObserver;
 use crate::node::ErasedNode;
@@ -69,12 +71,12 @@ impl<T: Value> ExpertEdge for Edge<T> {
 pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
 impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
 
-pub(crate) trait Recompute<R>: FnMut() -> R + 'static + NotObserver {}
-impl<T, R> Recompute<R> for T where T: FnMut() -> R + 'static + NotObserver {}
+pub(crate) trait Recompute: FnMut() -> Miny<dyn Any> + 'static + NotObserver {}
+impl<T> Recompute for T where T: FnMut() -> Miny<dyn Any> + 'static + NotObserver {}
 
 pub(crate) struct ExpertNode<T> {
-    pub _f: PhantomData<T>,
-    pub recompute: RefCell<Option<Box<dyn Recompute<T>>>>,
+    pub _f: PhantomData<fn() -> T>,
+    pub recompute: RefCell<Option<Box<dyn Recompute>>>,
     pub on_observability_change: RefCell<Option<Box<dyn ObservabilityChange>>>,
     pub children: RefCell<Vec<PackedEdge>>,
     pub force_stale: Cell<bool>,
@@ -95,14 +97,14 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T> ExpertNode<T> {
+impl<T: 'static> ExpertNode<T> {
     pub(crate) fn new_obs(
-        recompute: impl Recompute<T>,
+        mut recompute: impl FnMut() -> T + 'static,
         on_observability_change: impl ObservabilityChange,
     ) -> Self {
         Self {
             _f: PhantomData,
-            recompute: RefCell::new(Some(Box::new(recompute))),
+            recompute: RefCell::new(Some(Box::new(move || Miny::new_unsized(recompute())))),
             on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
             force_stale: false.into(),
