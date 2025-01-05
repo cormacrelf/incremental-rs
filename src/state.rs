@@ -163,7 +163,7 @@ impl State {
         let node = Node::<Constant<T>>::create_rc(
             self.weak(),
             self.current_scope(),
-            Kind::Constant(value),
+            Kind::<Constant<T>>::constant(value),
         );
         Incr { node }
     }

@@ -165,7 +165,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
     }
     fn constant(&self) -> Option<&G::R> {
         if let Some(Kind::Constant(value)) = self.kind() {
-            Some(value)
+            value.downcast_ref()
         } else {
             None
         }
@@ -642,7 +642,10 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 };
                 self.maybe_change_value(new_value, state)
             }
-            Kind::Constant(v) => self.maybe_change_value(Miny::new_unsized(v.clone()), state),
+            Kind::Constant(v) => {
+                let x = v.downcast_ref::<G::R>().unwrap();
+                self.maybe_change_value(Miny::new_unsized(x.clone()), state)
+            }
             Kind::MapRef(mapref) => {
                 // don't run child_changed on our parents, because we already did that in OUR child_changed.
                 self.value_opt.replace(None);

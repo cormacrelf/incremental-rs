@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::fmt::Debug;
 use std::rc::Rc;
 
@@ -51,6 +52,7 @@ pub(crate) use array_fold::*;
 pub(crate) use bind::*;
 pub(crate) use expert::ExpertNode;
 pub(crate) use map::*;
+use miny::Miny;
 
 pub(crate) trait NodeGenerics: 'static + NotObserver {
     type R: Value;
@@ -58,7 +60,7 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
 }
 
 pub(crate) enum Kind<G: NodeGenerics> {
-    Constant(G::R),
+    Constant(Miny<dyn Any>),
     ArrayFold(Box<dyn array_fold::ArrayFoldTrait<G::R>>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
@@ -89,7 +91,7 @@ pub(crate) enum Kind<G: NodeGenerics> {
 impl<G: NodeGenerics> Debug for Kind<G> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Kind::Constant(v) => write!(f, "Constant({v:?})"),
+            Kind::Constant(_) => write!(f, "Constant"),
             Kind::ArrayFold(af) => write!(f, "ArrayFold({af:?})"),
             Kind::Var(var) => write!(f, "Var({:?})", var),
             Kind::Map(map) => write!(f, "Map({:?})", map),
@@ -114,9 +116,7 @@ impl<G: NodeGenerics> Kind<G> {
         impl<'a, G: NodeGenerics> Debug for KindDebugTy<'a, G> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self.0 {
-                    Kind::Constant(_) => {
-                        write!(f, "Constant<{}>", std::any::type_name::<G::R>())
-                    }
+                    Kind::Constant(_) => write!(f, "Constant"),
                     Kind::ArrayFold(af) => af.debug_ty(f),
                     Kind::Var(_) => write!(f, "Var<{}>", std::any::type_name::<G::R>()),
                     Kind::Map(..) => {
@@ -157,6 +157,10 @@ impl<G: NodeGenerics> Kind<G> {
                 }
             }
         }
+    }
+
+    pub(crate) fn constant<T: Value>(value: T) -> Kind<Constant<T>> {
+        Kind::Constant(Miny::new_unsized(value))
     }
 }
 
