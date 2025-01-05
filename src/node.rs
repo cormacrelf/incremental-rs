@@ -631,8 +631,8 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
             Kind::Map(map) => {
                 let new_value = {
                     let mut f = map.mapper.borrow_mut();
-                    let input = map.input.value_as_ref().unwrap();
-                    f(&input)
+                    let input = map.input.value_as_any().unwrap();
+                    f(&*input)
                 };
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
@@ -664,48 +664,48 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 self.maybe_change_value_manual(None, did_change, true, state)
             }
             Kind::Map2(map2) => {
-                let i1 = map2.one.value_as_ref().unwrap();
-                let i2 = map2.two.value_as_ref().unwrap();
+                let i1 = map2.one.value_as_any().unwrap();
+                let i2 = map2.two.value_as_any().unwrap();
                 let mut f = map2.mapper.borrow_mut();
-                let new_value = f(&i1, &i2);
+                let new_value = f(&*i1, &*i2);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::Map3(map) => {
-                let i1 = map.one.value_as_ref().unwrap();
-                let i2 = map.two.value_as_ref().unwrap();
-                let i3 = map.three.value_as_ref().unwrap();
+                let i1 = map.one.value_as_any().unwrap();
+                let i2 = map.two.value_as_any().unwrap();
+                let i3 = map.three.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let new_value = f(&i1, &i2, &i3);
+                let new_value = f(&*i1, &*i2, &*i3);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::Map4(map) => {
-                let i1 = map.one.value_as_ref().unwrap();
-                let i2 = map.two.value_as_ref().unwrap();
-                let i3 = map.three.value_as_ref().unwrap();
-                let i4 = map.four.value_as_ref().unwrap();
+                let i1 = map.one.value_as_any().unwrap();
+                let i2 = map.two.value_as_any().unwrap();
+                let i3 = map.three.value_as_any().unwrap();
+                let i4 = map.four.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let new_value = f(&i1, &i2, &i3, &i4);
+                let new_value = f(&*i1, &*i2, &*i3, &*i4);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::Map5(map) => {
-                let i1 = map.one.value_as_ref().unwrap();
-                let i2 = map.two.value_as_ref().unwrap();
-                let i3 = map.three.value_as_ref().unwrap();
-                let i4 = map.four.value_as_ref().unwrap();
-                let i5 = map.five.value_as_ref().unwrap();
+                let i1 = map.one.value_as_any().unwrap();
+                let i2 = map.two.value_as_any().unwrap();
+                let i3 = map.three.value_as_any().unwrap();
+                let i4 = map.four.value_as_any().unwrap();
+                let i5 = map.five.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let new_value = f(&i1, &i2, &i3, &i4, &i5);
+                let new_value = f(&*i1, &*i2, &*i3, &*i4, &*i5);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::Map6(map) => {
-                let i1 = map.one.value_as_ref().unwrap();
-                let i2 = map.two.value_as_ref().unwrap();
-                let i3 = map.three.value_as_ref().unwrap();
-                let i4 = map.four.value_as_ref().unwrap();
-                let i5 = map.five.value_as_ref().unwrap();
-                let i6 = map.six.value_as_ref().unwrap();
+                let i1 = map.one.value_as_any().unwrap();
+                let i2 = map.two.value_as_any().unwrap();
+                let i3 = map.three.value_as_any().unwrap();
+                let i4 = map.four.value_as_any().unwrap();
+                let i5 = map.five.value_as_any().unwrap();
+                let i6 = map.six.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
-                let new_value = f(&i1, &i2, &i3, &i4, &i5, &i6);
+                let new_value = f(&*i1, &*i2, &*i3, &*i4, &*i5, &*i6);
                 self.maybe_change_value(Miny::new_unsized(new_value), state)
             }
             Kind::BindLhsChange { casts, bind } => {
@@ -1519,9 +1519,9 @@ impl<G: NodeGenerics> Node<G> {
         let mut ret = init;
         match kind {
             Kind::Constant(_) => {}
-            Kind::Map(kind::MapNode { input, .. })
-            | Kind::MapRef(kind::MapRefNode { input, .. })
+            Kind::MapRef(kind::MapRefNode { input, .. })
             | Kind::MapWithOld(kind::MapWithOld { input, .. }) => ret = f(ret, 0, input.packed())?,
+            Kind::Map(kind::MapNode { input, .. }) => ret = f(ret, 0, input.clone())?,
             Kind::Map2(kind::Map2Node { one, two, .. }) => {
                 ret = f(ret, 0, one.clone().packed())?;
                 ret = f(ret, 1, two.clone().packed())?;

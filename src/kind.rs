@@ -20,10 +20,10 @@ macro_rules! node_generics_default {
 
     (@single I1) => { type I1 = (); };
     (@single I2) => { type I2 = (); };
-    (@single I3) => { type I3 = (); };
-    (@single I4) => { type I4 = (); };
-    (@single I5) => { type I5 = (); };
-    (@single I6) => { type I6 = (); };
+    (@single I3) => { /* snipped */ };
+    (@single I4) => { /* snipped */ };
+    (@single I5) => { /* snipped */ };
+    (@single I6) => { /* snipped */ };
 
     (@single BindLhs) => { /* snipped */ };
     (@single BindRhs) => { type BindRhs = (); };
@@ -57,10 +57,6 @@ pub(crate) trait NodeGenerics: 'static + NotObserver {
     type BindRhs: Value;
     type I1: Value;
     type I2: Value;
-    type I3: Value;
-    type I4: Value;
-    type I5: Value;
-    type I6: Value;
     type FRef: Fn(&Self::I1) -> &Self::R + NotObserver;
     type WithOld: FnMut(Option<Self::R>, &Self::I1) -> (Self::R, bool) + NotObserver;
 }
@@ -71,14 +67,14 @@ pub(crate) enum Kind<G: NodeGenerics> {
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<Var<G::R>>),
-    Map(map::MapNode<G::I1, G::R>),
+    Map(map::MapNode<G::R>),
     MapWithOld(map::MapWithOld<G::WithOld, G::I1, G::R>),
     MapRef(map::MapRefNode<G::FRef, G::I1, G::R>),
-    Map2(map::Map2Node<G::I1, G::I2, G::R>),
-    Map3(map::Map3Node<G::I1, G::I2, G::I3, G::R>),
-    Map4(map::Map4Node<G::I1, G::I2, G::I3, G::I4, G::R>),
-    Map5(map::Map5Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::R>),
-    Map6(map::Map6Node<G::I1, G::I2, G::I3, G::I4, G::I5, G::I6, G::R>),
+    Map2(map::Map2Node<G::R>),
+    Map3(map::Map3Node<G::R>),
+    Map4(map::Map4Node<G::R>),
+    Map5(map::Map5Node<G::R>),
+    Map6(map::Map6Node<G::R>),
     BindLhsChange {
         casts: bind::BindLhsId<G>,
         bind: Rc<bind::BindNode<G::BindRhs>>,
@@ -135,83 +131,28 @@ impl<G: NodeGenerics> Kind<G> {
                     }
                     Kind::Var(_) => write!(f, "Var<{}>", std::any::type_name::<G::R>()),
                     Kind::Map(..) => {
-                        write!(
-                            f,
-                            "Map<({}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::MapWithOld(..) => {
-                        write!(
-                            f,
-                            "MapWithOld<({}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "MapWithOld<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::MapRef(..) => {
-                        write!(
-                            f,
-                            "MapRef<({}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "MapRef<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::Map2(..) => {
-                        write!(
-                            f,
-                            "Map2<({}, {}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::I2>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map2<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::Map3(..) => {
-                        write!(
-                            f,
-                            "Map3<({}, {}, {}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::I2>(),
-                            std::any::type_name::<G::I3>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map3<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::Map4(..) => {
-                        write!(
-                            f,
-                            "Map4<({}, {}, {}, {}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::I2>(),
-                            std::any::type_name::<G::I3>(),
-                            std::any::type_name::<G::I4>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map4<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::Map5(..) => {
-                        write!(
-                            f,
-                            "Map5<({}, {}, {}, {}, {}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::I2>(),
-                            std::any::type_name::<G::I3>(),
-                            std::any::type_name::<G::I4>(),
-                            std::any::type_name::<G::I5>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map5<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::Map6(..) => {
-                        write!(
-                            f,
-                            "Map6<({}, {}, {}, {}, {}, {}) -> {}>",
-                            std::any::type_name::<G::I1>(),
-                            std::any::type_name::<G::I2>(),
-                            std::any::type_name::<G::I3>(),
-                            std::any::type_name::<G::I4>(),
-                            std::any::type_name::<G::I5>(),
-                            std::any::type_name::<G::I6>(),
-                            std::any::type_name::<G::R>()
-                        )
+                        write!(f, "Map6<(...) -> {}>", std::any::type_name::<G::R>())
                     }
                     Kind::BindLhsChange { .. } => {
                         write!(f, "BindLhsChange",)

@@ -167,14 +167,17 @@ impl<T: Value> Incr<T> {
         let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
             let f = {
                 let weak = WeakIncr(node_weak.clone());
-                move |t: &T| cyclic(weak.clone(), t)
+                move |t: &dyn Any| {
+                    let t = t.downcast_ref().unwrap();
+                    cyclic(weak.clone(), t)
+                }
             };
             let mapper = kind::MapNode {
-                input: self.clone().node,
+                input: self.node.packed(),
                 mapper: Box::new(RefCell::new(f)),
             };
             let state = self.node.state();
-            let mut node = Node::<kind::MapNode<T, R>>::create(
+            let mut node = Node::<kind::MapNode<R>>::create(
                 state.weak(),
                 state.current_scope.borrow().clone(),
                 Kind::Map(mapper),

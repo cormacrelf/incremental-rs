@@ -58,13 +58,14 @@ macro_rules! map_node {
     (@tail_args $tfield1:ident: $t1:ident, $($tfield2:ident: $t2:ident,)*) => {
         $($tfield2: &Incr<$t2>,)*
     };
-    (@tail_mapper $mapnode:ident { $f:ident, $self:ident, $tfield1:ident, $($tfield2:ident,)* }) => {
+    (@tail_mapper $mapnode:ident { $f:expr, $self:ident, $tfield1:ident, $($tfield2:ident,)* }) => {
         $mapnode {
-            $tfield1: $self.clone().node,
-            $($tfield2: $tfield2.clone().node,)*
+            $tfield1: $self.node.packed(),
+            $($tfield2: $tfield2.node.packed(),)*
             mapper: Box::new(RefCell::new($f)),
         }
     };
+    (@any $type:ty) => {dyn ::std::any::Any};
     ($vis:vis struct $mapnode:ident <
          inputs {
              $tfield1:ident: $t1:ident = $i1:ident,
@@ -80,30 +81,27 @@ macro_rules! map_node {
          $(#[$method_meta:meta])*
          impl Incr::$methodname:ident, Kind::$kind:ident
      }) => {
-        $vis struct $mapnode <$t1, $($t,)* $r>
+        $vis struct $mapnode <$r>
         where
             $r: Value,
         {
-            $vis $tfield1: Input<$t1>,
-            $($vis $tfield: Input<$t>,)*
-            $vis $ffield: Box<RefCell<dyn FnMut(&$t1, $(&$t2,)*) -> $r>>,
+            $vis $tfield1: crate::NodeRef,
+            $($vis $tfield: crate::NodeRef,)*
+            $vis $ffield: Box<RefCell<dyn FnMut(&dyn ::std::any::Any, $(&map_node!(@any $t2),)*) -> $r>>,
         }
 
-        impl<$t1, $($t,)* $r> NodeGenerics for $mapnode<$t1, $($t2,)* $r>
+        impl<$r> NodeGenerics for $mapnode<$r>
         where
-            $t1: Value,
-            $($t: Value,)*
             $r: Value,
         {
             map_node!{ @rest }
             type R = $r;
-            type $i1 = $t1;
-            $(type $i = $t2;)*
+            // type $i1 = $t1;
+            // $(type $i = $t2;)*
             crate::node_generics_default! { $($d,)* $fparam }
         }
-        impl<$t1, $($t,)* $r> fmt::Debug for $mapnode<$t1, $($t,)* $r>
+        impl<$r> fmt::Debug for $mapnode<$r>
         where
-            $($t: Value,)*
             $r: Value,
         {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -115,7 +113,7 @@ macro_rules! map_node {
             pub fn $methodname<$fparam, $($t2,)* $r>(
                 &self,
                 $($tfield: &Incr<$t>,)*
-                f: $fparam) -> Incr<R>
+                mut f: $fparam) -> Incr<R>
             where
                 $($t: Value,)*
                 $r: Value,
@@ -123,14 +121,26 @@ macro_rules! map_node {
             {
                 let mapper = map_node! {
                     @tail_mapper $mapnode {
-                        f,
+                        move |
+                            $tfield1: &dyn ::std::any::Any,
+                            $(
+                                $tfield: &dyn ::std::any::Any,
+                            )*
+                            | -> $r
+                        {
+                            let $tfield1 = $tfield1.downcast_ref::<$t1>().expect("Type error in map function");
+                            $(
+                                let $tfield = $tfield.downcast_ref::<$t>().expect("Type error in map function");
+                            )*
+                            f( $tfield1, $($tfield,)* )
+                        },
                         self,
                         $tfield1,
                         $($tfield,)*
                     }
                 };
                 let state = self.node.state();
-                let node = crate::node::Node::<$mapnode<$t1, $($t2,)* $r>>::create_rc(
+                let node = crate::node::Node::<$mapnode<$r>>::create_rc(
                     state.weak(),
                     state.current_scope.borrow().clone(),
                     crate::kind::Kind::$kind(mapper),
@@ -158,7 +168,7 @@ map_node! {
         }
         fn { mapper: F1(..) -> R, }
     > {
-        default < F2, F3, F4, F5, F6, I2, I3, I4, I5, I6 >,
+        default < F2, F3, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
         /// Takes an incremental (self), and produces a new incremental whose value
         /// is the result of applying a function `f` to the first value.
         ///
@@ -197,7 +207,7 @@ map_node! {
         }
         fn { mapper: F2(.., T2) -> R, }
     > {
-        default < F1, F3, F4, F5, F6, I3, I4, I5, I6 >,
+        default < F1, F3, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
         /// Like [Incr::map], but with two inputs.
         ///
         /// ```
@@ -220,7 +230,7 @@ map_node! {
         }
         fn { mapper: F3(.., T2, T3) -> R, }
     > {
-        default < F1, F2, F4, F5, F6, I4, I5, I6 >,
+        default < F1, F2, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
         #[doc = default_doc!()]
         impl Incr::map3, Kind::Map3
     }
@@ -236,7 +246,7 @@ map_node! {
         }
         fn { mapper: F4(.., T2, T3, T4) -> R, }
     > {
-        default < F1, F2, F3, F5, F6, I5, I6 >,
+        default < F1, F2, F3, F5, F6, I1, I2, I3, I4, I5, I6 >,
         #[doc = default_doc!()]
         impl Incr::map4, Kind::Map4
     }
@@ -253,7 +263,7 @@ map_node! {
         }
         fn { mapper: F5(.., T2, T3, T4, T5) -> R, }
     > {
-        default < F1, F2, F3, F4, F6, I6 >,
+        default < F1, F2, F3, F4, F6, I1, I2, I3, I4, I5, I6 >,
         #[doc = default_doc!()]
         impl Incr::map5, Kind::Map5
     }
@@ -271,7 +281,7 @@ map_node! {
         }
         fn { mapper: F6(.., T2, T3, T4, T5, T6) -> R, }
     > {
-        default < F1, F2, F3, F4, F5 >,
+        default < F1, F2, F3, F4, F5, I1, I2, I3, I4, I5, I6 >,
         #[doc = default_doc!()]
         impl Incr::map6, Kind::Map6
     }
