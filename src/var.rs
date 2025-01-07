@@ -11,6 +11,7 @@ use super::state::IncrStatus;
 use super::state::State;
 use super::CellIncrement;
 use super::Incr;
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
 use crate::kind::KindTrait;
 use crate::Value;
@@ -49,8 +50,8 @@ impl<T: Value> ErasedVariable for Var<T> {
 }
 
 impl<T: Value> KindTrait for Var<T> {
-    fn compute(&self) -> miny::Miny<dyn ValueInternal> {
-        miny::Miny::new_unsized((*self.value.borrow()).clone())
+    fn compute(&self) -> SmallBox<dyn ValueInternal> {
+        new_unsized!((*self.value.borrow()).clone())
     }
 
     fn children_len(&self) -> usize {

@@ -1,9 +1,8 @@
-use miny::Miny;
-
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::kind;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
+use crate::boxes::new_unsized;
 use crate::incrsan::NotObserver;
 use crate::{SubscriptionToken, WeakMap};
 
@@ -181,7 +180,7 @@ impl State {
         let node = Node::create_rc::<R>(
             self.weak(),
             self.current_scope(),
-            Kind::ArrayFold(Miny::new_unsized(kind::ArrayFold {
+            Kind::ArrayFold(new_unsized!(kind::ArrayFold {
                 init,
                 fold: RefCell::new(f),
                 children: vec,

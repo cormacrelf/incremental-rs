@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::fmt::{self, Debug};
 
-use miny::Miny;
-
 use super::{Incr, Value};
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
 use crate::kind::KindTrait;
 use crate::{NodeRef, ValueInternal};
@@ -20,14 +19,14 @@ where
     I: Value,
     R: Value,
 {
-    fn compute(&self) -> Miny<dyn ValueInternal> {
+    fn compute(&self) -> SmallBox<dyn ValueInternal> {
         let mut acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
         acc = self.children.iter().fold(acc, |acc, x| {
             let v = x.node.value_as_ref().unwrap();
             f(acc, &v)
         });
-        Miny::new_unsized(acc)
+        new_unsized!(acc)
     }
     fn children_len(&self) -> usize {
         self.children.len()

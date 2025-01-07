@@ -3,11 +3,10 @@ use std::fmt;
 use std::hash::Hash;
 use std::rc::{Rc, Weak};
 
-use miny::Miny;
-
 use super::kind::{self, Kind};
 use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
 use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, ValueInternal, WeakState};
@@ -171,14 +170,14 @@ impl<T: Value> Incr<T> {
         let node = Rc::<Node>::new_cyclic(move |node_weak| {
             let f = {
                 let weak = WeakIncr(node_weak.clone());
-                move |t: &dyn ValueInternal| {
-                    let t = t.as_any().downcast_ref().unwrap();
-                    miny::Miny::new_unsized(cyclic(weak.clone(), t))
+                move |t: &dyn ValueInternal| -> SmallBox<dyn ValueInternal> {
+                    let t = t.as_any().downcast_ref::<T>().unwrap();
+                    new_unsized!(cyclic(weak.clone(), t))
                 }
             };
             let mapper = kind::MapNode {
                 input: self.node.packed(),
-                mapper: RefCell::new(Miny::new_unsized(f)),
+                mapper: RefCell::new(new_unsized!(f)),
             };
             let state = self.node.state();
             let mut node = Node::create::<R>(
@@ -216,12 +215,14 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::MapWithOld(kind::MapWithOld {
                 input: self.node.packed(),
-                mapper: RefCell::new(Miny::new_unsized(
-                    move |opt_r: Option<Miny<dyn ValueInternal>>, x: &dyn ValueInternal| {
-                        let opt_r = opt_r.and_then(|x| Miny::downcast(x).ok());
+                mapper: RefCell::new(new_unsized!(
+                    move |opt_r: Option<SmallBox<dyn ValueInternal>>, x: &dyn ValueInternal| {
+                        let opt_r = opt_r.and_then(|x: SmallBox<dyn ValueInternal>| {
+                            crate::boxes::downcast_inner::<R>(x)
+                        });
                         let x = x.as_any().downcast_ref::<T>().unwrap();
                         let (r, b) = f(opt_r, x);
-                        (Miny::new_unsized(r), b)
+                        (new_unsized!(r), b)
                     },
                 )),
             }),
@@ -248,7 +249,7 @@ impl<T: Value> Incr<T> {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
             lhs: self.node.packed(),
-            mapper: RefCell::new(Miny::new_unsized(
+            mapper: RefCell::new(new_unsized!(
                 move |any_ref: &dyn ValueInternal| -> NodeRef {
                     let downcast = any_ref
                         .as_any()
@@ -399,7 +400,7 @@ impl<T: Value> Incr<T> {
     pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static + NotObserver) {
         let state = self.node.state();
         let now = state.stabilisation_num.get();
-        let handler = OnUpdateHandler::new(now, Miny::new_unsized(f));
+        let handler = OnUpdateHandler::new(now, new_unsized!(f));
         self.node.add_on_update_handler(handler);
     }
 }

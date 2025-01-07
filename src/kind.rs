@@ -1,12 +1,13 @@
 use std::fmt::{self, Debug};
 use std::rc::Rc;
 
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
 use crate::var::ErasedVariable;
 use crate::{Incr, NodeRef, Value, ValueInternal};
 
 pub(crate) trait KindTrait: 'static + NotObserver + Debug {
-    fn compute(&self) -> miny::Miny<dyn ValueInternal>;
+    fn compute(&self) -> SmallBox<dyn ValueInternal>;
     fn children_len(&self) -> usize;
     fn iter_children_packed(&self) -> Box<dyn Iterator<Item = NodeRef> + '_>;
     fn slow_get_child(&self, index: usize) -> NodeRef;
@@ -22,11 +23,10 @@ pub(crate) use array_fold::*;
 pub(crate) use bind::*;
 pub(crate) use expert::ExpertNode;
 pub(crate) use map::*;
-use miny::Miny;
 
 pub(crate) enum Kind {
-    Constant(Miny<dyn ValueInternal>),
-    ArrayFold(miny::Miny<dyn KindTrait>),
+    Constant(SmallBox<dyn ValueInternal>),
+    ArrayFold(SmallBox<dyn KindTrait>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<dyn ErasedVariable>),
@@ -120,7 +120,7 @@ impl Kind {
     }
 
     pub(crate) fn constant<T: Value>(value: T) -> Kind {
-        Kind::Constant(Miny::new_unsized(value))
+        Kind::Constant(new_unsized!(value))
     }
 }
 

@@ -1,8 +1,7 @@
 use std::cell::RefCell;
 use std::{cell::Cell, fmt};
 
-use miny::Miny;
-
+use crate::boxes::SmallBox;
 use crate::incrsan::NotObserver;
 use crate::node::NodeId;
 use crate::scope::{BindScope, Scope};
@@ -14,7 +13,7 @@ pub(crate) struct BindNode {
     pub lhs_change: RefCell<WeakNode>,
     pub main: RefCell<WeakNode>,
     pub lhs: NodeRef,
-    pub mapper: RefCell<Miny<dyn LhsChangeFn>>,
+    pub mapper: RefCell<SmallBox<dyn LhsChangeFn>>,
     pub rhs: RefCell<Option<NodeRef>>,
     pub rhs_scope: RefCell<Scope>,
     pub all_nodes_created_on_rhs: RefCell<Vec<WeakNode>>,

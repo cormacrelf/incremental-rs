@@ -4,9 +4,10 @@ use std::{
     rc::Rc,
 };
 
-use miny::Miny;
-
-use crate::node::ErasedNode;
+use crate::{
+    boxes::{new_unsized, SmallBox},
+    node::ErasedNode,
+};
 use crate::{incrsan::NotObserver, ValueInternal};
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
@@ -70,10 +71,10 @@ pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
 impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
 
 pub(crate) trait Recompute:
-    FnMut() -> Miny<dyn ValueInternal> + 'static + NotObserver
+    FnMut() -> SmallBox<dyn ValueInternal> + 'static + NotObserver
 {
 }
-impl<T> Recompute for T where T: FnMut() -> Miny<dyn ValueInternal> + 'static + NotObserver {}
+impl<T> Recompute for T where T: FnMut() -> SmallBox<dyn ValueInternal> + 'static + NotObserver {}
 
 pub(crate) struct ExpertNode {
     pub recompute: RefCell<Option<Box<dyn Recompute>>>,
@@ -103,7 +104,7 @@ impl ExpertNode {
         on_observability_change: impl ObservabilityChange,
     ) -> Self {
         Self {
-            recompute: RefCell::new(Some(Box::new(move || Miny::new_unsized(recompute())))),
+            recompute: RefCell::new(Some(Box::new(move || new_unsized!(recompute())))),
             on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
             force_stale: false.into(),

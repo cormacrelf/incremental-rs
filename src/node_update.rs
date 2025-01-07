@@ -1,13 +1,13 @@
 use std::cell::Cell;
 
 use super::stabilisation_num::StabilisationNum;
-use crate::node::ErasedNode;
+use crate::{boxes::SmallBox, node::ErasedNode};
 
 #[cfg(not(feature = "nightly-incrsan"))]
-pub(crate) type BoxedUpdateFn<T> = miny::Miny<dyn FnMut(NodeUpdate<&T>)>;
+pub(crate) type BoxedUpdateFn<T> = SmallBox<dyn FnMut(NodeUpdate<&T>)>;
 #[cfg(feature = "nightly-incrsan")]
 pub(crate) type BoxedUpdateFn<T> =
-    miny::Miny<dyn FnMut(NodeUpdate<&T>) + crate::incrsan::NotObserver>;
+    SmallBox<dyn FnMut(NodeUpdate<&T>) + crate::incrsan::NotObserver>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Previously {

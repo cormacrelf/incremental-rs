@@ -6,6 +6,8 @@
 #![cfg_attr(feature = "nightly-incrsan", feature(negative_impls))]
 #![cfg_attr(feature = "nightly-incrsan", feature(auto_traits))]
 
+mod boxes;
+
 mod adjust_heights_heap;
 mod cutoff;
 mod incr;
@@ -22,6 +24,7 @@ mod syntax;
 mod var;
 
 mod public;
+use boxes::SmallBox;
 pub use public::*;
 
 use fmt::Debug;
@@ -51,7 +54,7 @@ where
 /// (Clone and PartialEq include Self types).
 pub(crate) trait ValueInternal: Debug + NotObserver + 'static + Any {
     fn as_any(&self) -> &dyn Any;
-    fn clone_any(&self) -> miny::Miny<dyn ValueInternal>;
+    fn clone_any(&self) -> SmallBox<dyn ValueInternal>;
 }
 impl<T> ValueInternal for T
 where
@@ -60,8 +63,8 @@ where
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn clone_any(&self) -> miny::Miny<dyn ValueInternal> {
-        miny::Miny::new_unsized(self.clone())
+    fn clone_any(&self) -> SmallBox<dyn ValueInternal> {
+        boxes::new_unsized!(self.clone())
     }
 }
 

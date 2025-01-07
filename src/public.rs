@@ -6,8 +6,6 @@ use std::hash::Hash;
 use std::ops::{Deref, Sub};
 use std::rc::{Rc, Weak};
 
-use miny::Miny;
-
 pub use super::cutoff::Cutoff;
 pub use super::incr::{Incr, WeakIncr};
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
@@ -22,6 +20,7 @@ use super::node_update::OnUpdateHandler;
 use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
+use crate::boxes::new_unsized;
 use crate::incrsan::NotObserver;
 
 #[derive(Clone)]
@@ -96,7 +95,7 @@ impl<T: Value> Observer<T> {
         &self,
         mut on_update: impl FnMut(Update<&T>) + 'static + NotObserver,
     ) -> Result<SubscriptionToken, ObserverError> {
-        let handler_fn = Miny::new_unsized(move |node_update: NodeUpdate<&T>| {
+        let handler_fn = new_unsized!(move |node_update: NodeUpdate<&T>| {
             let update = match node_update {
                 NodeUpdate::Necessary(t) => Update::Initialised(t),
                 NodeUpdate::Changed(t) => Update::Changed(t),

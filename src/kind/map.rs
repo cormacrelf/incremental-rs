@@ -1,8 +1,7 @@
 use std::cell::RefCell;
 use std::{cell::Cell, fmt};
 
-use miny::Miny;
-
+use crate::boxes::SmallBox;
 use crate::incrsan::NotObserver;
 use crate::{Incr, NodeRef};
 use crate::{Value, ValueInternal};
@@ -49,7 +48,7 @@ macro_rules! map_node {
         $mapnode {
             $tfield1: $self.node.packed(),
             $($tfield2: $tfield2.node.packed(),)*
-            mapper: RefCell::new(miny::Miny::new_unsized($f)),
+            mapper: RefCell::new($crate::boxes::new_unsized!($f)),
         }
     };
     (@any $type:ty) => {dyn $crate::ValueInternal};
@@ -71,7 +70,7 @@ macro_rules! map_node {
         $vis struct $mapnode {
             $vis $tfield1: crate::NodeRef,
             $($vis $tfield: crate::NodeRef,)*
-            $vis $ffield: RefCell<miny::Miny<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn $crate::ValueInternal>>>,
+            $vis $ffield: RefCell<$crate::boxes::SmallBox<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>>>,
         }
 
         impl fmt::Debug for $mapnode
@@ -98,13 +97,13 @@ macro_rules! map_node {
                             $(
                                 $tfield: &dyn $crate::ValueInternal,
                             )*
-                            | -> miny::Miny<dyn $crate::ValueInternal>
+                            | -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>
                         {
                             let $tfield1 = $tfield1.as_any().downcast_ref::<$t1>().expect("Type error in map function");
                             $(
                                 let $tfield = $tfield.as_any().downcast_ref::<$t>().expect("Type error in map function");
                             )*
-                            miny::Miny::new_unsized(f( $tfield1, $($tfield,)* ))
+                            $crate::boxes::new_unsized!(f( $tfield1, $($tfield,)* ))
                         },
                         self,
                         $tfield1,
@@ -261,18 +260,18 @@ map_node! {
 
 pub(crate) trait FWithOld:
     FnMut(
-        Option<miny::Miny<dyn ValueInternal>>,
+        Option<SmallBox<dyn ValueInternal>>,
         &dyn ValueInternal,
-    ) -> (miny::Miny<dyn ValueInternal>, bool)
+    ) -> (SmallBox<dyn ValueInternal>, bool)
     + 'static
     + NotObserver
 {
 }
 impl<F> FWithOld for F where
     F: FnMut(
-            Option<miny::Miny<dyn ValueInternal>>,
+            Option<SmallBox<dyn ValueInternal>>,
             &dyn ValueInternal,
-        ) -> (miny::Miny<dyn ValueInternal>, bool)
+        ) -> (SmallBox<dyn ValueInternal>, bool)
         + 'static
         + NotObserver
 {
@@ -281,7 +280,7 @@ impl<F> FWithOld for F where
 /// Lets you dismantle the old R for parts.
 pub(crate) struct MapWithOld {
     pub input: NodeRef,
-    pub mapper: RefCell<Miny<dyn FWithOld>>,
+    pub mapper: RefCell<SmallBox<dyn FWithOld>>,
 }
 
 impl fmt::Debug for MapWithOld {

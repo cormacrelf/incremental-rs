@@ -15,6 +15,7 @@ use super::scope::Scope;
 use super::state::{IncrStatus, State};
 use super::CellIncrement;
 use super::{NodeRef, WeakNode};
+use crate::boxes::{new_unsized, SmallBox};
 use crate::cutoff::ErasedCutoff;
 use crate::incrsan::NotObserver;
 use crate::internal_observer::ErasedObserver;
@@ -22,7 +23,6 @@ use crate::node_update::{ErasedOnUpdateHandler, OnUpdateHandler};
 use crate::{Value, ValueInternal};
 
 use super::stabilisation_num::StabilisationNum;
-use miny::Miny;
 use smallvec::{smallvec, SmallVec};
 use std::{
     cell::{Cell, RefCell},
@@ -51,7 +51,7 @@ pub(crate) struct Node {
     // - it is not NonZero like a pointer, so Option takes space
     // - RefCell also takes space, but optimizing the internal mutability of Node
     //   will require more analysis of which fields are used at the same time
-    pub value_opt: RefCell<Option<Miny<dyn ValueInternal>>>,
+    pub value_opt: RefCell<Option<SmallBox<dyn ValueInternal>>>,
     /// We use this flag instead of making kind mutable with an Invalid variant. That makes it much
     /// easier to implement `value_as_ref` for `Kind::MapRef`.
     pub is_valid: Cell<bool>,
@@ -165,7 +165,7 @@ impl<R: Value> Incremental<R> for Node {
     }
     fn constant(&self) -> Option<&R> {
         if let Some(Kind::Constant(value)) = self.kind() {
-            value.downcast_ref()
+            value.as_any().downcast_ref()
         } else {
             None
         }
@@ -756,7 +756,7 @@ impl ErasedNode for Node {
                 /* [node] was valid at the start of the [Bind_lhs_change] branch, and invalidation
                 only visits higher nodes, so [node] is still valid. */
                 debug_assert!(self.is_valid());
-                self.maybe_change_value(Miny::new_unsized(()), state)
+                self.maybe_change_value(new_unsized!(()), state)
             }
             Kind::BindMain { bind, .. } => {
                 let rhs = bind.rhs.borrow();
@@ -1662,7 +1662,11 @@ impl Node {
         Some(&self._kind)
     }
 
-    fn maybe_change_value(&self, value: Miny<dyn ValueInternal>, state: &State) -> Option<NodeRef> {
+    fn maybe_change_value(
+        &self,
+        value: SmallBox<dyn ValueInternal>,
+        state: &State,
+    ) -> Option<NodeRef> {
         let old_value_opt = self.value_opt.take();
         let mut cutoff = self.cutoff.borrow_mut();
         let should_change = old_value_opt
