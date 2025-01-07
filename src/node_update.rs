@@ -1,16 +1,13 @@
 use std::cell::Cell;
 
 use super::stabilisation_num::StabilisationNum;
-use crate::{
-    boxes::SmallBox,
-    node::{ErasedNode, Node},
-};
+use crate::boxes::SmallBox;
+use crate::incrsan::not_observer_boxed_trait;
+use crate::node::{ErasedNode, Node};
 
-#[cfg(not(feature = "nightly-incrsan"))]
-pub(crate) type BoxedUpdateFn<T> = SmallBox<dyn FnMut(NodeUpdate<&T>)>;
-#[cfg(feature = "nightly-incrsan")]
-pub(crate) type BoxedUpdateFn<T> =
-    SmallBox<dyn FnMut(NodeUpdate<&T>) + crate::incrsan::NotObserver>;
+not_observer_boxed_trait! {
+    pub(crate) type BoxedUpdateFn<T> = SmallBox<dyn (FnMut(NodeUpdate<&T>))>;
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Previously {
@@ -37,7 +34,9 @@ pub enum NodeUpdate<T> {
     Unnecessary,
 }
 
-pub(crate) type ErasedOnUpdateHandler = Box<dyn HandleUpdate>;
+not_observer_boxed_trait! {
+    pub(crate) type ErasedOnUpdateHandler = Box<dyn (HandleUpdate)>;
+}
 
 pub(crate) trait HandleUpdate {
     fn run(&mut self, node: &Node, node_update: NodeUpdateDelayed, now: StabilisationNum);

@@ -70,7 +70,11 @@ macro_rules! map_node {
         $vis struct $mapnode {
             $vis $tfield1: crate::NodeRef,
             $($vis $tfield: crate::NodeRef,)*
-            $vis $ffield: RefCell<$crate::boxes::SmallBox<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>>>,
+            $vis $ffield: RefCell<$fparam>,
+        }
+
+        $crate::incrsan::not_observer_boxed_trait! {
+            pub(crate) type $fparam = crate::boxes::SmallBox<dyn (FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>)>;
         }
 
         impl fmt::Debug for $mapnode

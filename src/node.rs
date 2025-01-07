@@ -17,7 +17,7 @@ use super::CellIncrement;
 use super::{NodeRef, WeakNode};
 use crate::boxes::{new_unsized, SmallBox};
 use crate::cutoff::ErasedCutoff;
-use crate::incrsan::NotObserver;
+use crate::incrsan::{not_observer_boxed_trait, NotObserver};
 use crate::internal_observer::ErasedObserver;
 use crate::node_update::{ErasedOnUpdateHandler, OnUpdateHandler};
 use crate::{Value, ValueInternal};
@@ -104,10 +104,9 @@ pub(crate) struct Node {
     pub graphviz_user_data: RefCell<Option<BoxedDebugData>>,
 }
 
-#[cfg(not(feature = "nightly-incrsan"))]
-type BoxedDebugData = Box<dyn Debug>;
-#[cfg(feature = "nightly-incrsan")]
-type BoxedDebugData = Box<dyn Debug + NotObserver>;
+not_observer_boxed_trait! {
+    type BoxedDebugData = Box<dyn (Debug)>;
+}
 
 /// Recall that parents and children feel a bit backwards in incremental.
 /// A child == an input of self. A parent == a node derived from self.

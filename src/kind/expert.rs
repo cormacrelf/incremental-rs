@@ -4,8 +4,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::boxes::{new_unsized, SmallBox};
 use crate::node::Node;
+use crate::{
+    boxes::{new_unsized, SmallBox},
+    incrsan::not_observer_boxed_trait,
+};
 use crate::{incrsan::NotObserver, ValueInternal};
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
@@ -19,10 +22,9 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
 
 pub(crate) type PackedEdge = Rc<dyn ExpertEdge>;
 
-#[cfg(not(feature = "nightly-incrsan"))]
-type BoxedOnChange<T> = Box<dyn FnMut(&T)>;
-#[cfg(feature = "nightly-incrsan")]
-type BoxedOnChange<T> = Box<dyn FnMut(&T) + NotObserver>;
+not_observer_boxed_trait! {
+    type BoxedOnChange<T> = Box<dyn (FnMut(&T))>;
+}
 
 pub(crate) struct Edge<T> {
     pub child: Incr<T>,
@@ -98,7 +100,7 @@ pub enum MakeStale {
 
 impl ExpertNode {
     pub(crate) fn new_obs<T: Value>(
-        mut recompute: impl FnMut() -> T + 'static,
+        mut recompute: impl FnMut() -> T + 'static + NotObserver,
         on_observability_change: impl ObservabilityChange,
     ) -> Self {
         Self {

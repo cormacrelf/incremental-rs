@@ -73,3 +73,23 @@ impl<T> std::ops::DerefMut for AssertNotObserver<T> {
 pub fn check_not_observer<T: NotObserver>(value: T) -> T {
     value
 }
+
+/// Adds `+ NotObserver` to the trait object if incrsan is enabled, and not otherwise.
+///
+/// Why? Because NotObserver can only be used that way if it is an auto-trait. Without incrsan, it
+/// is a regular trait, which cannot be used in that position. Outside of trait objects, you can
+/// just use it as a trait bound `<T: 'static + NotObserver>` and it is fine.
+///
+/// Got to wrap the traits listed after dyn with (). So Box<dyn (MyTrait)>. Just for tt-munching
+/// purposes, because > is ambiguous as a terminator.
+macro_rules! not_observer_boxed_trait {
+    (
+        $vis:vis type $ident:ident $(:: $path:ident)* $(<$($g:ident),+>)? = $box_type:ident $(:: $path2:ident)* < dyn ($($tt:tt)+) >;
+    ) => {
+        #[cfg(not(feature = "nightly-incrsan"))]
+        $vis type $ident $(:: $path)* $(< $($g),+ >)? = $box_type $(:: $path2)* < dyn $($tt)+ >;
+        #[cfg(feature = "nightly-incrsan")]
+        $vis type $ident $(:: $path)* $(< $($g),+ >)? = $box_type $(:: $path2)* < dyn $($tt)+ + $crate::incrsan::NotObserver >;
+    };
+}
+pub(crate) use not_observer_boxed_trait;
