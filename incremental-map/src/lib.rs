@@ -454,10 +454,7 @@ where
 
     /// If we have emptied the map, can we just reset to the initial value?
     /// Or do we have to call remove() on everything that was removed?
-    #[inline]
-    fn revert_to_init_when_empty(&self) -> bool {
-        false
-    }
+    fn revert_to_init_when_empty(&self) -> bool;
 
     /// Optimize the initial fold
     fn initial_fold(&mut self, acc: R, input: &M) -> R {
