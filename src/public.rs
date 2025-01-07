@@ -6,6 +6,8 @@ use std::hash::Hash;
 use std::ops::{Deref, Sub};
 use std::rc::{Rc, Weak};
 
+use miny::Miny;
+
 pub use super::cutoff::Cutoff;
 pub use super::incr::{Incr, WeakIncr};
 pub use super::internal_observer::{ObserverError, SubscriptionToken};
@@ -94,7 +96,7 @@ impl<T: Value> Observer<T> {
         &self,
         mut on_update: impl FnMut(Update<&T>) + 'static + NotObserver,
     ) -> Result<SubscriptionToken, ObserverError> {
-        let handler_fn = Box::new(move |node_update: NodeUpdate<&T>| {
+        let handler_fn = Miny::new_unsized(move |node_update: NodeUpdate<&T>| {
             let update = match node_update {
                 NodeUpdate::Necessary(t) => Update::Initialised(t),
                 NodeUpdate::Changed(t) => Update::Changed(t),

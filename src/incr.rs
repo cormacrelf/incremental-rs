@@ -178,7 +178,7 @@ impl<T: Value> Incr<T> {
             };
             let mapper = kind::MapNode {
                 input: self.node.packed(),
-                mapper: Box::new(RefCell::new(f)),
+                mapper: RefCell::new(Miny::new_unsized(f)),
             };
             let state = self.node.state();
             let mut node = Node::create::<R>(
@@ -216,7 +216,7 @@ impl<T: Value> Incr<T> {
             state.current_scope(),
             Kind::MapWithOld(kind::MapWithOld {
                 input: self.node.packed(),
-                mapper: RefCell::new(Box::new(
+                mapper: RefCell::new(Miny::new_unsized(
                     move |opt_r: Option<Miny<dyn ValueInternal>>, x: &dyn ValueInternal| {
                         let opt_r = opt_r.and_then(|x| Miny::downcast(x).ok());
                         let x = x.as_any().downcast_ref::<T>().unwrap();
@@ -248,13 +248,15 @@ impl<T: Value> Incr<T> {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
             lhs: self.node.packed(),
-            mapper: RefCell::new(Box::new(move |any_ref: &dyn ValueInternal| -> NodeRef {
-                let downcast = any_ref
-                    .as_any()
-                    .downcast_ref::<T>()
-                    .expect("Type mismatch in bind function");
-                f(downcast).node.packed()
-            })),
+            mapper: RefCell::new(Miny::new_unsized(
+                move |any_ref: &dyn ValueInternal| -> NodeRef {
+                    let downcast = any_ref
+                        .as_any()
+                        .downcast_ref::<T>()
+                        .expect("Type mismatch in bind function");
+                    f(downcast).node.packed()
+                },
+            )),
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
@@ -397,7 +399,7 @@ impl<T: Value> Incr<T> {
     pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static + NotObserver) {
         let state = self.node.state();
         let now = state.stabilisation_num.get();
-        let handler = OnUpdateHandler::new(now, Box::new(f));
+        let handler = OnUpdateHandler::new(now, Miny::new_unsized(f));
         self.node.add_on_update_handler(handler);
     }
 }

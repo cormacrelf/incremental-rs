@@ -26,7 +26,7 @@ use miny::Miny;
 
 pub(crate) enum Kind {
     Constant(Miny<dyn ValueInternal>),
-    ArrayFold(Box<dyn KindTrait>),
+    ArrayFold(miny::Miny<dyn KindTrait>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<dyn ErasedVariable>),

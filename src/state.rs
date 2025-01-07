@@ -1,3 +1,5 @@
+use miny::Miny;
+
 use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::kind;
 use super::node_update::NodeUpdateDelayed;
@@ -179,9 +181,9 @@ impl State {
         let node = Node::create_rc::<R>(
             self.weak(),
             self.current_scope(),
-            Kind::ArrayFold(Box::new(kind::ArrayFold {
+            Kind::ArrayFold(Miny::new_unsized(kind::ArrayFold {
                 init,
-                fold: RefCell::new(Box::new(f)),
+                fold: RefCell::new(f),
                 children: vec,
             })),
         );

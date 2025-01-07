@@ -1,18 +1,24 @@
 use std::cell::RefCell;
 use std::{cell::Cell, fmt};
 
+use miny::Miny;
+
 use crate::incrsan::NotObserver;
 use crate::{Incr, NodeRef};
 use crate::{Value, ValueInternal};
 
 pub(crate) trait FRef:
-    (Fn(&dyn ValueInternal) -> &dyn ValueInternal) + 'static + NotObserver
+    (for<'a> Fn(&'a dyn ValueInternal) -> &'a dyn ValueInternal) + 'static + NotObserver
 {
 }
-impl<F> FRef for F where F: (Fn(&dyn ValueInternal) -> &dyn ValueInternal) + 'static + NotObserver {}
+impl<F> FRef for F where
+    F: (for<'a> Fn(&'a dyn ValueInternal) -> &'a dyn ValueInternal) + 'static + NotObserver
+{
+}
 
 pub(crate) struct MapRefNode {
     pub(crate) input: NodeRef,
+    // Can't make this one Miny because of some weird issues with lifetimes?
     pub(crate) mapper: Box<dyn FRef>,
     pub(crate) did_change: Cell<bool>,
 }
@@ -43,7 +49,7 @@ macro_rules! map_node {
         $mapnode {
             $tfield1: $self.node.packed(),
             $($tfield2: $tfield2.node.packed(),)*
-            mapper: Box::new(RefCell::new($f)),
+            mapper: RefCell::new(miny::Miny::new_unsized($f)),
         }
     };
     (@any $type:ty) => {dyn $crate::ValueInternal};
@@ -65,7 +71,7 @@ macro_rules! map_node {
         $vis struct $mapnode {
             $vis $tfield1: crate::NodeRef,
             $($vis $tfield: crate::NodeRef,)*
-            $vis $ffield: Box<RefCell<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn $crate::ValueInternal>>>,
+            $vis $ffield: RefCell<miny::Miny<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn $crate::ValueInternal>>>,
         }
 
         impl fmt::Debug for $mapnode
@@ -275,7 +281,7 @@ impl<F> FWithOld for F where
 /// Lets you dismantle the old R for parts.
 pub(crate) struct MapWithOld {
     pub input: NodeRef,
-    pub mapper: RefCell<Box<dyn FWithOld>>,
+    pub mapper: RefCell<Miny<dyn FWithOld>>,
 }
 
 impl fmt::Debug for MapWithOld {
