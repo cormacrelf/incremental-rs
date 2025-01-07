@@ -2,6 +2,7 @@ use super::node::ErasedNode;
 use super::node_update::{NodeUpdateDelayed, OnUpdateHandler};
 use super::stabilisation_num::StabilisationNum;
 use super::state::{IncrStatus, State};
+use crate::node::Node;
 use crate::node_update::HandleUpdate;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -48,18 +49,13 @@ pub(crate) trait ErasedObserver: Debug + NotObserver {
     fn id(&self) -> ObserverId;
     fn state(&self) -> &Cell<ObserverState>;
     fn observing_packed(&self) -> NodeRef;
-    fn observing_erased(&self) -> &dyn ErasedNode;
+    fn observing_erased(&self) -> &Node;
     fn disallow_future_use(&self, state: &State);
     fn num_handlers(&self) -> i32;
     fn add_to_observed_node(&self);
     fn remove_from_observed_node(&self);
     fn unsubscribe(&self, token: SubscriptionToken) -> Result<(), ObserverError>;
-    fn run_all(
-        &self,
-        input: &dyn ErasedNode,
-        node_update: NodeUpdateDelayed,
-        now: StabilisationNum,
-    );
+    fn run_all(&self, input: &Node, node_update: NodeUpdateDelayed, now: StabilisationNum);
 }
 
 impl<T: Value> ErasedObserver for InternalObserver<T> {
@@ -72,7 +68,7 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
     fn observing_packed(&self) -> NodeRef {
         self.observing.node.clone().packed()
     }
-    fn observing_erased(&self) -> &dyn ErasedNode {
+    fn observing_erased(&self) -> &Node {
         self.observing.node.erased()
     }
     fn disallow_future_use(&self, state: &State) {
@@ -143,12 +139,7 @@ impl<T: Value> ErasedObserver for InternalObserver<T> {
             }
         }
     }
-    fn run_all(
-        &self,
-        input: &dyn ErasedNode,
-        node_update: NodeUpdateDelayed,
-        now: StabilisationNum,
-    ) {
+    fn run_all(&self, input: &Node, node_update: NodeUpdateDelayed, now: StabilisationNum) {
         let mut handlers = self.on_update_handlers.borrow_mut();
         for (id, handler) in handlers.iter_mut() {
             tracing::trace!("running update handler with id {id:?}");

@@ -34,7 +34,6 @@ use std::fmt;
 use std::rc::{Rc, Weak};
 
 use self::incrsan::NotObserver;
-use self::node::ErasedNode;
 
 /// Trait alias for `Debug + Clone + 'static`
 pub trait Value: Debug + Clone + PartialEq + NotObserver + 'static + Any {
@@ -68,8 +67,8 @@ where
     }
 }
 
-pub(crate) type NodeRef = Rc<dyn ErasedNode>;
-pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+pub(crate) type NodeRef = Rc<node::Node>;
+pub(crate) type WeakNode = Weak<node::Node>;
 
 pub trait Invariant {
     fn invariant(&self);

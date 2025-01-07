@@ -4,10 +4,8 @@ use std::{
     rc::Rc,
 };
 
-use crate::{
-    boxes::{new_unsized, SmallBox},
-    node::ErasedNode,
-};
+use crate::boxes::{new_unsized, SmallBox};
+use crate::node::Node;
 use crate::{incrsan::NotObserver, ValueInternal};
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
@@ -16,7 +14,7 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
     fn on_change(&self);
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
-    fn erased_input(&self) -> &dyn ErasedNode;
+    fn erased_input(&self) -> &Node;
 }
 
 pub(crate) type PackedEdge = Rc<dyn ExpertEdge>;
@@ -62,7 +60,7 @@ impl<T: Value> ExpertEdge for Edge<T> {
         &self.index
     }
 
-    fn erased_input(&self) -> &dyn ErasedNode {
+    fn erased_input(&self) -> &Node {
         self.child.node.erased()
     }
 }

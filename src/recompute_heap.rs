@@ -1,3 +1,4 @@
+use crate::node::ErasedNode;
 use crate::CellIncrement;
 use crate::NodeRef;
 use std::cell::{Cell, Ref, RefCell};

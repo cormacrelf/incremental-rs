@@ -228,7 +228,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn set_height(&self, height: i32);
     fn is_stale(&self) -> bool;
     fn is_stale_with_respect_to_a_child(&self) -> bool;
-    fn edge_is_stale(&self, parent: &dyn ErasedNode) -> bool;
+    fn edge_is_stale(&self, parent: &Node) -> bool;
     fn is_necessary(&self) -> bool;
     fn force_necessary(&self) -> &Cell<bool>;
     fn needs_to_be_computed(&self) -> bool;
@@ -239,7 +239,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn is_in_recompute_heap(&self) -> bool;
     fn recompute(&self, state: &State);
     fn recompute_one(&self, state: &State) -> Option<NodeRef>;
-    fn parent_iter_can_recompute_now(&self, child: &dyn ErasedNode, state: &State) -> bool;
+    fn parent_iter_can_recompute_now(&self, child: &Node, state: &State) -> bool;
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices>;
     fn expert_swap_children_except_in_kind(
         &self,
@@ -253,7 +253,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn state(&self) -> Rc<State>;
     fn weak(&self) -> WeakNode;
     fn packed(&self) -> NodeRef;
-    fn erased(&self) -> &dyn ErasedNode;
+    fn erased(&self) -> &Node;
     fn foreach_child(&self, f: &mut dyn FnMut(i32, NodeRef));
     fn iter_descendants_internal_one(
         &self,
@@ -291,7 +291,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
 
     fn child_changed(
         &self,
-        child: &dyn ErasedNode,
+        child: &Node,
         child_index: i32,
         old_value_opt: Option<&dyn ValueInternal>,
     ) -> Result<(), ParentError>;
@@ -306,16 +306,11 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn add_parent_without_adjusting_heights(
         &self,
         index_of_child_in_parent: i32,
-        parent_ref: &dyn ErasedNode,
+        parent_ref: &Node,
         state: &State,
     );
-    fn state_add_parent(
-        &self,
-        index_of_child_in_parent: i32,
-        parent_dyn: &dyn ErasedNode,
-        state: &State,
-    );
-    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ErasedNode);
+    fn state_add_parent(&self, index_of_child_in_parent: i32, parent_dyn: &Node, state: &State);
+    fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &Node);
 }
 
 impl Debug for Node {
@@ -329,8 +324,8 @@ impl Debug for Node {
     }
 }
 
-impl dyn ErasedNode {
-    fn ptr_eq(&self, other: &dyn ErasedNode) -> bool {
+impl Node {
+    fn ptr_eq(&self, other: &Node) -> bool {
         self.weak().ptr_eq(&other.weak())
     }
 }
@@ -360,7 +355,7 @@ impl ErasedNode for Node {
     fn packed(&self) -> NodeRef {
         self.weak_self.upgrade().unwrap() as NodeRef
     }
-    fn erased(&self) -> &dyn ErasedNode {
+    fn erased(&self) -> &Node {
         self
     }
     fn parent_child_indices(&self) -> &RefCell<ParentChildIndices> {
@@ -509,7 +504,7 @@ impl ErasedNode for Node {
             child.changed_at().get() > self.recomputed_at.get()
         })
     }
-    fn edge_is_stale(&self, parent: &dyn ErasedNode) -> bool {
+    fn edge_is_stale(&self, parent: &Node) -> bool {
         self.changed_at.get() > parent.recomputed_at().get()
     }
     fn is_necessary(&self) -> bool {
@@ -786,7 +781,7 @@ impl ErasedNode for Node {
 
     /// Returns true if we can recompute the parent (self) immediately.
     /// If it returns false, it has already added parent to the RCH.
-    fn parent_iter_can_recompute_now(&self, child: &dyn ErasedNode, state: &State) -> bool {
+    fn parent_iter_can_recompute_now(&self, child: &Node, state: &State) -> bool {
         let parent = self;
 
         let Some(parent_kind) = parent.kind() else {
@@ -1273,7 +1268,7 @@ impl ErasedNode for Node {
 
     fn child_changed(
         &self,
-        child: &dyn ErasedNode,
+        child: &Node,
         child_index: i32,
         old_value_opt: Option<&dyn ValueInternal>,
     ) -> Result<(), ParentError> {
@@ -1356,7 +1351,7 @@ impl ErasedNode for Node {
     fn add_parent_without_adjusting_heights(
         &self,
         child_index: i32,
-        parent_ref: &dyn ErasedNode,
+        parent_ref: &Node,
         state: &State,
     ) {
         let p = parent_ref;
@@ -1375,7 +1370,7 @@ impl ErasedNode for Node {
         }
     }
 
-    fn state_add_parent(&self, child_index: i32, parent_ref: &dyn ErasedNode, state: &State) {
+    fn state_add_parent(&self, child_index: i32, parent_ref: &Node, state: &State) {
         let parent = parent_ref.erased();
         tracing::debug!(child_id = ?self.id, child_index = %child_index, parent = %parent.kind_debug_ty(), "state_add_parent");
         debug_assert!(parent.is_necessary());
@@ -1403,7 +1398,7 @@ impl ErasedNode for Node {
     }
 
     #[rustfmt::skip]
-    fn remove_parent(&self, child_index: i32, parent_ref: &dyn ErasedNode) {
+    fn remove_parent(&self, child_index: i32, parent_ref: &Node) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
@@ -1782,7 +1777,7 @@ impl Node {
         }
     }
 
-    fn add_parent(&self, child_index: i32, parent_ref: &dyn ErasedNode) {
+    fn add_parent(&self, child_index: i32, parent_ref: &Node) {
         let child = self;
         let mut child_indices = child.parent_child_indices.borrow_mut();
         let mut child_parents = child.parents.borrow_mut();
@@ -1806,7 +1801,7 @@ impl Node {
         child_parents.push(parent_ref.weak());
     }
 
-    fn as_parent_dyn_ref(&self) -> &dyn ErasedNode {
+    fn as_parent_dyn_ref(&self) -> &Node {
         self
     }
 
@@ -1839,7 +1834,7 @@ fn test_node_size() {
 }
 
 fn iter_descendants_internal(
-    i: &mut dyn Iterator<Item = &dyn ErasedNode>,
+    i: &mut dyn Iterator<Item = &Node>,
     f: &mut dyn FnMut(&NodeRef),
 ) -> HashMap<NodeId, i32> {
     let mut seen = HashMap::new();
@@ -1850,7 +1845,7 @@ fn iter_descendants_internal(
 }
 
 pub(crate) fn save_dot_to_file(
-    nodes: &mut dyn Iterator<Item = &dyn ErasedNode>,
+    nodes: &mut dyn Iterator<Item = &Node>,
     named: &str,
 ) -> std::io::Result<()> {
     let buf = &mut String::new();
@@ -1869,10 +1864,7 @@ pub(crate) fn save_dot_to_file(
     file.write_all(buf.as_bytes())
 }
 
-pub(crate) fn save_dot(
-    f: &mut dyn Write,
-    nodes: &mut dyn Iterator<Item = &dyn ErasedNode>,
-) -> fmt::Result {
+pub(crate) fn save_dot(f: &mut dyn Write, nodes: &mut dyn Iterator<Item = &Node>) -> fmt::Result {
     fn node_name(node: &NodeRef) -> String {
         node.id().0.to_string()
     }

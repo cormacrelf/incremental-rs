@@ -15,6 +15,7 @@ pub use super::node_update::NodeUpdate;
 pub use super::Value;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
+use super::node::ErasedNode;
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
 use super::scope;

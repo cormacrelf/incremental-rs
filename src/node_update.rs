@@ -1,7 +1,10 @@
 use std::cell::Cell;
 
 use super::stabilisation_num::StabilisationNum;
-use crate::{boxes::SmallBox, node::ErasedNode};
+use crate::{
+    boxes::SmallBox,
+    node::{ErasedNode, Node},
+};
 
 #[cfg(not(feature = "nightly-incrsan"))]
 pub(crate) type BoxedUpdateFn<T> = SmallBox<dyn FnMut(NodeUpdate<&T>)>;
@@ -37,7 +40,7 @@ pub enum NodeUpdate<T> {
 pub(crate) type ErasedOnUpdateHandler = Box<dyn HandleUpdate>;
 
 pub(crate) trait HandleUpdate {
-    fn run(&mut self, node: &dyn ErasedNode, node_update: NodeUpdateDelayed, now: StabilisationNum);
+    fn run(&mut self, node: &Node, node_update: NodeUpdateDelayed, now: StabilisationNum);
 }
 
 pub(crate) struct OnUpdateHandler<T> {
@@ -54,7 +57,7 @@ impl<T: 'static> OnUpdateHandler<T> {
             previous_update_kind: Previously::NeverBeenUpdated.into(),
         }
     }
-    fn really_run_downcast(&mut self, node: &dyn ErasedNode, node_update: NodeUpdateDelayed) {
+    fn really_run_downcast(&mut self, node: &Node, node_update: NodeUpdateDelayed) {
         self.previous_update_kind.set(match &node_update {
             NodeUpdateDelayed::Changed => Previously::Changed,
             NodeUpdateDelayed::Necessary => Previously::Necessary,
@@ -87,12 +90,7 @@ impl<T: 'static> OnUpdateHandler<T> {
 }
 
 impl<T: 'static> HandleUpdate for OnUpdateHandler<T> {
-    fn run(
-        &mut self,
-        node: &dyn ErasedNode,
-        node_update: NodeUpdateDelayed,
-        now: StabilisationNum,
-    ) {
+    fn run(&mut self, node: &Node, node_update: NodeUpdateDelayed, now: StabilisationNum) {
         /* We only run the handler if was created in an earlier stabilization cycle.  If the
         handler was created by another on-update handler during the running of on-update
         handlers in the current stabilization, we treat the added handler as if it were added

@@ -4,6 +4,7 @@ use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
 use crate::boxes::new_unsized;
 use crate::incrsan::NotObserver;
+use crate::node::ErasedNode;
 use crate::{SubscriptionToken, WeakMap};
 
 use super::internal_observer::{

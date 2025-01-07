@@ -1,5 +1,6 @@
 use super::*;
 use crate::kind::{self, expert::ExpertEdge};
+use crate::node::ErasedNode;
 use crate::node::Incremental;
 use crate::WeakIncr;
 use kind::expert::PackedEdge;

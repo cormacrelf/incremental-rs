@@ -3,6 +3,7 @@ use std::{cell::Cell, fmt};
 
 use crate::boxes::SmallBox;
 use crate::incrsan::NotObserver;
+use crate::node::ErasedNode;
 use crate::node::NodeId;
 use crate::scope::{BindScope, Scope};
 use crate::ValueInternal;
