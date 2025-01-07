@@ -1,15 +1,13 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    marker::PhantomData,
     rc::Rc,
 };
 
 use miny::Miny;
 
-use super::NodeGenerics;
-use crate::incrsan::NotObserver;
 use crate::node::ErasedNode;
+use crate::{incrsan::NotObserver, ValueInternal};
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any + NotObserver {
@@ -71,11 +69,13 @@ impl<T: Value> ExpertEdge for Edge<T> {
 pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
 impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
 
-pub(crate) trait Recompute: FnMut() -> Miny<dyn Any> + 'static + NotObserver {}
-impl<T> Recompute for T where T: FnMut() -> Miny<dyn Any> + 'static + NotObserver {}
+pub(crate) trait Recompute:
+    FnMut() -> Miny<dyn ValueInternal> + 'static + NotObserver
+{
+}
+impl<T> Recompute for T where T: FnMut() -> Miny<dyn ValueInternal> + 'static + NotObserver {}
 
-pub(crate) struct ExpertNode<T> {
-    pub _f: PhantomData<fn() -> T>,
+pub(crate) struct ExpertNode {
     pub recompute: RefCell<Option<Box<dyn Recompute>>>,
     pub on_observability_change: RefCell<Option<Box<dyn ObservabilityChange>>>,
     pub children: RefCell<Vec<PackedEdge>>,
@@ -84,7 +84,7 @@ pub(crate) struct ExpertNode<T> {
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T> Drop for ExpertNode<T> {
+impl Drop for ExpertNode {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -97,13 +97,12 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T: 'static> ExpertNode<T> {
-    pub(crate) fn new_obs(
+impl ExpertNode {
+    pub(crate) fn new_obs<T: Value>(
         mut recompute: impl FnMut() -> T + 'static,
         on_observability_change: impl ObservabilityChange,
     ) -> Self {
         Self {
-            _f: PhantomData,
             recompute: RefCell::new(Some(Box::new(move || Miny::new_unsized(recompute())))),
             on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
@@ -222,24 +221,10 @@ impl<T: 'static> ExpertNode<T> {
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T> Debug for ExpertNode<T>
-where
-    T: Debug,
-{
+impl Debug for ExpertNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpertNode").finish()
     }
-}
-
-impl<T> NodeGenerics for ExpertNode<T>
-where
-    T: Value,
-{
-    type R = T;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, WithOld, FRef }
 }
 
 pub mod public {

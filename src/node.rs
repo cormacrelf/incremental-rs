@@ -1,5 +1,4 @@
 use core::fmt::Debug;
-use std::any::Any;
 use std::cell::Ref;
 use std::collections::HashMap;
 use std::fmt::{self, Write};
@@ -10,7 +9,7 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::cutoff::Cutoff;
 use super::internal_observer::ObserverId;
 use super::kind::expert::{ExpertEdge, Invalid, MakeStale, PackedEdge};
-use super::kind::{self, Kind, NodeGenerics};
+use super::kind::{self, Kind};
 use super::node_update::NodeUpdateDelayed;
 use super::scope::Scope;
 use super::state::{IncrStatus, State};
@@ -20,6 +19,7 @@ use crate::cutoff::ErasedCutoff;
 use crate::incrsan::NotObserver;
 use crate::internal_observer::ErasedObserver;
 use crate::node_update::{ErasedOnUpdateHandler, OnUpdateHandler};
+use crate::{Value, ValueInternal};
 
 use super::stabilisation_num::StabilisationNum;
 use miny::Miny;
@@ -33,7 +33,7 @@ mod id;
 pub(crate) use self::id::NodeId;
 
 #[repr(C)]
-pub(crate) struct Node<G: NodeGenerics> {
+pub(crate) struct Node {
     pub id: NodeId,
 
     /* The fields from [recomputed_at] to [created_in] are grouped together and are in the
@@ -44,20 +44,20 @@ pub(crate) struct Node<G: NodeGenerics> {
     /// The time at which we were last recomputed. -1 if never.
     pub recomputed_at: Cell<StabilisationNum>,
 
-    // miny::Miny<dyn Any> for e.g. a u32, does not allocate & is stored inline
+    // miny::Miny<dyn ValueInternal> for e.g. a u32, does not allocate & is stored inline
     // - sizeof u32 is <= usize (on most machines)
     // - the trait object metadata is also a usize
     //   (it's a vtable pointer), and is stored inline in Miny
     // - it is not NonZero like a pointer, so Option takes space
     // - RefCell also takes space, but optimizing the internal mutability of Node
     //   will require more analysis of which fields are used at the same time
-    pub value_opt: RefCell<Option<Miny<dyn Any>>>,
+    pub value_opt: RefCell<Option<Miny<dyn ValueInternal>>>,
     /// We use this flag instead of making kind mutable with an Invalid variant. That makes it much
     /// easier to implement `value_as_ref` for `Kind::MapRef`.
     pub is_valid: Cell<bool>,
     // Don't use this field directly. Use `self::kind()` to be forced to confront
     // the !is_valid case.
-    _kind: Kind<G>,
+    _kind: Kind,
     /// The cutoff function. This determines whether we set `changed_at = recomputed_at` during
     /// recomputation, which in turn helps determine if our parents are stale & need recomputing
     /// themselves.
@@ -86,7 +86,7 @@ pub(crate) struct Node<G: NodeGenerics> {
 
     pub parent_child_indices: RefCell<ParentChildIndices>,
     // this was for node-level subscriptions
-    // pub old_value_opt: RefCell<Option<G::R>>,
+    // pub old_value_opt: RefCell<Option<R>>,
     pub height: Cell<i32>,
     /// Set from RecomputeHeap, and AdjustHeightsHeap via increase_height
     pub height_in_recompute_heap: Cell<i32>,
@@ -134,17 +134,17 @@ pub(crate) trait Incremental<R>: ErasedNode + Debug + NotObserver {
     fn add_on_update_handler(&self, handler: OnUpdateHandler<R>);
 }
 
-impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
-    fn as_input(&self) -> Input<G::R> {
-        self.weak_self.upgrade().unwrap() as Input<G::R>
+impl<R: Value> Incremental<R> for Node {
+    fn as_input(&self) -> Input<R> {
+        self.weak_self.upgrade().unwrap() as Input<R>
     }
-    fn latest(&self) -> G::R {
+    fn latest(&self) -> R {
         self.value_opt().unwrap()
     }
-    fn value_opt(&self) -> Option<G::R> {
-        self.value_as_ref().map(|x| G::R::clone(&x))
+    fn value_opt(&self) -> Option<R> {
+        self.value_as_ref().map(|x| R::clone(&x))
     }
-    fn set_cutoff(&self, cutoff: Cutoff<G::R>) {
+    fn set_cutoff(&self, cutoff: Cutoff<R>) {
         self.cutoff.replace(cutoff.erased());
     }
 
@@ -153,17 +153,17 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         slot.replace(user_data);
     }
 
-    fn value_as_ref(&self) -> Option<Ref<G::R>> {
+    fn value_as_ref(&self) -> Option<Ref<R>> {
         if let Some(Kind::MapRef(mapref)) = self.kind() {
             let mapper = &*mapref.mapper;
             let input = mapref.input.value_as_any()?;
-            let mapped = Ref::filter_map(input, |iref| mapper(iref).downcast_ref()).ok();
+            let mapped = Ref::filter_map(input, |iref| mapper(iref).as_any().downcast_ref()).ok();
             return mapped;
         }
         let v = self.value_opt.borrow();
-        Ref::filter_map(v, |o| o.as_deref().and_then(|x| x.downcast_ref())).ok()
+        Ref::filter_map(v, |o| o.as_deref().and_then(|x| x.as_any().downcast_ref())).ok()
     }
-    fn constant(&self) -> Option<&G::R> {
+    fn constant(&self) -> Option<&R> {
         if let Some(Kind::Constant(value)) = self.kind() {
             value.downcast_ref()
         } else {
@@ -179,7 +179,7 @@ impl<G: NodeGenerics> Incremental<G::R> for Node<G> {
         let mut os = self.observers.borrow_mut();
         os.remove(&id);
     }
-    fn add_on_update_handler(&self, handler: OnUpdateHandler<G::R>) {
+    fn add_on_update_handler(&self, handler: OnUpdateHandler<R>) {
         self.num_on_update_handlers.increment();
         let mut ouh = self.on_update_handlers.borrow_mut();
         ouh.push(Box::new(handler));
@@ -203,7 +203,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn kind_debug_ty(&self) -> String;
     fn weak_state(&self) -> &Weak<State>;
     fn is_valid(&self) -> bool;
-    fn value_as_any(&self) -> Option<Ref<dyn Any>>;
+    fn value_as_any(&self) -> Option<Ref<dyn ValueInternal>>;
     fn dot_label(&self, f: &mut dyn Write) -> fmt::Result;
     fn dot_node(&self, f: &mut dyn Write, name: &str) -> fmt::Result;
     fn dot_add_bind_edges(&self, bind_edges: &mut Vec<(NodeRef, NodeRef)>);
@@ -293,7 +293,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
         &self,
         child: &dyn ErasedNode,
         child_index: i32,
-        old_value_opt: Option<&dyn Any>,
+        old_value_opt: Option<&dyn ValueInternal>,
     ) -> Result<(), ParentError>;
 
     fn change_child_bind_rhs(
@@ -318,7 +318,7 @@ pub(crate) trait ErasedNode: Debug + NotObserver {
     fn remove_parent(&self, index_of_child_in_parent: i32, parent_dyn: &dyn ErasedNode);
 }
 
-impl<G: NodeGenerics> Debug for Node<G> {
+impl Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
@@ -335,7 +335,7 @@ impl dyn ErasedNode {
     }
 }
 
-impl<G: NodeGenerics> ErasedNode for Node<G> {
+impl ErasedNode for Node {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -372,11 +372,11 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     fn state(&self) -> Rc<State> {
         self.weak_state.upgrade().unwrap()
     }
-    fn value_as_any(&self) -> Option<Ref<dyn Any>> {
+    fn value_as_any(&self) -> Option<Ref<dyn ValueInternal>> {
         if let Some(Kind::MapRef(mapref)) = self.kind() {
             let mapper = &mapref.mapper;
             let input = mapref.input.value_as_any()?;
-            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref) as &dyn Any)).ok();
+            let mapped = Ref::filter_map(input, |iref| Some(mapper(iref))).ok();
             return mapped;
         }
         let v = self.value_opt.borrow();
@@ -633,16 +633,13 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                     let input = map.input.value_as_any().unwrap();
                     f(&*input)
                 };
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::Var(var) => {
                 let new_value = var.compute();
                 self.maybe_change_value(new_value, state)
             }
-            Kind::Constant(v) => {
-                let x = v.downcast_ref::<G::R>().unwrap();
-                self.maybe_change_value(Miny::new_unsized(x.clone()), state)
-            }
+            Kind::Constant(v) => self.maybe_change_value(v.clone_any(), state),
             Kind::MapRef(mapref) => {
                 // don't run child_changed on our parents, because we already did that in OUR child_changed.
                 self.value_opt.replace(None);
@@ -654,12 +651,9 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let (new_value, did_change) = {
                     let mut current_value = self.value_opt.borrow_mut();
                     tracing::trace!("<- old: {current_value:?}");
-                    f(
-                        current_value.take().and_then(|x| Miny::downcast(x).ok()),
-                        &*input,
-                    )
+                    f(current_value.take(), &*input)
                 };
-                self.value_opt.replace(Some(Miny::new_unsized(new_value)));
+                self.value_opt.replace(Some(new_value));
                 self.maybe_change_value_manual(None, did_change, true, state)
             }
             Kind::Map2(map2) => {
@@ -667,7 +661,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i2 = map2.two.value_as_any().unwrap();
                 let mut f = map2.mapper.borrow_mut();
                 let new_value = f(&*i1, &*i2);
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::Map3(map) => {
                 let i1 = map.one.value_as_any().unwrap();
@@ -675,7 +669,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i3 = map.three.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&*i1, &*i2, &*i3);
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::Map4(map) => {
                 let i1 = map.one.value_as_any().unwrap();
@@ -684,7 +678,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i4 = map.four.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&*i1, &*i2, &*i3, &*i4);
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::Map5(map) => {
                 let i1 = map.one.value_as_any().unwrap();
@@ -694,7 +688,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i5 = map.five.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&*i1, &*i2, &*i3, &*i4, &*i5);
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::Map6(map) => {
                 let i1 = map.one.value_as_any().unwrap();
@@ -705,7 +699,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let i6 = map.six.value_as_any().unwrap();
                 let mut f = map.mapper.borrow_mut();
                 let new_value = f(&*i1, &*i2, &*i3, &*i4, &*i5, &*i6);
-                self.maybe_change_value(Miny::new_unsized(new_value), state)
+                self.maybe_change_value(new_value, state)
             }
             Kind::BindLhsChange { bind } => {
                 // leaves an empty vec for next time
@@ -739,7 +733,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                         main.change_child_bind_rhs(
                             old_rhs.clone(),
                             rhs,
-                            Kind::<G>::BIND_RHS_CHILD_INDEX,
+                            Kind::BIND_RHS_CHILD_INDEX,
                             state,
                         );
                     }
@@ -769,7 +763,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 let rhs_ref = rhs.as_ref().unwrap();
                 self.copy_child_bindrhs(rhs_ref, state)
             }
-            Kind::ArrayFold(af) => self.maybe_change_value(Miny::new_unsized(af.compute()), state),
+            Kind::ArrayFold(af) => self.maybe_change_value(af.compute(), state),
             Kind::Expert(e) => match e.before_main_computation() {
                 Err(Invalid) => {
                     self.invalidate_node(state);
@@ -779,7 +773,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                 Ok(()) => {
                     let value = {
                         if let Some(r) = e.recompute.borrow_mut().as_mut() {
-                            Miny::new_unsized(r())
+                            r()
                         } else {
                             panic!()
                         }
@@ -981,7 +975,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         } else if !self.is_necessary() {
             NodeUpdateDelayed::Unnecessary
         } else {
-            match self.value_as_ref().is_some() {
+            match self.value_as_any().is_some() {
                 true => NodeUpdateDelayed::Changed,
                 false => NodeUpdateDelayed::Necessary,
             }
@@ -1027,7 +1021,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         }?;
         write!(f, "({id:?})")?;
         write!(f, " @ {h}")?;
-        if let Some(val) = self.value_as_ref() {
+        if let Some(val) = self.value_as_any() {
             write!(f, " => {:#?}", val)?;
         }
         Ok(())
@@ -1281,7 +1275,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
         &self,
         child: &dyn ErasedNode,
         child_index: i32,
-        old_value_opt: Option<&dyn Any>,
+        old_value_opt: Option<&dyn ValueInternal>,
     ) -> Result<(), ParentError> {
         let Some(kind) = self.kind() else {
             return Err(ParentError::ParentInvalidated);
@@ -1307,7 +1301,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
                         continue;
                     };
                     let child_index = pci.my_child_index_in_parent_at_index[parent_index];
-                    parent.child_changed(self, child_index, self_old.map(|x| x as &dyn Any))?;
+                    parent.child_changed(self, child_index, self_old)?;
                 }
             }
             _ => {}
@@ -1477,7 +1471,7 @@ impl<G: NodeGenerics> ErasedNode for Node<G> {
     }
 }
 
-impl<G: NodeGenerics> Node<G> {
+impl Node {
     fn any_child(&self, pred: &dyn Fn(i32, NodeRef) -> bool) -> bool {
         self.try_fold_children((), &mut |(), ix, node| {
             if pred(ix, node) {
@@ -1603,7 +1597,7 @@ fn invalidate_nodes_created_on_rhs(all_nodes_created_on_rhs: &mut Vec<WeakNode>,
     }
 }
 
-impl<G: NodeGenerics> Node<G> {
+impl Node {
     pub fn into_rc(mut self) -> Rc<Self> {
         let rc = Rc::<Self>::new_cyclic(|weak| {
             self.weak_self = weak.clone();
@@ -1613,7 +1607,17 @@ impl<G: NodeGenerics> Node<G> {
         rc
     }
 
-    pub fn create(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Self {
+    pub(crate) fn create<R: Value>(state: Weak<State>, created_in: Scope, kind: Kind) -> Self {
+        let cutoff = Cutoff::<R>::PartialEq.erased();
+        Self::create_inner(state, created_in, kind, cutoff)
+    }
+
+    fn create_inner(
+        state: Weak<State>,
+        created_in: Scope,
+        kind: Kind,
+        cutoff: ErasedCutoff,
+    ) -> Self {
         let t = state.upgrade().unwrap();
         t.num_nodes_created.increment();
         Node {
@@ -1642,31 +1646,31 @@ impl<G: NodeGenerics> Node<G> {
             observers: HashMap::new().into(),
             on_update_handlers: Default::default(),
             graphviz_user_data: None.into(),
-            cutoff: Cutoff::<G::R>::PartialEq.erased().into(),
+            cutoff: cutoff.into(),
             is_valid: true.into(),
         }
     }
 
-    pub fn create_rc(state: Weak<State>, created_in: Scope, kind: Kind<G>) -> Rc<Self> {
-        Node::create(state, created_in, kind).into_rc()
+    pub fn create_rc<R: Value>(state: Weak<State>, created_in: Scope, kind: Kind) -> Rc<Self> {
+        Node::create::<R>(state, created_in, kind).into_rc()
     }
 
-    fn kind(&self) -> Option<&Kind<G>> {
+    fn kind(&self) -> Option<&Kind> {
         if !self.is_valid() {
             return None;
         }
         Some(&self._kind)
     }
 
-    fn maybe_change_value(&self, value: Miny<dyn Any>, state: &State) -> Option<NodeRef> {
+    fn maybe_change_value(&self, value: Miny<dyn ValueInternal>, state: &State) -> Option<NodeRef> {
         let old_value_opt = self.value_opt.take();
         let mut cutoff = self.cutoff.borrow_mut();
         let should_change = old_value_opt
             .as_ref()
-            .map_or(true, |old| !cutoff.should_cutoff(old, &value));
+            .map_or(true, |old| !cutoff.should_cutoff(&**old, value.as_ref()));
         self.value_opt.replace(Some(value));
         return self.maybe_change_value_manual(
-            old_value_opt.as_ref().map(|t| t as &dyn Any),
+            old_value_opt.as_ref().map(|t| &**t),
             should_change,
             true,
             state,
@@ -1675,7 +1679,7 @@ impl<G: NodeGenerics> Node<G> {
 
     fn maybe_change_value_manual(
         &self,
-        old_value_opt: Option<&dyn Any>,
+        old_value_opt: Option<&dyn ValueInternal>,
         did_change: bool,
         run_child_changed: bool,
         state: &State,
@@ -1765,9 +1769,8 @@ impl<G: NodeGenerics> Node<G> {
 
     fn copy_child_bindrhs(&self, child: &NodeRef, state: &State) -> Option<NodeRef> {
         if child.is_valid() {
-            let latest = child.value_as_any()?;
-            let down = latest.downcast_ref::<G::R>()?.clone();
-            self.maybe_change_value(Miny::new_unsized(down), state)
+            let latest = child.value_as_any()?.clone_any();
+            self.maybe_change_value(latest, state)
         } else {
             self.invalidate_node(state);
             state.propagate_invalidity();
@@ -1826,10 +1829,8 @@ impl<G: NodeGenerics> Node<G> {
 #[test]
 #[ignore = "changes a lot these days"]
 fn test_node_size() {
-    use super::kind::Constant;
     let state = State::new();
-    let node =
-        Node::<Constant<i32>>::create_rc(state.weak(), state.current_scope(), Kind::Constant(5i32));
+    let node = Node::create_rc::<i32>(state.weak(), state.current_scope(), Kind::constant(5i32));
     assert_eq!(core::mem::size_of_val(&*node), 408);
 }
 
@@ -1926,7 +1927,7 @@ pub(crate) fn save_dot(
 }
 
 #[cfg(debug_assertions)]
-impl<G: NodeGenerics> Drop for Node<G> {
+impl Drop for Node {
     fn drop(&mut self) {
         tracing::trace!("dropping Node: {:?}", self);
     }

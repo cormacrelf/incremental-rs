@@ -64,12 +64,18 @@ impl<T: 'static> OnUpdateHandler<T> {
         let concrete_update = match node_update {
             NodeUpdateDelayed::Changed => {
                 let value_any = value_any.unwrap();
-                let v = value_any.downcast_ref::<T>().expect("downcast_ref failed");
+                let v = value_any
+                    .as_any()
+                    .downcast_ref::<T>()
+                    .expect("downcast_ref failed");
                 return (self.handler_fn)(NodeUpdate::Changed(&*v));
             }
             NodeUpdateDelayed::Necessary => {
                 let value_any = value_any.unwrap();
-                let v = value_any.downcast_ref::<T>().expect("downcast_ref failed");
+                let v = value_any
+                    .as_any()
+                    .downcast_ref::<T>()
+                    .expect("downcast_ref failed");
                 return (self.handler_fn)(NodeUpdate::Necessary(&*v));
             }
             NodeUpdateDelayed::Invalidated => NodeUpdate::Invalidated,

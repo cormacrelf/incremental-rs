@@ -34,17 +34,37 @@ use self::incrsan::NotObserver;
 use self::node::ErasedNode;
 
 /// Trait alias for `Debug + Clone + 'static`
-pub trait Value: Debug + Clone + PartialEq + NotObserver + 'static {
+pub trait Value: Debug + Clone + PartialEq + NotObserver + 'static + Any {
     fn as_any(&self) -> &dyn Any;
 }
 impl<T> Value for T
 where
-    T: Debug + Clone + PartialEq + NotObserver + 'static,
+    T: Debug + Clone + PartialEq + NotObserver + 'static + Any,
 {
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
+
+/// Trait alias for `Debug + 'static + Any`. Used in trait objects, instead of
+/// `dyn ValueInternal`, because [Value] cannot be made into a trait object
+/// (Clone and PartialEq include Self types).
+pub(crate) trait ValueInternal: Debug + NotObserver + 'static + Any {
+    fn as_any(&self) -> &dyn Any;
+    fn clone_any(&self) -> miny::Miny<dyn ValueInternal>;
+}
+impl<T> ValueInternal for T
+where
+    T: Debug + Clone + PartialEq + NotObserver + 'static + Any,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn clone_any(&self) -> miny::Miny<dyn ValueInternal> {
+        miny::Miny::new_unsized(self.clone())
+    }
+}
+
 pub(crate) type NodeRef = Rc<dyn ErasedNode>;
 pub(crate) type WeakNode = Weak<dyn ErasedNode>;
 

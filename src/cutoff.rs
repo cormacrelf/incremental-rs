@@ -1,27 +1,27 @@
-use std::any::Any;
-
-use crate::incrsan::NotObserver;
+use crate::{incrsan::NotObserver, ValueInternal};
 
 pub(crate) struct ErasedCutoff {
-    should_cutoff: Box<dyn CutoffClosure<dyn Any>>,
+    should_cutoff: Box<dyn CutoffClosure<dyn ValueInternal>>,
 }
 
 impl ErasedCutoff {
     pub(crate) fn new<T: PartialEq + Clone + 'static>(mut cutoff: Cutoff<T>) -> Self {
         Self {
             // codegen: one copy of this closure is generated for each T
-            should_cutoff: Box::new(move |a: &dyn Any, b: &dyn Any| -> bool {
-                let Some(a) = a.downcast_ref::<T>() else {
-                    return false;
-                };
-                let Some(b) = b.downcast_ref::<T>() else {
-                    return false;
-                };
-                cutoff.should_cutoff(a, b)
-            }),
+            should_cutoff: Box::new(
+                move |a: &dyn ValueInternal, b: &dyn ValueInternal| -> bool {
+                    let Some(a) = a.as_any().downcast_ref::<T>() else {
+                        return false;
+                    };
+                    let Some(b) = b.as_any().downcast_ref::<T>() else {
+                        return false;
+                    };
+                    cutoff.should_cutoff(a, b)
+                },
+            ),
         }
     }
-    pub(crate) fn should_cutoff(&mut self, a: &dyn Any, b: &dyn Any) -> bool {
+    pub(crate) fn should_cutoff(&mut self, a: &dyn ValueInternal, b: &dyn ValueInternal) -> bool {
         (&mut *self.should_cutoff)(a, b)
     }
 }

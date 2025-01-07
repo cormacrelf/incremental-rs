@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::Hash;
@@ -10,9 +9,8 @@ use super::kind::{self, Kind};
 use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
 use crate::incrsan::NotObserver;
-use crate::kind::BindLhsChangeGen;
 use crate::node_update::OnUpdateHandler;
-use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, WeakState};
+use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, ValueInternal, WeakState};
 
 #[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
@@ -146,17 +144,16 @@ impl<T: Value> Incr<T> {
         F: for<'a> Fn(&'a T) -> &'a R + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapRefNode<R>>::create_rc(
+        let node = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
-            Kind::MapRef(kind::MapRefNode::<R> {
+            Kind::MapRef(kind::MapRefNode {
                 input: self.node.packed(),
                 did_change: true.into(),
-                mapper: Box::new(move |x: &dyn Any| {
-                    let x = x.downcast_ref::<T>().unwrap();
-                    f(x) as &dyn Any
+                mapper: Box::new(move |x: &dyn ValueInternal| {
+                    let x = x.as_any().downcast_ref::<T>().unwrap();
+                    f(x) as &dyn ValueInternal
                 }),
-                phantom: std::marker::PhantomData,
             }),
         );
         Incr { node }
@@ -171,21 +168,20 @@ impl<T: Value> Incr<T> {
         &self,
         mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static + NotObserver,
     ) -> Incr<R> {
-        let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
+        let node = Rc::<Node>::new_cyclic(move |node_weak| {
             let f = {
                 let weak = WeakIncr(node_weak.clone());
-                move |t: &dyn Any| {
-                    let t = t.downcast_ref().unwrap();
+                move |t: &dyn ValueInternal| {
+                    let t = t.as_any().downcast_ref().unwrap();
                     miny::Miny::new_unsized(cyclic(weak.clone(), t))
                 }
             };
             let mapper = kind::MapNode {
                 input: self.node.packed(),
                 mapper: Box::new(RefCell::new(f)),
-                phantom: Default::default(),
             };
             let state = self.node.state();
-            let mut node = Node::<kind::MapNode<R>>::create(
+            let mut node = Node::create::<R>(
                 state.weak(),
                 state.current_scope.borrow().clone(),
                 Kind::Map(mapper),
@@ -215,20 +211,19 @@ impl<T: Value> Incr<T> {
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapWithOld<R>>::create_rc(
+        let node = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
             Kind::MapWithOld(kind::MapWithOld {
                 input: self.node.packed(),
                 mapper: RefCell::new(Box::new(
-                    move |opt_r: Option<Miny<dyn Any>>, x: &dyn Any| {
+                    move |opt_r: Option<Miny<dyn ValueInternal>>, x: &dyn ValueInternal| {
                         let opt_r = opt_r.and_then(|x| Miny::downcast(x).ok());
-                        let x = x.downcast_ref::<T>().unwrap();
+                        let x = x.as_any().downcast_ref::<T>().unwrap();
                         let (r, b) = f(opt_r, x);
                         (Miny::new_unsized(r), b)
                     },
                 )),
-                _p: std::marker::PhantomData,
             }),
         );
         Incr { node }
@@ -253,8 +248,9 @@ impl<T: Value> Incr<T> {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
             lhs: self.node.packed(),
-            mapper: RefCell::new(Box::new(move |any_ref: &dyn Any| -> NodeRef {
+            mapper: RefCell::new(Box::new(move |any_ref: &dyn ValueInternal| -> NodeRef {
                 let downcast = any_ref
+                    .as_any()
                     .downcast_ref::<T>()
                     .expect("Type mismatch in bind function");
                 f(downcast).node.packed()
@@ -262,16 +258,16 @@ impl<T: Value> Incr<T> {
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
-            lhs_change: RefCell::new(Weak::<Node<BindLhsChangeGen<R>>>::new()),
+            lhs_change: RefCell::new(Weak::<Node>::new()),
             id_lhs_change: Cell::new(NodeId(0)),
-            main: RefCell::new(Weak::<Node<kind::BindNodeMainGen<R>>>::new()),
+            main: RefCell::new(Weak::<Node>::new()),
         });
-        let lhs_change = Node::<kind::BindLhsChangeGen<R>>::create_rc(
+        let lhs_change = Node::create_rc::<()>(
             state.weak(),
             state.current_scope(),
             Kind::BindLhsChange { bind: bind.clone() },
         );
-        let main = Node::<kind::BindNodeMainGen<R>>::create_rc(
+        let main = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
             Kind::BindMain {
@@ -291,7 +287,7 @@ impl<T: Value> Incr<T> {
         recomputed.  This is necessary to handle cases where [f] returns an existing stable
         node, in which case the [lhs_change] would be the only thing causing [main] to be
         stale. */
-        lhs_change.set_cutoff(Cutoff::Never);
+        Incremental::<()>::set_cutoff(&*lhs_change, Cutoff::Never);
         Incr { node: main }
     }
 

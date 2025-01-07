@@ -1,14 +1,12 @@
-use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::{self, Debug};
 
 use miny::Miny;
 
-use super::NodeGenerics;
 use super::{Incr, Value};
 use crate::incrsan::NotObserver;
 use crate::kind::KindTrait;
-use crate::NodeRef;
+use crate::{NodeRef, ValueInternal};
 
 pub(crate) struct ArrayFold<F, I, R> {
     pub(crate) init: R,
@@ -22,7 +20,7 @@ where
     I: Value,
     R: Value,
 {
-    fn compute(&self) -> Miny<dyn Any> {
+    fn compute(&self) -> Miny<dyn ValueInternal> {
         let mut acc = self.init.clone();
         let mut f = self.fold.borrow_mut();
         acc = self.children.iter().fold(acc, |acc, x| {
@@ -48,16 +46,6 @@ where
             std::any::type_name::<R>()
         )
     }
-}
-
-impl<F, I: Value, R: Value> NodeGenerics for ArrayFold<F, I, R>
-where
-    F: 'static + NotObserver,
-{
-    type R = R;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs, Update, WithOld, FRef, Recompute, ObsChange }
 }
 
 impl<F, I, R> Debug for ArrayFold<F, I, R>

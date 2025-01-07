@@ -1,38 +1,23 @@
-use std::any::Any;
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::{cell::Cell, fmt};
 
-use super::NodeGenerics;
 use crate::incrsan::NotObserver;
-use crate::Value;
 use crate::{Incr, NodeRef};
+use crate::{Value, ValueInternal};
 
-pub(crate) trait FRef: (Fn(&dyn Any) -> &dyn Any) + 'static + NotObserver {}
-impl<F> FRef for F where F: (Fn(&dyn Any) -> &dyn Any) + 'static + NotObserver {}
+pub(crate) trait FRef:
+    (Fn(&dyn ValueInternal) -> &dyn ValueInternal) + 'static + NotObserver
+{
+}
+impl<F> FRef for F where F: (Fn(&dyn ValueInternal) -> &dyn ValueInternal) + 'static + NotObserver {}
 
-pub(crate) struct MapRefNode<R> {
+pub(crate) struct MapRefNode {
     pub(crate) input: NodeRef,
     pub(crate) mapper: Box<dyn FRef>,
     pub(crate) did_change: Cell<bool>,
-    pub(crate) phantom: PhantomData<fn() -> R>,
 }
 
-impl<R> NodeGenerics for MapRefNode<R>
-where
-    R: Value,
-{
-    type R = R;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, Recompute, ObsChange }
-    node_generics_default! { BindLhs, BindRhs }
-}
-
-impl<R> fmt::Debug for MapRefNode<R>
-where
-    R: Value,
-{
+impl fmt::Debug for MapRefNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapRefNode")
             .field("did_change", &self.did_change.get())
@@ -59,10 +44,9 @@ macro_rules! map_node {
             $tfield1: $self.node.packed(),
             $($tfield2: $tfield2.node.packed(),)*
             mapper: Box::new(RefCell::new($f)),
-            phantom: std::marker::PhantomData,
         }
     };
-    (@any $type:ty) => {dyn ::std::any::Any};
+    (@any $type:ty) => {dyn $crate::ValueInternal};
     ($vis:vis struct $mapnode:ident <
          inputs {
              $tfield1:ident: $t1:ident = $i1:ident,
@@ -78,30 +62,13 @@ macro_rules! map_node {
          $(#[$method_meta:meta])*
          impl Incr::$methodname:ident, Kind::$kind:ident
      }) => {
-        $vis struct $mapnode <$r>
-        where
-            $r: Value,
-        {
+        $vis struct $mapnode {
             $vis $tfield1: crate::NodeRef,
             $($vis $tfield: crate::NodeRef,)*
-            $vis $ffield: Box<RefCell<dyn FnMut(&dyn ::std::any::Any, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn std::any::Any>>>,
-
-            $vis phantom: std::marker::PhantomData<fn() -> $r>,
+            $vis $ffield: Box<RefCell<dyn FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> miny::Miny<dyn $crate::ValueInternal>>>,
         }
 
-        impl<$r> NodeGenerics for $mapnode<$r>
-        where
-            $r: Value,
-        {
-            map_node!{ @rest }
-            type R = $r;
-            // type $i1 = $t1;
-            // $(type $i = $t2;)*
-            crate::node_generics_default! { $($d,)* $fparam }
-        }
-        impl<$r> fmt::Debug for $mapnode<$r>
-        where
-            $r: Value,
+        impl fmt::Debug for $mapnode
         {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.debug_struct(stringify!($mapnode)).finish()
@@ -121,15 +88,15 @@ macro_rules! map_node {
                 let mapper = map_node! {
                     @tail_mapper $mapnode {
                         move |
-                            $tfield1: &dyn ::std::any::Any,
+                            $tfield1: &dyn $crate::ValueInternal,
                             $(
-                                $tfield: &dyn ::std::any::Any,
+                                $tfield: &dyn $crate::ValueInternal,
                             )*
-                            | -> miny::Miny<dyn Any>
+                            | -> miny::Miny<dyn $crate::ValueInternal>
                         {
-                            let $tfield1 = $tfield1.downcast_ref::<$t1>().expect("Type error in map function");
+                            let $tfield1 = $tfield1.as_any().downcast_ref::<$t1>().expect("Type error in map function");
                             $(
-                                let $tfield = $tfield.downcast_ref::<$t>().expect("Type error in map function");
+                                let $tfield = $tfield.as_any().downcast_ref::<$t>().expect("Type error in map function");
                             )*
                             miny::Miny::new_unsized(f( $tfield1, $($tfield,)* ))
                         },
@@ -139,7 +106,7 @@ macro_rules! map_node {
                     }
                 };
                 let state = self.node.state();
-                let node = crate::node::Node::<$mapnode<$r>>::create_rc(
+                let node = crate::node::Node::create_rc::<$r>(
                     state.weak(),
                     state.current_scope.borrow().clone(),
                     crate::kind::Kind::$kind(mapper),
@@ -287,38 +254,31 @@ map_node! {
 }
 
 pub(crate) trait FWithOld:
-    FnMut(Option<miny::Miny<dyn Any>>, &dyn Any) -> (miny::Miny<dyn Any>, bool) + 'static + NotObserver
+    FnMut(
+        Option<miny::Miny<dyn ValueInternal>>,
+        &dyn ValueInternal,
+    ) -> (miny::Miny<dyn ValueInternal>, bool)
+    + 'static
+    + NotObserver
 {
 }
 impl<F> FWithOld for F where
-    F: FnMut(Option<miny::Miny<dyn Any>>, &dyn Any) -> (miny::Miny<dyn Any>, bool)
+    F: FnMut(
+            Option<miny::Miny<dyn ValueInternal>>,
+            &dyn ValueInternal,
+        ) -> (miny::Miny<dyn ValueInternal>, bool)
         + 'static
         + NotObserver
 {
 }
 
 /// Lets you dismantle the old R for parts.
-pub(crate) struct MapWithOld<R> {
+pub(crate) struct MapWithOld {
     pub input: NodeRef,
     pub mapper: RefCell<Box<dyn FWithOld>>,
-    pub _p: PhantomData<R>,
 }
 
-impl<R> NodeGenerics for MapWithOld<R>
-where
-    R: Value,
-{
-    type R = R;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { WithOld, Fold, Update, FRef, Recompute, ObsChange }
-}
-
-impl<R> fmt::Debug for MapWithOld<R>
-where
-    R: Value,
-{
+impl fmt::Debug for MapWithOld {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapWithOld").finish()
     }

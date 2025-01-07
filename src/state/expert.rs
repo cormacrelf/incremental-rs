@@ -10,7 +10,7 @@ where
     F: FnMut() -> T + 'static + NotObserver,
     O: FnMut(bool) + 'static + NotObserver,
 {
-    let node = Node::<kind::ExpertNode<T>>::create_rc(
+    let node = Node::create_rc::<T>(
         state.weak(),
         state.current_scope(),
         Kind::Expert(kind::ExpertNode::new_obs(
@@ -40,10 +40,10 @@ where
     F: FnMut() -> T + 'static + NotObserver,
     O: FnMut(bool) + 'static + NotObserver,
 {
-    let node = Rc::<Node<_>>::new_cyclic(|weak| {
+    let node = Rc::<Node>::new_cyclic(|weak| {
         let weak_incr = WeakIncr(weak.clone());
         let recompute = cyclic(weak_incr);
-        let mut node = Node::<kind::ExpertNode<T>>::create(
+        let mut node = Node::create::<T>(
             state.weak(),
             state.current_scope(),
             Kind::Expert(kind::ExpertNode::new_obs(

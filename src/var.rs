@@ -5,7 +5,6 @@ use std::rc::{Rc, Weak};
 #[cfg(test)]
 use test_log::test;
 
-use super::kind::NodeGenerics;
 use super::node::{ErasedNode, Incremental, Node, NodeId};
 use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
@@ -14,17 +13,8 @@ use super::CellIncrement;
 use super::Incr;
 use crate::incrsan::NotObserver;
 use crate::kind::KindTrait;
-use crate::node_generics_default;
 use crate::Value;
-
-pub(crate) struct VarGenerics<T: Value>(std::marker::PhantomData<T>);
-impl<R: Value> NodeGenerics for VarGenerics<R> {
-    type R = R;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
+use crate::ValueInternal;
 
 // For the delayed variable set list (set_during_stabilisation).
 // We use Weak to ensure we don't interfere with the manual
@@ -59,7 +49,7 @@ impl<T: Value> ErasedVariable for Var<T> {
 }
 
 impl<T: Value> KindTrait for Var<T> {
-    fn compute(&self) -> miny::Miny<dyn std::any::Any> {
+    fn compute(&self) -> miny::Miny<dyn ValueInternal> {
         miny::Miny::new_unsized((*self.value.borrow()).clone())
     }
 
@@ -87,7 +77,7 @@ pub struct Var<T: Value> {
     pub(crate) value_set_during_stabilisation: RefCell<Option<T>>,
     pub(crate) set_at: Cell<StabilisationNum>,
     // mutable for initialisation
-    pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
+    pub(crate) node: RefCell<Option<Rc<Node>>>,
     // mutable for initialisation
     pub(crate) node_id: Cell<NodeId>,
 }

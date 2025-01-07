@@ -1,12 +1,10 @@
-use std::any::Any;
 use std::cell::RefCell;
 use std::{cell::Cell, fmt};
 
-use super::NodeGenerics;
 use crate::incrsan::NotObserver;
 use crate::node::NodeId;
 use crate::scope::{BindScope, Scope};
-use crate::Value;
+use crate::ValueInternal;
 use crate::{NodeRef, WeakNode};
 
 pub(crate) struct BindNode {
@@ -54,49 +52,11 @@ impl BindScope for BindNode {
     }
 }
 
-pub(crate) struct BindLhsChangeGen<R> {
-    _phantom: std::marker::PhantomData<R>,
-}
-
-pub(crate) trait LhsChangeFn: FnMut(&dyn Any) -> NodeRef + 'static + NotObserver {}
-impl<F> LhsChangeFn for F where F: FnMut(&dyn Any) -> NodeRef + 'static + NotObserver {}
-
-impl<R> NodeGenerics for BindLhsChangeGen<R>
-where
-    R: Value,
+pub(crate) trait LhsChangeFn:
+    FnMut(&dyn ValueInternal) -> NodeRef + 'static + NotObserver
 {
-    // lhs change's Node stores () nothing. just a sentinel.
-    type R = ();
-    // type BindLhs = T;
-    type BindRhs = R;
-    // swap order so we can use as_parent with I1
-    // type I1 = ();
-    // type I2 = T;
-    node_generics_default! { I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
-
-pub(crate) struct BindNodeMainGen<R> {
-    _phantom: std::marker::PhantomData<R>,
-}
-
-impl<R> NodeGenerics for BindNodeMainGen<R>
-where
-    R: Value,
-{
-    // We copy the output of the Rhs
-    type R = R;
-    // type BindLhs = T;
-    type BindRhs = R;
-    // Rhs
-    // type I1 = R;
-    // BindLhsChange (a sentinel)
-    // type I2 = ();
-    node_generics_default! { I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
+impl<F> LhsChangeFn for F where F: FnMut(&dyn ValueInternal) -> NodeRef + 'static + NotObserver {}
 
 impl fmt::Debug for BindNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

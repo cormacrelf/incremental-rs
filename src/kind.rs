@@ -1,53 +1,16 @@
-use std::any::Any;
 use std::fmt::{self, Debug};
 use std::rc::Rc;
 
 use crate::incrsan::NotObserver;
 use crate::var::ErasedVariable;
-use crate::{Incr, NodeRef, Value};
+use crate::{Incr, NodeRef, Value, ValueInternal};
 
 pub(crate) trait KindTrait: 'static + NotObserver + Debug {
-    fn compute(&self) -> miny::Miny<dyn Any>;
+    fn compute(&self) -> miny::Miny<dyn ValueInternal>;
     fn children_len(&self) -> usize;
     fn iter_children_packed(&self) -> Box<dyn Iterator<Item = NodeRef> + '_>;
     fn slow_get_child(&self, index: usize) -> NodeRef;
     fn debug_ty(&self, f: &mut fmt::Formatter) -> fmt::Result;
-}
-
-#[macro_export]
-macro_rules! node_generics_default {
-    (@fn $name:ident ( $($param:ident),* )) => {
-        type $name = fn($(&Self::$param,)*) -> Self::R;
-    };
-    (@single F1) => { /* snipped */ };
-    (@single F2) => { /* snipped */ };
-    (@single F3) => { /* snipped */ };
-    (@single F4) => { /* snipped */ };
-    (@single F5) => { /* snipped */ };
-    (@single F6) => { /* snipped */ };
-
-    (@single I1) => { /* snipped */ };
-    (@single I2) => { /* snipped */ };
-    (@single I3) => { /* snipped */ };
-    (@single I4) => { /* snipped */ };
-    (@single I5) => { /* snipped */ };
-    (@single I6) => { /* snipped */ };
-
-    (@single BindLhs) => { /* snipped */ };
-    (@single BindRhs) => { type BindRhs = (); };
-    (@single B1) => { /* snipped */ };
-    (@single Fold) => { /* snipped */ };
-    (@single Update) => { /* snipped */ };
-    (@single WithOld) => { /* snipped */ };
-    (@single FRef) => { /* snipped */ };
-    (@single Recompute) => { /* snipped */ };
-    (@single ObsChange) => { /* snipped */ };
-
-    ($($ident:ident),*) => {
-        $(
-            node_generics_default! { @single $ident }
-        )*
-    }
 }
 
 mod array_fold;
@@ -61,25 +24,20 @@ pub(crate) use expert::ExpertNode;
 pub(crate) use map::*;
 use miny::Miny;
 
-pub(crate) trait NodeGenerics: 'static + NotObserver {
-    type R: Value;
-    type BindRhs: Value;
-}
-
-pub(crate) enum Kind<G: NodeGenerics> {
-    Constant(Miny<dyn Any>),
+pub(crate) enum Kind {
+    Constant(Miny<dyn ValueInternal>),
     ArrayFold(Box<dyn KindTrait>),
     // We have a strong reference to the Var, because (e.g.) the user's public::Var
     // may have been set and then dropped before the next stabilise().
     Var(Rc<dyn ErasedVariable>),
-    Map(map::MapNode<G::R>),
-    MapWithOld(map::MapWithOld<G::R>),
-    MapRef(map::MapRefNode<G::R>),
-    Map2(map::Map2Node<G::R>),
-    Map3(map::Map3Node<G::R>),
-    Map4(map::Map4Node<G::R>),
-    Map5(map::Map5Node<G::R>),
-    Map6(map::Map6Node<G::R>),
+    Map(map::MapNode),
+    MapWithOld(map::MapWithOld),
+    MapRef(map::MapRefNode),
+    Map2(map::Map2Node),
+    Map3(map::Map3Node),
+    Map4(map::Map4Node),
+    Map5(map::Map5Node),
+    Map6(map::Map6Node),
     BindLhsChange {
         bind: Rc<bind::BindNode>,
     },
@@ -91,10 +49,10 @@ pub(crate) enum Kind<G: NodeGenerics> {
         // BindNode holds weak refs to both
         lhs_change: NodeRef,
     },
-    Expert(expert::ExpertNode<G::R>),
+    Expert(expert::ExpertNode),
 }
 
-impl<G: NodeGenerics> Debug for Kind<G> {
+impl Debug for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Kind::Constant(_) => write!(f, "Constant"),
@@ -115,62 +73,58 @@ impl<G: NodeGenerics> Debug for Kind<G> {
     }
 }
 
-impl<G: NodeGenerics> Kind<G> {
+impl Kind {
     pub(crate) fn debug_ty(&self) -> impl Debug + '_ {
         return KindDebugTy(self);
-        struct KindDebugTy<'a, G: NodeGenerics>(&'a Kind<G>);
-        impl<'a, G: NodeGenerics> Debug for KindDebugTy<'a, G> {
+        struct KindDebugTy<'a>(&'a Kind);
+        impl<'a> Debug for KindDebugTy<'a> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self.0 {
                     Kind::Constant(_) => write!(f, "Constant"),
                     Kind::ArrayFold(af) => af.debug_ty(f),
                     Kind::Var(var) => var.debug_ty(f),
                     Kind::Map(..) => {
-                        write!(f, "Map<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map<(...) -> ...>")
                     }
                     Kind::MapWithOld(..) => {
-                        write!(f, "MapWithOld<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "MapWithOld<(...) -> ...>")
                     }
                     Kind::MapRef(..) => {
-                        write!(f, "MapRef<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "MapRef<(...) -> ...>")
                     }
                     Kind::Map2(..) => {
-                        write!(f, "Map2<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map2<(...) -> ...>")
                     }
                     Kind::Map3(..) => {
-                        write!(f, "Map3<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map3<(...) -> ...>")
                     }
                     Kind::Map4(..) => {
-                        write!(f, "Map4<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map4<(...) -> ...>")
                     }
                     Kind::Map5(..) => {
-                        write!(f, "Map5<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map5<(...) -> ...>")
                     }
                     Kind::Map6(..) => {
-                        write!(f, "Map6<(...) -> {}>", std::any::type_name::<G::R>())
+                        write!(f, "Map6<(...) -> ...>")
                     }
                     Kind::BindLhsChange { .. } => {
                         write!(f, "BindLhsChange",)
                     }
                     Kind::BindMain { .. } => {
-                        write!(
-                            f,
-                            "BindMain<(lhs: dynamic) -> {}>",
-                            std::any::type_name::<G::BindRhs>()
-                        )
+                        write!(f, "BindMain<(lhs: dynamic) -> (dynamic)>",)
                     }
-                    Kind::Expert(_) => write!(f, "Expert<{}>", std::any::type_name::<G::R>()),
+                    Kind::Expert(_) => write!(f, "Expert"),
                 }
             }
         }
     }
 
-    pub(crate) fn constant<T: Value>(value: T) -> Kind<Constant<T>> {
+    pub(crate) fn constant<T: Value>(value: T) -> Kind {
         Kind::Constant(Miny::new_unsized(value))
     }
 }
 
-impl<G: NodeGenerics> Kind<G> {
+impl Kind {
     pub(crate) const BIND_RHS_CHILD_INDEX: i32 = 1;
     pub(crate) fn initial_num_children(&self) -> usize {
         match self {
@@ -188,13 +142,4 @@ impl<G: NodeGenerics> Kind<G> {
             Self::Expert(_) => 0,
         }
     }
-}
-
-pub(crate) struct Constant<T>(std::marker::PhantomData<T>);
-
-impl<T: Value> NodeGenerics for Constant<T> {
-    type R = T;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs, Fold, Update, WithOld, FRef, Recompute, ObsChange }
 }
