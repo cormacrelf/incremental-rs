@@ -84,26 +84,26 @@ where
 {
     a: Peekable<I>,
     b: Peekable<J>,
-    f: F,
+    fcmp: F,
     fused: Option<bool>,
 }
 
-impl<I: Iterator, J: Iterator, F: Fn(&I::Item, &J::Item) -> Ordering> MergeOnceWith<I, J, F> {
-    pub(crate) fn new(a: I, b: J, f: F) -> Self {
+impl<I: Iterator, J: Iterator, FCmp: Fn(&I::Item, &J::Item) -> Ordering> MergeOnceWith<I, J, FCmp> {
+    pub(crate) fn new(a: I, b: J, fcmp: FCmp) -> Self {
         Self {
             a: a.peekable(),
             b: b.peekable(),
-            f,
+            fcmp,
             fused: None,
         }
     }
 }
 
-impl<I, J, F> Iterator for MergeOnceWith<I, J, F>
+impl<I, J, FCmp> Iterator for MergeOnceWith<I, J, FCmp>
 where
     I: Iterator,
     J: Iterator,
-    F: Fn(&I::Item, &J::Item) -> Ordering,
+    FCmp: Fn(&I::Item, &J::Item) -> Ordering,
 {
     type Item = MergeElement<I::Item, J::Item>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -111,7 +111,7 @@ where
             Some(true) => Ordering::Less,
             Some(false) => Ordering::Greater,
             None => match (self.a.peek(), self.b.peek()) {
-                (Some(a), Some(b)) => (self.f)(a, b),
+                (Some(a), Some(b)) => (self.fcmp)(a, b),
                 (Some(_), None) => {
                     self.fused = Some(true);
                     Ordering::Less
@@ -130,18 +130,8 @@ where
                 .next()
                 .zip(self.b.next())
                 .map(|(a, b)| MergeElement::Both(a, b)),
-            Ordering::Less => {
-                if self.fused.is_none() {
-                    drop(self.b.next());
-                }
-                self.a.next().map(MergeElement::Left)
-            }
-            Ordering::Greater => {
-                if self.fused.is_none() {
-                    drop(self.a.next());
-                }
-                self.b.next().map(MergeElement::Right)
-            }
+            Ordering::Less => self.a.next().map(MergeElement::Left),
+            Ordering::Greater => self.b.next().map(MergeElement::Right),
         }
     }
 }
@@ -228,9 +218,39 @@ where
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum MergeElement<L, R> {
+    /// A key in `incr_merge` was present only in the left map
     Left(L),
+    /// A key in `incr_merge` was present only in the right map
     Right(R),
+    /// A key in `incr_merge` was present in both maps
     Both(L, R),
+}
+
+impl<L, R> MergeElement<L, R> {
+    pub fn left(&self) -> Option<&L> {
+        match self {
+            Self::Left(l) | Self::Both(l, _) => Some(l),
+            _ => None,
+        }
+    }
+    pub fn into_left(self) -> Option<L> {
+        match self {
+            Self::Left(l) | Self::Both(l, _) => Some(l),
+            _ => None,
+        }
+    }
+    pub fn right(&self) -> Option<&R> {
+        match self {
+            Self::Right(r) | Self::Both(_, r) => Some(r),
+            _ => None,
+        }
+    }
+    pub fn into_right(self) -> Option<R> {
+        match self {
+            Self::Right(r) | Self::Both(_, r) => Some(r),
+            _ => None,
+        }
+    }
 }
 
 impl<L, R> MergeElement<&L, &R>
@@ -358,6 +378,7 @@ impl<K: Ord, V: PartialEq> SymmetricDiffMapOwned<K, V> for BTreeMap<K, V> {
     }
 }
 
+/// A trait implemented by `BTreeMap` and `im_rc::OrdMap`.
 pub trait GenericMap<K, V> {
     fn remove(&mut self, key: &K) -> Option<V>;
     fn insert(&mut self, key: K, value: V) -> Option<V>;
@@ -366,19 +387,27 @@ pub trait GenericMap<K, V> {
 impl<K: Ord, V> GenericMap<K, V> for BTreeMap<K, V> {
     #[inline]
     fn remove(&mut self, key: &K) -> Option<V> {
-        self.remove(key)
+        BTreeMap::remove(self, key)
     }
 
     #[inline]
     fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.insert(key, value)
+        BTreeMap::insert(self, key, value)
     }
 }
 
-pub trait SymmetricMapMap<K, V> {
+/// A trait implemented by `BTreeMap`, `im_rc::OrdMap` and `Rc<BTreeMap>`.
+///
+/// You frequently want to clone incrementals a lot. Making it so
+pub trait MutableMap<K, V> {
     type UnderlyingMap: GenericMap<K, V>;
-    type OutputMap<V2: PartialEq + Clone>: SymmetricMapMap<K, V2>;
+    /// For Rc<BTreeMap>, this is BTreeMap.
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap;
+}
+
+pub trait SymmetricMapMap<K, V>: MutableMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone>: SymmetricMapMap<K, V2>;
+
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,
@@ -396,16 +425,20 @@ pub trait SymmetricFoldMap<K, V> {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Basically `self.iter().fold(init, f)`.
     fn nonincremental_fold<R>(&self, init: R, f: impl FnMut(R, (&K, &V)) -> R) -> R;
 }
 
-impl<K: Ord + Clone, V: PartialEq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+impl<K: Ord + Clone, V: Clone> MutableMap<K, V> for Rc<BTreeMap<K, V>> {
     type UnderlyingMap = BTreeMap<K, V>;
-    type OutputMap<V2: PartialEq + Clone> = Rc<BTreeMap<K, V2>>;
     #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         Rc::make_mut(self)
     }
+}
+
+impl<K: Ord + Clone, V: PartialEq + Clone> SymmetricMapMap<K, V> for Rc<BTreeMap<K, V>> {
+    type OutputMap<V2: PartialEq + Clone> = Rc<BTreeMap<K, V2>>;
     #[inline]
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
@@ -435,12 +468,16 @@ impl<K: Ord, V: PartialEq> SymmetricFoldMap<K, V> for Rc<BTreeMap<K, V>> {
     }
 }
 
-impl<K: Ord + Clone, V: PartialEq> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+impl<K: Ord, V> MutableMap<K, V> for BTreeMap<K, V> {
     type UnderlyingMap = Self;
-    type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
+    #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         self
     }
+}
+
+impl<K: Ord + Clone, V> SymmetricMapMap<K, V> for BTreeMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone> = BTreeMap<K, V2>;
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
         f: &mut impl FnMut(&K, &V) -> Option<V2>,

@@ -7,11 +7,11 @@ use incremental::incrsan::NotObserver;
 use incremental::{Cutoff, Incr, Value};
 
 use crate::symmetric_fold::{
-    DiffElement, GenericMap, MergeElement, MergeOnceWith, SymmetricDiffMap, SymmetricFoldMap,
-    SymmetricMapMap,
+    DiffElement, GenericMap, MergeElement, MergeOnceWith, MutableMap, SymmetricDiffMap,
+    SymmetricFoldMap, SymmetricMapMap,
 };
 
-use crate::{FilterMapOperator, MapOperator, Operator, WithOldIO};
+use crate::{FilterMapOperator, IncrMap, MapOperator, Operator, UnorderedFold, WithOldIO};
 
 impl<'a, V> DiffElement<&'a V> {
     fn from_diff_item<K>(value: DiffItem<'a, K, V>) -> (&'a K, Self) {
@@ -100,15 +100,17 @@ impl<K: Ord + Clone, V: Clone> GenericMap<K, V> for OrdMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> SymmetricMapMap<K, V> for OrdMap<K, V> {
+impl<K: Ord + Clone, V: Clone> MutableMap<K, V> for OrdMap<K, V> {
     type UnderlyingMap = Self;
-
-    type OutputMap<V2: PartialEq + Clone> = OrdMap<K, V2>;
 
     #[inline]
     fn make_mut(&mut self) -> &mut Self::UnderlyingMap {
         self
     }
+}
+
+impl<K: Ord + Clone, V: Clone> SymmetricMapMap<K, V> for OrdMap<K, V> {
+    type OutputMap<V2: PartialEq + Clone> = OrdMap<K, V2>;
 
     fn filter_map_collect<V2: PartialEq + Clone>(
         &self,
@@ -242,6 +244,13 @@ macro_rules! doc {
     };
 }
 
+/// Used for [IncrOrdMap::incr_partition_mapi]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
 /// Incremental map and filter_map for `im_rc::OrdMap`.
 
 pub trait IncrOrdMap<K: Value + Ord, V: Value> {
@@ -269,11 +278,44 @@ pub trait IncrOrdMap<K: Value + Ord, V: Value> {
         V2: Value,
         F: FnMut(&K, Incr<V>) -> Incr<Option<V2>> + 'static + NotObserver;
 
+    /// Merge two maps incrementally, where
+    ///
+    /// - if a key appears only in self, the predicate runs with [`MergeElement::Left`]
+    /// - if a key appears only in other, the predicate runs with [`MergeElement::Right`]
+    /// - if a key appears in both, the predicate runs with [`MergeElement::Both`]
+    ///
+    /// The predicate is only re-run for added/removed/modified keys in each map, using the
+    /// symmetric diff property.
     fn incr_merge<F, V2, R>(&self, other: &Incr<OrdMap<K, V2>>, f: F) -> Incr<OrdMap<K, R>>
     where
         V2: Value,
         R: Value,
         F: FnMut(&K, MergeElement<&V, &V2>) -> Option<R> + 'static + NotObserver;
+
+    /// Partitions the input such that key-value pairs for which the predicate
+    /// returns [`Either::Left`] are in the left map, and pairs for which it returns
+    /// [`Either::Right`] are in the right map.
+    fn incr_partition_mapi<F, A, B>(&self, f: F) -> Incr<(OrdMap<K, A>, OrdMap<K, B>)>
+    where
+        A: Value,
+        B: Value,
+        F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver;
+
+    /// Partitions the input such that key-value pairs for which the predicate
+    /// returns `true` are in the left map, and pairs for which it returns `false`
+    /// are in the right map.
+    fn incr_partition<F>(&self, mut pred: F) -> Incr<(OrdMap<K, V>, OrdMap<K, V>)>
+    where
+        F: FnMut(&K, &V) -> bool + 'static + NotObserver,
+    {
+        self.incr_partition_mapi(move |k, v| {
+            if pred(k, v) {
+                Either::Left(v.clone())
+            } else {
+                Either::Right(v.clone())
+            }
+        })
+    }
 }
 
 impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {
@@ -352,6 +394,71 @@ impl<K: Value + Ord, V: Value> IncrOrdMap<K, V> for Incr<OrdMap<K, V>> {
             std::any::type_name::<OrdMap<K, R>>()
         )));
         i
+    }
+
+    fn incr_partition_mapi<F, A, B>(&self, f: F) -> Incr<(OrdMap<K, A>, OrdMap<K, B>)>
+    where
+        A: Value,
+        B: Value,
+        F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver,
+    {
+        self.incr_unordered_fold_with((OrdMap::new(), OrdMap::new()), PartitionMapi(f))
+    }
+}
+
+struct PartitionMapi<F>(F);
+
+impl<K: Ord + Value, V: Value, F, A: Value, B: Value>
+    UnorderedFold<OrdMap<K, V>, K, V, (OrdMap<K, A>, OrdMap<K, B>)> for PartitionMapi<F>
+where
+    F: FnMut(&K, &V) -> Either<A, B> + 'static + NotObserver,
+{
+    fn add(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        match (self.0)(key, data) {
+            Either::Left(val) => _ = left.insert(key.clone(), val),
+            Either::Right(val) => _ = right.insert(key.clone(), val),
+        }
+        (left, right)
+    }
+
+    fn remove(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        _data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        left.remove(key);
+        right.remove(key);
+        (left, right)
+    }
+
+    fn update(
+        &mut self,
+        (mut left, mut right): (OrdMap<K, A>, OrdMap<K, B>),
+        key: &K,
+        _old: &V,
+        data: &V,
+    ) -> (OrdMap<K, A>, OrdMap<K, B>) {
+        match (self.0)(key, data) {
+            Either::Left(val) => {
+                left.insert(key.clone(), val);
+                right.remove(key);
+            }
+            Either::Right(val) => {
+                left.remove(key);
+                right.insert(key.clone(), val);
+            }
+        }
+        (left, right)
+    }
+
+    fn revert_to_init_when_empty(&self) -> bool {
+        true
     }
 }
 

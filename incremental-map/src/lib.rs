@@ -1,7 +1,7 @@
 // We have some really complicated types. Most of them can't be typedef'd to be any shorter.
 #![allow(clippy::type_complexity)]
 
-use std::{cell::RefCell, marker::PhantomData};
+use std::marker::PhantomData;
 
 use incremental::incrsan::NotObserver;
 use incremental::{Incr, Value};
@@ -9,11 +9,28 @@ use incremental::{Incr, Value};
 pub mod btree_map;
 #[cfg(feature = "im")]
 pub mod im_rc;
-pub(crate) mod symmetric_fold;
+pub mod symmetric_fold;
 
 pub use self::symmetric_fold::{DiffElement, MergeElement};
 
-use symmetric_fold::{GenericMap, SymmetricFoldMap, SymmetricMapMap};
+pub mod prelude {
+    pub use super::btree_map::IncrBTreeMap;
+    #[cfg(feature = "im")]
+    pub use super::im_rc::Either;
+    #[cfg(feature = "im")]
+    pub use super::im_rc::IncrOrdMap;
+    pub use super::symmetric_fold::DiffElement;
+    pub use super::symmetric_fold::GenericMap;
+    pub use super::symmetric_fold::MergeElement;
+    pub use super::symmetric_fold::MutableMap;
+    pub use super::symmetric_fold::SymmetricFoldMap;
+    pub use super::symmetric_fold::SymmetricMapMap;
+    pub use super::ClosureFold;
+    pub use super::IncrMap;
+    pub use super::UnorderedFold;
+}
+
+use symmetric_fold::{GenericMap, MutableMap, SymmetricFoldMap, SymmetricMapMap};
 
 trait Operator<K, V, V2> {
     type Output;
@@ -62,6 +79,7 @@ where
     }
 }
 
+/// Internal -- variations on map_with_old
 pub(crate) trait WithOldIO<T> {
     fn with_old_input_output<R, F>(&self, f: F) -> Incr<R>
     where
@@ -81,9 +99,9 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
         R: Value,
         F: FnMut(Option<(T, R)>, &T) -> (R, bool) + 'static + NotObserver,
     {
-        let old_input: RefCell<Option<T>> = RefCell::new(None);
+        let mut old_input: Option<T> = None;
         self.map_with_old(move |old_opt, a| {
-            let mut oi = old_input.borrow_mut();
+            let oi = &mut old_input;
             let (b, didchange) = f(old_opt.and_then(|x| oi.take().map(|oi| (oi, x))), a);
             *oi = Some(a.clone());
             (b, didchange)
@@ -96,58 +114,76 @@ impl<T: Value> WithOldIO<T> for Incr<T> {
         T2: Value,
         F: FnMut(Option<(T, T2, R)>, &T, &T2) -> (R, bool) + 'static + NotObserver,
     {
-        let old_input: RefCell<Option<(T, T2)>> = RefCell::new(None);
+        let mut old_input: Option<(T, T2)> = None;
         // TODO: too much cloning
-        self.map2(other, |a, b| (a.clone(), b.clone()))
-            .map_with_old(move |old_opt, (a, b)| {
-                let mut oi = old_input.borrow_mut();
-                let (r, didchange) = f(
-                    old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
-                    a,
-                    b,
-                );
-                *oi = Some((a.clone(), b.clone()));
-                (r, didchange)
-            })
+        self.zip(other).map_with_old(move |old_opt, (a, b)| {
+            let oi = &mut old_input;
+            let (r, didchange) = f(
+                old_opt.and_then(|x| oi.take().map(|(oia, oib)| (oia, oib, x))),
+                a,
+                b,
+            );
+            *oi = Some((a.clone(), b.clone()));
+            (r, didchange)
+        })
     }
 }
-
-pub trait Symmetric<T> {
-    fn incr_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+/// Incremental maps, filter maps and folds on incremental key-value containers (maps).
+///
+/// Common functions available on `Incr<BTreeMap>` etc, with blanket
+/// implementation covering `M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>`.
+///
+/// So to get a lot of functionality for a new map type, you don't have to
+/// implement much. Just those two traits, and then you get all these methods
+/// for free.
+///
+/// **NOTE**: there are additional methods available on [crate::prelude::IncrBTreeMap] and
+/// [crate::prelude::IncrOrdMap] (with the `im` feature).
+///
+pub trait IncrMap<M> {
+    fn incr_map<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_map<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_mapi<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
 
-    fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_mapi<F, K, V, V2>(&self, f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value;
+        M::OutputMap<V2>: Value;
+
+    fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, fold: F) -> Incr<R>
+    where
+        M: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        F: UnorderedFold<M, K, V, R> + 'static + NotObserver;
 
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
@@ -157,87 +193,104 @@ pub trait Symmetric<T> {
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
         FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver;
+
+    fn incr_unordered_fold_update<FAdd, FRemove, FUpdate, K, V, R>(
+        &self,
+        init: R,
+        add: FAdd,
+        remove: FRemove,
+        update: FUpdate,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<R>
+    where
+        M: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver;
 }
 
-impl<T: Value> Symmetric<T> for Incr<T> {
+impl<M: Value> IncrMap<M> for Incr<M> {
     #[inline]
-    fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_map<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| Some(f(v)));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_map -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
     #[inline]
-    fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_map<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |_k, v| f(v));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_map -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
     #[inline]
-    fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> V2 + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.incr_filter_mapi(move |k, v| Some(f(k, v)));
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_mapi -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
 
-    fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<T::OutputMap<V2>>
+    fn incr_filter_mapi<F, K, V, V2>(&self, mut f: F) -> Incr<M::OutputMap<V2>>
     where
-        T: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
+        M: SymmetricFoldMap<K, V> + SymmetricMapMap<K, V>,
         K: Value + Ord,
         V: Value,
         V2: Value,
         F: FnMut(&K, &V) -> Option<V2> + 'static + NotObserver,
-        T::OutputMap<V2>: Value,
+        M::OutputMap<V2>: Value,
     {
         let i = self.with_old_input_output(move |old, input| match (old, input.len()) {
             (_, 0) | (None, _) => (input.filter_map_collect(&mut f), true),
             (Some((old_in, mut old_out)), _) => {
                 let mut did_change = false;
                 let old_out_mut = old_out.make_mut();
-                let _: &mut <T::OutputMap<V2> as SymmetricMapMap<K, V2>>::UnderlyingMap = old_in
+                let _: &mut <M::OutputMap<V2> as MutableMap<K, V2>>::UnderlyingMap = old_in
                     .symmetric_fold(input, old_out_mut, |out, (key, change)| {
                         did_change = true;
                         match change {
@@ -267,7 +320,7 @@ impl<T: Value> Symmetric<T> for Incr<T> {
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
             "incr_filter_mapi -> {}",
-            std::any::type_name::<T::OutputMap<V2>>()
+            std::any::type_name::<M::OutputMap<V2>>()
         )));
         i
     }
@@ -275,48 +328,360 @@ impl<T: Value> Symmetric<T> for Incr<T> {
     fn incr_unordered_fold<FAdd, FRemove, K, V, R>(
         &self,
         init: R,
-        mut add: FAdd,
-        mut remove: FRemove,
+        add: FAdd,
+        remove: FRemove,
         revert_to_init_when_empty: bool,
     ) -> Incr<R>
     where
-        T: SymmetricFoldMap<K, V>,
+        M: SymmetricFoldMap<K, V>,
         K: Value + Ord,
         V: Value,
         R: Value,
         FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
         FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
     {
+        self.incr_unordered_fold_with(
+            init,
+            PlainUnorderedFold {
+                add,
+                remove,
+                revert_to_init_when_empty,
+                phantom: PhantomData,
+            },
+        )
+    }
+
+    fn incr_unordered_fold_update<FAdd, FRemove, FUpdate, K, V, R>(
+        &self,
+        init: R,
+        add: FAdd,
+        remove: FRemove,
+        update: FUpdate,
+        revert_to_init_when_empty: bool,
+    ) -> Incr<R>
+    where
+        M: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+        FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver,
+    {
+        let i = self.incr_unordered_fold_with(
+            init,
+            UpdateUnorderedFold {
+                add,
+                remove,
+                update,
+                revert_to_init_when_empty,
+                phantom: PhantomData,
+            },
+        );
+        #[cfg(debug_assertions)]
+        i.set_graphviz_user_data(Box::new(format!(
+            "incr_unordered_fold_update -> {}",
+            std::any::type_name::<R>()
+        )));
+        i
+    }
+
+    fn incr_unordered_fold_with<K, V, R, F>(&self, init: R, mut fold: F) -> Incr<R>
+    where
+        M: SymmetricFoldMap<K, V>,
+        K: Value + Ord,
+        V: Value,
+        R: Value,
+        F: UnorderedFold<M, K, V, R> + 'static + NotObserver,
+    {
         let i = self.with_old_input_output(move |old, new_in| match old {
             None => {
-                let newmap = new_in.nonincremental_fold(init.clone(), |acc, (k, v)| add(acc, k, v));
+                let newmap = fold.initial_fold(init.clone(), new_in);
                 (newmap, true)
             }
             Some((old_in, old_out)) => {
-                if revert_to_init_when_empty && new_in.is_empty() {
+                if fold.revert_to_init_when_empty() && new_in.is_empty() {
                     return (init.clone(), !old_in.is_empty());
                 }
                 let mut did_change = false;
-                let folded: R =
-                    old_in.symmetric_fold(new_in, old_out, |mut acc, (key, difference)| {
-                        did_change = true;
-                        match difference {
-                            DiffElement::Left(value) => remove(acc, key, value),
-                            DiffElement::Right(value) => add(acc, key, value),
-                            DiffElement::Unequal(lv, rv) => {
-                                acc = remove(acc, key, lv);
-                                add(acc, key, rv)
-                            }
-                        }
-                    });
+                let folded: R = old_in.symmetric_fold(new_in, old_out, |acc, (key, difference)| {
+                    did_change = true;
+                    match difference {
+                        DiffElement::Left(value) => fold.remove(acc, key, value),
+                        DiffElement::Right(value) => fold.add(acc, key, value),
+                        DiffElement::Unequal(lv, rv) => fold.update(acc, key, lv, rv),
+                    }
+                });
                 (folded, did_change)
             }
         });
         #[cfg(debug_assertions)]
         i.set_graphviz_user_data(Box::new(format!(
-            "incr_unordered_fold -> {}",
+            "incr_unordered_fold_with -> {}",
             std::any::type_name::<R>()
         )));
         i
+    }
+}
+
+/// Defines an unordered fold for a given map, key, value and output type.
+///
+/// Used with [IncrMap::incr_unordered_fold_with].
+///
+/// Implementations get &mut access to self. So you can store things in
+/// the type that implements this.
+pub trait UnorderedFold<M, K, V, R>
+where
+    M: SymmetricFoldMap<K, V>,
+    K: Value + Ord,
+    V: Value,
+{
+    /// How to add a key/value pair to the fold value
+    ///
+    /// E.g. `|acc, _, value| acc + value` for a signed integer.
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R;
+
+    /// How to remove a key/value pair from the fold value
+    ///
+    /// E.g. `|acc, _, value| acc - value` for a signed integer.
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R;
+
+    /// Default implementation is `self.add(self.remove(acc, key, old), key, new)`
+    fn update(&mut self, mut acc: R, key: &K, old: &V, new: &V) -> R {
+        acc = self.remove(acc, key, old);
+        self.add(acc, key, new)
+    }
+
+    /// If we have emptied the map, can we just reset to the initial value?
+    /// Or do we have to call remove() on everything that was removed?
+    fn revert_to_init_when_empty(&self) -> bool;
+
+    /// Optimize the initial fold
+    fn initial_fold(&mut self, acc: R, input: &M) -> R {
+        input.nonincremental_fold(acc, |acc, (k, v)| self.add(acc, k, v))
+    }
+}
+
+struct PlainUnorderedFold<M, K, V, R, FAdd, FRemove> {
+    add: FAdd,
+    remove: FRemove,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(M, K, V, R)>,
+}
+
+impl<M, K: Value + Ord, V: Value, R: Value, FAdd, FRemove> UnorderedFold<M, K, V, R>
+    for PlainUnorderedFold<M, K, V, R, FAdd, FRemove>
+where
+    M: SymmetricFoldMap<K, V>,
+    FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+    FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+}
+
+struct UpdateUnorderedFold<M, K, V, R, FAdd, FRemove, FUpdate> {
+    add: FAdd,
+    remove: FRemove,
+    update: FUpdate,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(M, K, V, R)>,
+}
+
+impl<M, K: Value + Ord, V: Value, R: Value, FAdd, FRemove, FUpdate> UnorderedFold<M, K, V, R>
+    for UpdateUnorderedFold<M, K, V, R, FAdd, FRemove, FUpdate>
+where
+    M: SymmetricFoldMap<K, V>,
+    FAdd: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+    FUpdate: FnMut(R, &K, &V, &V) -> R + 'static + NotObserver,
+    FRemove: FnMut(R, &K, &V) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
+        (self.update)(acc, key, old, new)
+    }
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+}
+
+/// An implementation of [UnorderedFold] using a builder pattern and closures.
+pub struct ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> {
+    add: FAdd,
+    remove: FRemove,
+    update: Option<FUpdate>,
+    initial: Option<FInitial>,
+    revert_to_init_when_empty: bool,
+    phantom: PhantomData<(M, K, V, R)>,
+}
+
+impl ClosureFold<(), (), (), (), (), (), (), ()> {
+    pub fn new<M, K, V, R>(
+    ) -> ClosureFold<M, K, V, R, (), (), fn(R, &K, &V, &V) -> R, fn(R, &M) -> R>
+where {
+        ClosureFold::<M, K, V, R, _, _, _, _> {
+            add: (),
+            remove: (),
+            update: None,
+            initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn new_add_remove<M, K, V, R, FAdd, FRemove>(
+        add: FAdd,
+        remove: FRemove,
+    ) -> ClosureFold<M, K, V, R, FAdd, FRemove, fn(R, &K, &V, &V) -> R, fn(R, &M) -> R>
+    where
+        FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+        FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add,
+            remove,
+            update: None,
+            initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+    ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_>
+{
+    pub fn add<FAdd>(
+        self,
+        add: FAdd,
+    ) -> ClosureFold<M, K, V, R, FAdd, FRemove_, FUpdate_, FInitial_>
+    where
+        FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add,
+            remove: self.remove,
+            update: None,
+            initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+    pub fn remove<FRemove>(
+        self,
+        remove: FRemove,
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove, FUpdate_, FInitial_>
+    where
+        FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove,
+            update: None,
+            initial: None,
+            revert_to_init_when_empty: false,
+            phantom: PhantomData,
+        }
+    }
+    pub fn update<FUpdate>(
+        self,
+        update: FUpdate,
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate, FInitial_>
+    where
+        FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: Some(update),
+            initial: self.initial,
+            revert_to_init_when_empty: self.revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+
+    pub fn initial<FInitial>(
+        self,
+        initial: FInitial,
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial>
+    where
+        FInitial: for<'a> FnMut(R, &'a M) -> R + 'static + NotObserver,
+    {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: self.update,
+            initial: Some(initial),
+            revert_to_init_when_empty: self.revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+    pub fn revert_to_init_when_empty(
+        self,
+        revert_to_init_when_empty: bool,
+    ) -> ClosureFold<M, K, V, R, FAdd_, FRemove_, FUpdate_, FInitial_> {
+        ClosureFold {
+            add: self.add,
+            remove: self.remove,
+            update: self.update,
+            initial: self.initial,
+            revert_to_init_when_empty,
+            phantom: self.phantom,
+        }
+    }
+}
+
+impl<M, K, V, R, FAdd, FRemove, FUpdate, FInitial> UnorderedFold<M, K, V, R>
+    for ClosureFold<M, K, V, R, FAdd, FRemove, FUpdate, FInitial>
+where
+    M: SymmetricFoldMap<K, V>,
+    K: Value + Ord,
+    V: Value,
+    R: Value,
+    FAdd: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    FRemove: for<'a> FnMut(R, &'a K, &'a V) -> R + 'static + NotObserver,
+    FUpdate: for<'a> FnMut(R, &'a K, &'a V, &'a V) -> R + 'static + NotObserver,
+    FInitial: for<'a> FnMut(R, &'a M) -> R + 'static + NotObserver,
+{
+    fn add(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.add)(acc, key, value)
+    }
+
+    fn remove(&mut self, acc: R, key: &K, value: &V) -> R {
+        (self.remove)(acc, key, value)
+    }
+
+    fn update(&mut self, acc: R, key: &K, old: &V, new: &V) -> R {
+        if let Some(closure) = &mut self.update {
+            closure(acc, key, old, new)
+        } else {
+            let r = self.remove(acc, key, old);
+            let r = self.add(r, key, new);
+            r
+        }
+    }
+
+    fn revert_to_init_when_empty(&self) -> bool {
+        self.revert_to_init_when_empty
+    }
+
+    fn initial_fold(&mut self, init: R, input: &M) -> R {
+        if let Some(closure) = &mut self.initial {
+            closure(init, input)
+        } else {
+            input.nonincremental_fold(init, |acc, (k, v)| self.add(acc, k, v))
+        }
     }
 }
