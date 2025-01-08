@@ -6,6 +6,8 @@
 #![cfg_attr(feature = "nightly-incrsan", feature(negative_impls))]
 #![cfg_attr(feature = "nightly-incrsan", feature(auto_traits))]
 
+mod boxes;
+
 mod adjust_heights_heap;
 mod cutoff;
 mod incr;
@@ -22,6 +24,7 @@ mod syntax;
 mod var;
 
 mod public;
+use boxes::SmallBox;
 pub use public::*;
 
 use fmt::Debug;
@@ -31,22 +34,41 @@ use std::fmt;
 use std::rc::{Rc, Weak};
 
 use self::incrsan::NotObserver;
-use self::node::ErasedNode;
 
 /// Trait alias for `Debug + Clone + 'static`
-pub trait Value: Debug + Clone + PartialEq + NotObserver + 'static {
+pub trait Value: Debug + Clone + PartialEq + NotObserver + 'static + Any {
     fn as_any(&self) -> &dyn Any;
 }
 impl<T> Value for T
 where
-    T: Debug + Clone + PartialEq + NotObserver + 'static,
+    T: Debug + Clone + PartialEq + NotObserver + 'static + Any,
 {
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
-pub(crate) type NodeRef = Rc<dyn ErasedNode>;
-pub(crate) type WeakNode = Weak<dyn ErasedNode>;
+
+/// Trait alias for `Debug + 'static + Any`. Used in trait objects, instead of
+/// `dyn ValueInternal`, because [Value] cannot be made into a trait object
+/// (Clone and PartialEq include Self types).
+pub(crate) trait ValueInternal: Debug + NotObserver + 'static + Any {
+    fn as_any(&self) -> &dyn Any;
+    fn clone_any(&self) -> SmallBox<dyn ValueInternal>;
+}
+impl<T> ValueInternal for T
+where
+    T: Debug + Clone + PartialEq + NotObserver + 'static + Any,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn clone_any(&self) -> SmallBox<dyn ValueInternal> {
+        boxes::new_unsized!(self.clone())
+    }
+}
+
+pub(crate) type NodeRef = Rc<node::Node>;
+pub(crate) type WeakNode = Weak<node::Node>;
 
 pub trait Invariant {
     fn invariant(&self);

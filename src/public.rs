@@ -15,11 +15,13 @@ pub use super::node_update::NodeUpdate;
 pub use super::Value;
 
 use super::internal_observer::{ErasedObserver, InternalObserver};
+use super::node::ErasedNode;
 use super::node::NodeId;
 use super::node_update::OnUpdateHandler;
 use super::scope;
 use super::state::State;
 use super::var::{ErasedVariable, Var as InternalVar};
+use crate::boxes::new_unsized;
 use crate::incrsan::NotObserver;
 
 #[derive(Clone)]
@@ -94,7 +96,7 @@ impl<T: Value> Observer<T> {
         &self,
         mut on_update: impl FnMut(Update<&T>) + 'static + NotObserver,
     ) -> Result<SubscriptionToken, ObserverError> {
-        let handler_fn = Box::new(move |node_update: NodeUpdate<&T>| {
+        let handler_fn = new_unsized!(move |node_update: NodeUpdate<&T>| {
             let update = match node_update {
                 NodeUpdate::Necessary(t) => Update::Initialised(t),
                 NodeUpdate::Changed(t) => Update::Changed(t),

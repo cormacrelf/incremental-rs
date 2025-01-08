@@ -1,13 +1,15 @@
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     cell::{Cell, RefCell},
-    marker::PhantomData,
     rc::Rc,
 };
 
-use super::NodeGenerics;
-use crate::incrsan::NotObserver;
-use crate::node::ErasedIncremental;
+use crate::node::Node;
+use crate::{
+    boxes::{new_unsized, SmallBox},
+    incrsan::not_observer_boxed_trait,
+};
+use crate::{incrsan::NotObserver, ValueInternal};
 use crate::{CellIncrement, Incr, NodeRef, Value};
 
 pub(crate) trait ExpertEdge: Any + NotObserver {
@@ -15,19 +17,14 @@ pub(crate) trait ExpertEdge: Any + NotObserver {
     fn on_change(&self);
     fn packed(&self) -> NodeRef;
     fn index_cell(&self) -> &Cell<Option<i32>>;
-    fn erased_input(&self) -> &dyn ErasedIncremental;
-    fn edge_input_type_id(&self) -> TypeId;
+    fn erased_input(&self) -> &Node;
 }
 
-pub(crate) trait IsEdge: ExpertEdge + Any {}
-impl<T> IsEdge for T where T: ExpertEdge + Any {}
+pub(crate) type PackedEdge = Rc<dyn ExpertEdge>;
 
-pub(crate) type PackedEdge = Rc<dyn IsEdge>;
-
-#[cfg(not(feature = "nightly-incrsan"))]
-type BoxedOnChange<T> = Box<dyn FnMut(&T)>;
-#[cfg(feature = "nightly-incrsan")]
-type BoxedOnChange<T> = Box<dyn FnMut(&T) + NotObserver>;
+not_observer_boxed_trait! {
+    type BoxedOnChange<T> = Box<dyn (FnMut(&T))>;
+}
 
 pub(crate) struct Edge<T> {
     pub child: Incr<T>,
@@ -65,26 +62,30 @@ impl<T: Value> ExpertEdge for Edge<T> {
         &self.index
     }
 
-    fn erased_input(&self) -> &dyn ErasedIncremental {
-        self.child.node.erased_input()
-    }
-
-    fn edge_input_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
+    fn erased_input(&self) -> &Node {
+        self.child.node.erased()
     }
 }
 
-pub(crate) struct ExpertNode<T, F, ObsChange> {
-    pub _f: PhantomData<T>,
-    pub recompute: RefCell<Option<F>>,
-    pub on_observability_change: RefCell<Option<ObsChange>>,
+pub(crate) trait ObservabilityChange: FnMut(bool) + 'static + NotObserver {}
+impl<T> ObservabilityChange for T where T: FnMut(bool) + 'static + NotObserver {}
+
+pub(crate) trait Recompute:
+    FnMut() -> SmallBox<dyn ValueInternal> + 'static + NotObserver
+{
+}
+impl<T> Recompute for T where T: FnMut() -> SmallBox<dyn ValueInternal> + 'static + NotObserver {}
+
+pub(crate) struct ExpertNode {
+    pub recompute: RefCell<Option<Box<dyn Recompute>>>,
+    pub on_observability_change: RefCell<Option<Box<dyn ObservabilityChange>>>,
     pub children: RefCell<Vec<PackedEdge>>,
     pub force_stale: Cell<bool>,
     pub num_invalid_children: Cell<i32>,
     pub will_fire_all_callbacks: Cell<bool>,
 }
 
-impl<T, F, O> Drop for ExpertNode<T, F, O> {
+impl Drop for ExpertNode {
     fn drop(&mut self) {
         self.children.take();
         self.recompute.take();
@@ -97,16 +98,14 @@ pub enum MakeStale {
     Ok,
 }
 
-impl<T, F, ObsChange> ExpertNode<T, F, ObsChange>
-where
-    F: FnMut() -> T,
-    ObsChange: FnMut(bool),
-{
-    pub(crate) fn new_obs(recompute: F, on_observability_change: ObsChange) -> Self {
+impl ExpertNode {
+    pub(crate) fn new_obs<T: Value>(
+        mut recompute: impl FnMut() -> T + 'static + NotObserver,
+        on_observability_change: impl ObservabilityChange,
+    ) -> Self {
         Self {
-            _f: PhantomData,
-            recompute: Some(recompute).into(),
-            on_observability_change: Some(on_observability_change).into(),
+            recompute: RefCell::new(Some(Box::new(move || new_unsized!(recompute())))),
+            on_observability_change: RefCell::new(Some(Box::new(on_observability_change))),
             children: vec![].into(),
             force_stale: false.into(),
             num_invalid_children: 0.into(),
@@ -118,16 +117,6 @@ where
     }
     pub(crate) fn decr_invalid_children(&self) {
         self.num_invalid_children.increment();
-    }
-
-    pub(crate) fn expert_input_type_id(&self, index_of_child_in_parent: i32) -> TypeId {
-        let borrow_span = tracing::debug_span!("expert.children.borrow() in expert_input_type_id");
-        borrow_span.in_scope(|| {
-            let children = self.children.borrow();
-            assert!(index_of_child_in_parent >= 0);
-            let edge = &children[index_of_child_in_parent as usize];
-            edge.edge_input_type_id()
-        })
     }
 
     pub(crate) fn make_stale(&self) -> MakeStale {
@@ -233,28 +222,10 @@ where
 pub(crate) struct Invalid;
 
 use core::fmt::Debug;
-impl<T, R, O> Debug for ExpertNode<T, R, O>
-where
-    T: Debug,
-{
+impl Debug for ExpertNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpertNode").finish()
     }
-}
-
-impl<T, FRecompute, FObsChange> NodeGenerics for ExpertNode<T, FRecompute, FObsChange>
-where
-    T: Value,
-    FRecompute: FnMut() -> T + 'static + NotObserver,
-    FObsChange: FnMut(bool) + 'static + NotObserver,
-{
-    type R = T;
-    type Recompute = FRecompute;
-    type ObsChange = FObsChange;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, WithOld, FRef }
 }
 
 pub mod public {

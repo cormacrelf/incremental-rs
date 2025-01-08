@@ -2,6 +2,7 @@ use crate::Invariant;
 
 use super::recompute_heap::RecomputeHeap;
 use super::NodeRef;
+use crate::node::ErasedNode;
 use std::collections::VecDeque;
 
 type Queue = VecDeque<NodeRef>;

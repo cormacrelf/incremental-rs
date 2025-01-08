@@ -4,11 +4,12 @@ use std::hash::Hash;
 use std::rc::{Rc, Weak};
 
 use super::kind::{self, Kind};
-use super::node::{Incremental, Input, Node, NodeId};
+use super::node::{ErasedNode, Incremental, Input, Node, NodeId};
 use super::scope::{BindScope, Scope};
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
 use crate::node_update::OnUpdateHandler;
-use crate::{Cutoff, NodeUpdate, Observer, Value, WeakState};
+use crate::{Cutoff, NodeRef, NodeUpdate, Observer, Value, ValueInternal, WeakState};
 
 #[derive(Debug)]
 #[must_use = "Incr<T> must be observed (.observe()) to be part of a computation."]
@@ -126,21 +127,6 @@ impl<T: Value> Incr<T> {
         })
     }
 
-    pub fn map<R: Value, F: FnMut(&T) -> R + 'static + NotObserver>(&self, f: F) -> Incr<R> {
-        let mapper = kind::MapNode {
-            input: self.clone().node,
-            mapper: f.into(),
-        };
-        let state = self.node.state();
-        let node = Node::<kind::MapNode<F, T, R>>::create_rc(
-            state.weak(),
-            state.current_scope.borrow().clone(),
-            Kind::Map(mapper),
-        );
-
-        Incr { node }
-    }
-
     /// Turn two incrementals into a tuple incremental.
     /// Aka `both` in OCaml. This is named `zip` to match [Option::zip] and [Iterator::zip].
     pub fn zip<T2: Value>(&self, other: &Incr<T2>) -> Incr<(T, T2)> {
@@ -157,13 +143,16 @@ impl<T: Value> Incr<T> {
         F: for<'a> Fn(&'a T) -> &'a R + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapRefNode<F, T, R>>::create_rc(
+        let node = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
             Kind::MapRef(kind::MapRefNode {
-                input: self.node.clone(),
+                input: self.node.packed(),
                 did_change: true.into(),
-                mapper: f,
+                mapper: Box::new(move |x: &dyn ValueInternal| {
+                    let x = x.as_any().downcast_ref::<T>().unwrap();
+                    f(x) as &dyn ValueInternal
+                }),
             }),
         );
         Incr { node }
@@ -178,17 +167,20 @@ impl<T: Value> Incr<T> {
         &self,
         mut cyclic: impl FnMut(WeakIncr<R>, &T) -> R + 'static + NotObserver,
     ) -> Incr<R> {
-        let node = Rc::<Node<_>>::new_cyclic(move |node_weak| {
+        let node = Rc::<Node>::new_cyclic(move |node_weak| {
             let f = {
                 let weak = WeakIncr(node_weak.clone());
-                move |t: &T| cyclic(weak.clone(), t)
+                move |t: &dyn ValueInternal| -> SmallBox<dyn ValueInternal> {
+                    let t = t.as_any().downcast_ref::<T>().unwrap();
+                    new_unsized!(cyclic(weak.clone(), t))
+                }
             };
             let mapper = kind::MapNode {
-                input: self.clone().node,
-                mapper: f.into(),
+                input: self.node.packed(),
+                mapper: RefCell::new(new_unsized!(f)),
             };
             let state = self.node.state();
-            let mut node = Node::<kind::MapNode<_, T, R>>::create(
+            let mut node = Node::create::<R>(
                 state.weak(),
                 state.current_scope.borrow().clone(),
                 Kind::Map(mapper),
@@ -212,36 +204,28 @@ impl<T: Value> Incr<T> {
     /// (without relying on PartialEq, for example) whether the
     /// incremental node should propagate its changes.
     ///
-    pub fn map_with_old<R, F>(&self, f: F) -> Incr<R>
+    pub fn map_with_old<R, F>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
         F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
     {
         let state = self.node.state();
-        let node = Node::<kind::MapWithOld<F, T, R>>::create_rc(
+        let node = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
-            Kind::MapWithOld(kind::MapWithOld::new(self.node.clone(), f)),
-        );
-        Incr { node }
-    }
-
-    pub fn map2<F, T2, R>(&self, other: &Incr<T2>, f: F) -> Incr<R>
-    where
-        T2: Value,
-        R: Value,
-        F: FnMut(&T, &T2) -> R + 'static + NotObserver,
-    {
-        let mapper = kind::Map2Node {
-            one: self.clone().node,
-            two: other.clone().node,
-            mapper: f.into(),
-        };
-        let state = self.node.state();
-        let node = Node::<kind::Map2Node<F, T, T2, R>>::create_rc(
-            state.weak(),
-            state.current_scope.borrow().clone(),
-            Kind::Map2(mapper),
+            Kind::MapWithOld(kind::MapWithOld {
+                input: self.node.packed(),
+                mapper: RefCell::new(new_unsized!(
+                    move |opt_r: Option<SmallBox<dyn ValueInternal>>, x: &dyn ValueInternal| {
+                        let opt_r = opt_r.and_then(|x: SmallBox<dyn ValueInternal>| {
+                            crate::boxes::downcast_inner::<R>(x)
+                        });
+                        let x = x.as_any().downcast_ref::<T>().unwrap();
+                        let (r, b) = f(opt_r, x);
+                        (new_unsized!(r), b)
+                    },
+                )),
+            }),
         );
         Incr { node }
     }
@@ -257,51 +241,48 @@ impl<T: Value> Incr<T> {
         self.bind(move |value: &T| f(&cloned, value))
     }
 
-    pub fn bind<F, R>(&self, f: F) -> Incr<R>
+    pub fn bind<F, R>(&self, mut f: F) -> Incr<R>
     where
         R: Value,
         F: FnMut(&T) -> Incr<R> + 'static + NotObserver,
     {
         let state = self.node.state();
         let bind = Rc::new_cyclic(|weak| kind::BindNode {
-            lhs: self.clone().node,
-            mapper: f.into(),
+            lhs: self.node.packed(),
+            mapper: RefCell::new(new_unsized!(
+                move |any_ref: &dyn ValueInternal| -> NodeRef {
+                    let downcast = any_ref
+                        .as_any()
+                        .downcast_ref::<T>()
+                        .expect("Type mismatch in bind function");
+                    f(downcast).node.packed()
+                },
+            )),
             rhs: RefCell::new(None),
             rhs_scope: Scope::Bind(weak.clone() as Weak<dyn BindScope>).into(),
             all_nodes_created_on_rhs: RefCell::new(vec![]),
-            lhs_change: Weak::new().into(),
+            lhs_change: RefCell::new(Weak::<Node>::new()),
             id_lhs_change: Cell::new(NodeId(0)),
-            main: Weak::new().into(),
+            main: RefCell::new(Weak::<Node>::new()),
         });
-        let lhs_change = Node::<kind::BindLhsChangeGen<F, T, R>>::create_rc(
+        let lhs_change = Node::create_rc::<()>(
             state.weak(),
             state.current_scope(),
-            Kind::BindLhsChange {
-                casts: kind::BindLhsId {
-                    input_lhs_i2: refl::refl(),
-                    r_unit: refl::refl(),
-                },
-                bind: bind.clone(),
-            },
+            Kind::BindLhsChange { bind: bind.clone() },
         );
-        let main = Node::<kind::BindNodeMainGen<F, T, R>>::create_rc(
+        let main = Node::create_rc::<R>(
             state.weak(),
             state.current_scope(),
             Kind::BindMain {
-                casts: kind::BindMainId {
-                    rhs_r: refl::refl(),
-                    input_rhs_i1: refl::refl(),
-                    input_lhs_i2: refl::refl(),
-                },
                 bind: bind.clone(),
-                lhs_change: lhs_change.clone(),
+                lhs_change: lhs_change.packed(),
             },
         );
         {
             let mut bind_lhs_change = bind.lhs_change.borrow_mut();
             let mut bind_main = bind.main.borrow_mut();
-            *bind_lhs_change = Rc::downgrade(&lhs_change);
-            *bind_main = Rc::downgrade(&main);
+            *bind_lhs_change = lhs_change.weak();
+            *bind_main = main.weak();
             bind.id_lhs_change.set(lhs_change.id);
         }
 
@@ -309,7 +290,7 @@ impl<T: Value> Incr<T> {
         recomputed.  This is necessary to handle cases where [f] returns an existing stable
         node, in which case the [lhs_change] would be the only thing causing [main] to be
         stale. */
-        lhs_change.set_cutoff(Cutoff::Never);
+        Incremental::<()>::set_cutoff(&*lhs_change, Cutoff::Never);
         Incr { node: main }
     }
 
@@ -419,7 +400,7 @@ impl<T: Value> Incr<T> {
     pub fn on_update(&self, f: impl FnMut(NodeUpdate<&T>) + 'static + NotObserver) {
         let state = self.node.state();
         let now = state.stabilisation_num.get();
-        let handler = OnUpdateHandler::new(now, Box::new(f));
+        let handler = OnUpdateHandler::new(now, new_unsized!(f));
         self.node.add_on_update_handler(handler);
     }
 }

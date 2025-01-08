@@ -2,13 +2,15 @@ use super::adjust_heights_heap::AdjustHeightsHeap;
 use super::kind;
 use super::node_update::NodeUpdateDelayed;
 use super::{CellIncrement, NodeRef, Value, WeakNode};
+use crate::boxes::new_unsized;
 use crate::incrsan::NotObserver;
+use crate::node::ErasedNode;
 use crate::{SubscriptionToken, WeakMap};
 
 use super::internal_observer::{
     ErasedObserver, InternalObserver, ObserverId, ObserverState, StrongObserver, WeakObserver,
 };
-use super::kind::{Constant, Kind};
+use super::kind::Kind;
 use super::node::{Node, NodeId};
 use super::recompute_heap::RecomputeHeap;
 use super::scope::Scope;
@@ -160,11 +162,7 @@ impl State {
         //       - make recompute a noop instead of a clone
         //       - set recomputed_at/changed_at to avoid queueing for recompute at all?
         //       to save the single clone that constant currently does.
-        let node = Node::<Constant<T>>::create_rc(
-            self.weak(),
-            self.current_scope(),
-            Kind::Constant(value),
-        );
+        let node = Node::create_rc::<T>(self.weak(), self.current_scope(), Kind::constant(value));
         Incr { node }
     }
 
@@ -180,14 +178,14 @@ impl State {
         if vec.is_empty() {
             return self.constant(init);
         }
-        let node = Node::<kind::ArrayFold<F, T, R>>::create_rc(
+        let node = Node::create_rc::<R>(
             self.weak(),
             self.current_scope(),
-            Kind::ArrayFold(kind::ArrayFold {
+            Kind::ArrayFold(new_unsized!(kind::ArrayFold {
                 init,
-                fold: f.into(),
+                fold: RefCell::new(f),
                 children: vec,
-            }),
+            })),
         );
         Incr { node }
     }
@@ -205,11 +203,7 @@ impl State {
             node: RefCell::new(None),
             value_set_during_stabilisation: RefCell::new(None),
         });
-        let node = Node::<super::var::VarGenerics<T>>::create_rc(
-            self.weak(),
-            scope,
-            Kind::Var(var.clone()),
-        );
+        let node = Node::create_rc::<T>(self.weak(), scope, Kind::Var(var.clone()));
         {
             let mut slot = var.node.borrow_mut();
             var.node_id.set(node.id);

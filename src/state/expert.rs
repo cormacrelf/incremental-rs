@@ -1,8 +1,9 @@
 use super::*;
-use crate::kind;
+use crate::kind::{self, expert::ExpertEdge};
+use crate::node::ErasedNode;
 use crate::node::Incremental;
 use crate::WeakIncr;
-use kind::expert::{IsEdge, PackedEdge};
+use kind::expert::PackedEdge;
 
 pub(crate) fn create<T, F, O>(state: &State, recompute: F, on_observability_change: O) -> Incr<T>
 where
@@ -10,7 +11,7 @@ where
     F: FnMut() -> T + 'static + NotObserver,
     O: FnMut(bool) + 'static + NotObserver,
 {
-    let node = Node::<kind::ExpertNode<T, F, O>>::create_rc(
+    let node = Node::create_rc::<T>(
         state.weak(),
         state.current_scope(),
         Kind::Expert(kind::ExpertNode::new_obs(
@@ -40,10 +41,10 @@ where
     F: FnMut() -> T + 'static + NotObserver,
     O: FnMut(bool) + 'static + NotObserver,
 {
-    let node = Rc::<Node<_>>::new_cyclic(|weak| {
+    let node = Rc::<Node>::new_cyclic(|weak| {
         let weak_incr = WeakIncr(weak.clone());
         let recompute = cyclic(weak_incr);
-        let mut node = Node::<kind::ExpertNode<T, F, O>>::create(
+        let mut node = Node::create::<T>(
             state.weak(),
             state.current_scope(),
             Kind::Expert(kind::ExpertNode::new_obs(
@@ -74,6 +75,6 @@ pub(crate) fn add_dependency(node: &NodeRef, edge: PackedEdge) {
     node.expert_add_dependency(edge);
 }
 
-pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn IsEdge) {
+pub(crate) fn remove_dependency<T>(node: &dyn Incremental<T>, dyn_edge: &dyn ExpertEdge) {
     node.expert_remove_dependency(dyn_edge);
 }

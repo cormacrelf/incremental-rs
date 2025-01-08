@@ -3,6 +3,7 @@ use std::rc::Weak;
 
 use super::{node::NodeId, NodeRef, WeakNode};
 use crate::incrsan::NotObserver;
+use crate::node::ErasedNode;
 
 pub(crate) trait BindScope: fmt::Debug + NotObserver {
     fn id(&self) -> NodeId;

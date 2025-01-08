@@ -1,119 +1,32 @@
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::{cell::Cell, fmt};
 
-use super::NodeGenerics;
+use crate::boxes::SmallBox;
 use crate::incrsan::NotObserver;
-use crate::node::Input;
-use crate::Incr;
-use crate::Value;
+use crate::{Incr, NodeRef};
+use crate::{Value, ValueInternal};
 
-pub(crate) struct MapNode<F, T, R>
-where
-    F: FnMut(&T) -> R + NotObserver,
+pub(crate) trait FRef:
+    (for<'a> Fn(&'a dyn ValueInternal) -> &'a dyn ValueInternal) + 'static + NotObserver
 {
-    pub input: Input<T>,
-    pub mapper: RefCell<F>,
+}
+impl<F> FRef for F where
+    F: (for<'a> Fn(&'a dyn ValueInternal) -> &'a dyn ValueInternal) + 'static + NotObserver
+{
 }
 
-impl<F, T, R> NodeGenerics for MapNode<F, T, R>
-where
-    T: Value,
-    R: Value,
-    F: FnMut(&T) -> R + 'static + NotObserver,
-{
-    type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = T;
-    type F1 = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
-    node_generics_default! { F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
-
-impl<F, T, R> fmt::Debug for MapNode<F, T, R>
-where
-    F: FnMut(&T) -> R + NotObserver,
-    R: Value,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("MapNode").finish()
-    }
-}
-
-pub(crate) struct MapRefNode<F, T, R>
-where
-    F: Fn(&T) -> &R + 'static + NotObserver,
-{
-    pub(crate) input: Input<T>,
-    pub(crate) mapper: F,
+pub(crate) struct MapRefNode {
+    pub(crate) input: NodeRef,
+    // Can't make this one Miny because of some weird issues with lifetimes?
+    pub(crate) mapper: Box<dyn FRef>,
     pub(crate) did_change: Cell<bool>,
 }
 
-impl<F, T, R> NodeGenerics for MapRefNode<F, T, R>
-where
-    T: Value,
-    R: Value,
-    F: Fn(&T) -> &R + 'static + NotObserver,
-{
-    type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = T;
-    type FRef = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, Recompute, ObsChange }
-}
-
-impl<F, T, R> fmt::Debug for MapRefNode<F, T, R>
-where
-    F: Fn(&T) -> &R + 'static + NotObserver,
-    R: Value,
-{
+impl fmt::Debug for MapRefNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapRefNode")
             .field("did_change", &self.did_change.get())
             .finish()
-    }
-}
-
-pub(crate) struct Map2Node<F, T1, T2, R>
-where
-    F: FnMut(&T1, &T2) -> R + NotObserver,
-{
-    pub(crate) one: Input<T1>,
-    pub(crate) two: Input<T2>,
-    pub(crate) mapper: RefCell<F>,
-}
-
-impl<F, T1, T2, R> NodeGenerics for Map2Node<F, T1, T2, R>
-where
-    T1: Value,
-    T2: Value,
-    R: Value,
-    F: FnMut(&T1, &T2) -> R + 'static + NotObserver,
-{
-    type R = R;
-    type BindLhs = ();
-    type BindRhs = ();
-    type I1 = T1;
-    type I2 = T2;
-    type F1 = fn(&Self::I1) -> R;
-    type F2 = F;
-    node_generics_default! { I3, I4, I5, I6 }
-    node_generics_default! { F3, F4, F5, F6 }
-    node_generics_default! { B1, Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
-
-impl<F, T1, T2, R> fmt::Debug for Map2Node<F, T1, T2, R>
-where
-    F: FnMut(&T1, &T2) -> R + NotObserver,
-    R: Value,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Map2Node").finish()
     }
 }
 
@@ -131,66 +44,51 @@ macro_rules! map_node {
     (@tail_args $tfield1:ident: $t1:ident, $($tfield2:ident: $t2:ident,)*) => {
         $($tfield2: &Incr<$t2>,)*
     };
-    (@tail_mapper $mapnode:ident { $f:ident, $self:ident, $tfield1:ident, $($tfield2:ident,)* }) => {
+    (@tail_mapper $mapnode:ident { $f:expr, $self:ident, $tfield1:ident, $($tfield2:ident,)* }) => {
         $mapnode {
-            $tfield1: $self.clone().node,
-            $($tfield2: $tfield2.clone().node,)*
-            mapper: $f.into(),
+            $tfield1: $self.node.packed(),
+            $($tfield2: $tfield2.node.packed(),)*
+            mapper: RefCell::new($crate::boxes::new_unsized!($f)),
         }
     };
+    (@any $type:ty) => {dyn $crate::ValueInternal};
     ($vis:vis struct $mapnode:ident <
          inputs {
              $tfield1:ident: $t1:ident = $i1:ident,
              $(
                  $tfield:ident : $t:ident = $i:ident,
-             )+
+             )*
          }
          fn {
-             $ffield:ident : $fparam:ident(.., $($t2:ident),*) -> $r:ident,
+             $ffield:ident : $fparam:ident(.. $(, $t2:ident)*) -> $r:ident,
          }
      > {
          default < $($d:ident),* >,
+         $(#[$method_meta:meta])*
          impl Incr::$methodname:ident, Kind::$kind:ident
      }) => {
-        $vis struct $mapnode <$fparam, $t1, $($t,)* $r>
-        where
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r,
-            $r: Value,
-        {
-            $vis $tfield1: Input<$t1>,
-            $($vis $tfield: Input<$t>,)*
+        $vis struct $mapnode {
+            $vis $tfield1: crate::NodeRef,
+            $($vis $tfield: crate::NodeRef,)*
             $vis $ffield: RefCell<$fparam>,
         }
 
-        impl<$fparam, $t1, $($t,)* $r> NodeGenerics for $mapnode<$fparam, $t1, $($t2,)* $r>
-        where
-            $t1: Value,
-            $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
-            $r: Value,
-        {
-            map_node!{ @rest }
-            type R = $r;
-            type $i1 = $t1;
-            $(type $i = $t2;)*
-            type $fparam = $fparam;
-            crate::node_generics_default! { $($d),* }
+        $crate::incrsan::not_observer_boxed_trait! {
+            pub(crate) type $fparam = crate::boxes::SmallBox<dyn (FnMut(&dyn $crate::ValueInternal, $(&map_node!(@any $t2),)*) -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>)>;
         }
-        impl<$fparam, $t1, $($t,)* $r> fmt::Debug for $mapnode<$fparam, $t1, $($t,)* $r>
-        where
-            $($t: Value,)*
-            $fparam : FnMut(&$t1, $(&$t2,)*) -> $r + 'static + NotObserver,
-            $r: Value,
+
+        impl fmt::Debug for $mapnode
         {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.debug_struct(stringify!($mapnode)).finish()
             }
         }
         impl<$t1: Value> Incr<$t1> {
-            /// Like [Incr::map] and [Incr::map2], but with more input incrementals.
-            ///
-            /// If you don't feel like counting, try using the `(i1 % i2 % ...).map((|_, _, ...| ...))` syntax.
-            pub fn $methodname<$fparam, $($t2,)* $r>(&self, $($tfield: &Incr<$t>,)* f: $fparam) -> Incr<R>
+            $(#[$method_meta])*
+            pub fn $methodname<$fparam, $($t2,)* $r>(
+                &self,
+                $($tfield: &Incr<$t>,)*
+                mut f: $fparam) -> Incr<R>
             where
                 $($t: Value,)*
                 $r: Value,
@@ -198,14 +96,26 @@ macro_rules! map_node {
             {
                 let mapper = map_node! {
                     @tail_mapper $mapnode {
-                        f,
+                        move |
+                            $tfield1: &dyn $crate::ValueInternal,
+                            $(
+                                $tfield: &dyn $crate::ValueInternal,
+                            )*
+                            | -> $crate::boxes::SmallBox<dyn $crate::ValueInternal>
+                        {
+                            let $tfield1 = $tfield1.as_any().downcast_ref::<$t1>().expect("Type error in map function");
+                            $(
+                                let $tfield = $tfield.as_any().downcast_ref::<$t>().expect("Type error in map function");
+                            )*
+                            $crate::boxes::new_unsized!(f( $tfield1, $($tfield,)* ))
+                        },
                         self,
                         $tfield1,
                         $($tfield,)*
                     }
                 };
                 let state = self.node.state();
-                let node = crate::node::Node::<$mapnode<$fparam, $t1, $($t2,)* $r>>::create_rc(
+                let node = crate::node::Node::create_rc::<$r>(
                     state.weak(),
                     state.current_scope.borrow().clone(),
                     crate::kind::Kind::$kind(mapper),
@@ -214,6 +124,76 @@ macro_rules! map_node {
             }
         }
     };
+}
+
+macro_rules! default_doc {
+    () => {
+        r#"
+Like [Incr::map] and [Incr::map2], but with more input incrementals.
+
+If you don't feel like counting, try using the `(i1 % i2 % ...).map(|_, _, ...| ...)` syntax.
+"#
+    };
+}
+
+map_node! {
+    pub(crate) struct MapNode<
+        inputs {
+            input: T1 = I1,
+        }
+        fn { mapper: F1(..) -> R, }
+    > {
+        default < F2, F3, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
+        /// Takes an incremental (self), and produces a new incremental whose value
+        /// is the result of applying a function `f` to the first value.
+        ///
+        /// ## Example
+        ///
+        /// ```
+        /// # use incremental::*;
+        /// let state = IncrState::new();
+        /// let var = state.var(20);
+        ///
+        /// // produce a new incremental that adds ten
+        /// let plus10 = var.map(|x| *x + 10);
+        ///
+        /// let observer = plus10.observe();
+        /// state.stabilise();
+        /// assert_eq!(observer.value(), 30);
+        /// var.set(400);
+        /// state.stabilise();
+        /// assert_eq!(observer.value(), 410);
+        /// ```
+        impl Incr::map, Kind::Map
+    }
+}
+
+// impl<T1, F> MapNode<T1, F> {
+//     fn thing(&self) {
+//         self.mapper
+//     }
+// }
+
+map_node! {
+    pub(crate) struct Map2Node<
+        inputs {
+            one: T1 = I1,
+            two: T2 = I2,
+        }
+        fn { mapper: F2(.., T2) -> R, }
+    > {
+        default < F1, F3, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
+        /// Like [Incr::map], but with two inputs.
+        ///
+        /// ```
+        /// # use incremental::*;
+        /// let state = IncrState::new();
+        /// let v1 = state.var(1);
+        /// let v2 = state.var(1);
+        /// let add = v1.map2(&v2, |a, b| *a + *b);
+        /// ```
+        impl Incr::map2, Kind::Map2
+    }
 }
 
 map_node! {
@@ -225,7 +205,8 @@ map_node! {
         }
         fn { mapper: F3(.., T2, T3) -> R, }
     > {
-        default < F1, F2, F4, F5, F6, I4, I5, I6 >,
+        default < F1, F2, F4, F5, F6, I1, I2, I3, I4, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map3, Kind::Map3
     }
 }
@@ -240,7 +221,8 @@ map_node! {
         }
         fn { mapper: F4(.., T2, T3, T4) -> R, }
     > {
-        default < F1, F2, F3, F5, F6, I5, I6 >,
+        default < F1, F2, F3, F5, F6, I1, I2, I3, I4, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map4, Kind::Map4
     }
 }
@@ -256,7 +238,8 @@ map_node! {
         }
         fn { mapper: F5(.., T2, T3, T4, T5) -> R, }
     > {
-        default < F1, F2, F3, F4, F6, I6 >,
+        default < F1, F2, F3, F4, F6, I1, I2, I3, I4, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map5, Kind::Map5
     }
 }
@@ -273,55 +256,38 @@ map_node! {
         }
         fn { mapper: F6(.., T2, T3, T4, T5, T6) -> R, }
     > {
-        default < F1, F2, F3, F4, F5 >,
+        default < F1, F2, F3, F4, F5, I1, I2, I3, I4, I5, I6 >,
+        #[doc = default_doc!()]
         impl Incr::map6, Kind::Map6
     }
 }
 
+pub(crate) trait FWithOld:
+    FnMut(
+        Option<SmallBox<dyn ValueInternal>>,
+        &dyn ValueInternal,
+    ) -> (SmallBox<dyn ValueInternal>, bool)
+    + 'static
+    + NotObserver
+{
+}
+impl<F> FWithOld for F where
+    F: FnMut(
+            Option<SmallBox<dyn ValueInternal>>,
+            &dyn ValueInternal,
+        ) -> (SmallBox<dyn ValueInternal>, bool)
+        + 'static
+        + NotObserver
+{
+}
+
 /// Lets you dismantle the old R for parts.
-pub(crate) struct MapWithOld<F, T, R>
-where
-    F: FnMut(Option<R>, &T) -> (R, bool),
-{
-    pub input: Input<T>,
-    pub mapper: RefCell<F>,
-    pub _p: PhantomData<R>,
+pub(crate) struct MapWithOld {
+    pub input: NodeRef,
+    pub mapper: RefCell<SmallBox<dyn FWithOld>>,
 }
 
-impl<F, T, R> MapWithOld<F, T, R>
-where
-    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
-{
-    pub fn new(input: Input<T>, mapper: F) -> Self {
-        Self {
-            input,
-            mapper: RefCell::new(mapper),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<F, T, R> NodeGenerics for MapWithOld<F, T, R>
-where
-    T: Value,
-    R: Value,
-    // WARN: we ignore this boolean now
-    F: FnMut(Option<R>, &T) -> (R, bool) + 'static + NotObserver,
-{
-    type I1 = T;
-    type R = R;
-    type WithOld = F;
-    node_generics_default! { I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, FRef, Recompute, ObsChange }
-}
-
-impl<F, T, R> fmt::Debug for MapWithOld<F, T, R>
-where
-    F: FnMut(Option<R>, &T) -> (R, bool) + NotObserver,
-    R: Value,
-{
+impl fmt::Debug for MapWithOld {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("MapWithOld").finish()
     }

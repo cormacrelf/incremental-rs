@@ -32,13 +32,14 @@ im-rc = { version = "15.1.0" }
 [features]
 rust-analyzer = []
 nightly-incrsan = []
+nightly-miny = ["dep:miny"]
 
 [dependencies]
-refl = "0.2.1"
 smallvec = "1.10.0"
 tracing = { version = "0.1.37", features = [] }
 slotmap = { version = "1.0.6", optional = true }
 im-rc = { workspace = true, optional = true }
+miny = { version = "2.0.2", optional = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

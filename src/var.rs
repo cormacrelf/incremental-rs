@@ -5,35 +5,28 @@ use std::rc::{Rc, Weak};
 #[cfg(test)]
 use test_log::test;
 
-use super::kind::NodeGenerics;
 use super::node::{ErasedNode, Incremental, Node, NodeId};
 use super::stabilisation_num::StabilisationNum;
 use super::state::IncrStatus;
 use super::state::State;
 use super::CellIncrement;
 use super::Incr;
+use crate::boxes::{new_unsized, SmallBox};
 use crate::incrsan::NotObserver;
-use crate::node_generics_default;
+use crate::kind::KindTrait;
 use crate::Value;
-
-pub(crate) struct VarGenerics<T: Value>(std::marker::PhantomData<T>);
-impl<R: Value> NodeGenerics for VarGenerics<R> {
-    type R = R;
-    node_generics_default! { I1, I2, I3, I4, I5, I6 }
-    node_generics_default! { F1, F2, F3, F4, F5, F6 }
-    node_generics_default! { B1, BindLhs, BindRhs }
-    node_generics_default! { Fold, Update, WithOld, FRef, Recompute, ObsChange }
-}
+use crate::ValueInternal;
 
 // For the delayed variable set list (set_during_stabilisation).
 // We use Weak to ensure we don't interfere with the manual
 // Rc-cycle-breaking on public::Var.
 pub(crate) type WeakVar = Weak<dyn ErasedVariable>;
 
-pub(crate) trait ErasedVariable: Debug + NotObserver {
+pub(crate) trait ErasedVariable: Debug + NotObserver + KindTrait {
     fn set_var_stabilise_end(&self);
     fn id(&self) -> NodeId;
     fn break_rc_cycle(&self);
+    fn set_at(&self) -> StabilisationNum;
 }
 
 impl<T: Value> ErasedVariable for Var<T> {
@@ -51,6 +44,32 @@ impl<T: Value> ErasedVariable for Var<T> {
     fn break_rc_cycle(&self) {
         self.node.take();
     }
+    fn set_at(&self) -> StabilisationNum {
+        self.set_at.get()
+    }
+}
+
+impl<T: Value> KindTrait for Var<T> {
+    fn compute(&self) -> SmallBox<dyn ValueInternal> {
+        new_unsized!((*self.value.borrow()).clone())
+    }
+
+    fn children_len(&self) -> usize {
+        0
+    }
+
+    // not used
+    fn iter_children_packed(&self) -> Box<dyn Iterator<Item = crate::NodeRef> + '_> {
+        Box::new(std::iter::empty())
+    }
+
+    fn slow_get_child(&self, _index: usize) -> crate::NodeRef {
+        panic!()
+    }
+
+    fn debug_ty(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Var<{}>", std::any::type_name::<T>())
+    }
 }
 
 pub struct Var<T: Value> {
@@ -59,7 +78,7 @@ pub struct Var<T: Value> {
     pub(crate) value_set_during_stabilisation: RefCell<Option<T>>,
     pub(crate) set_at: Cell<StabilisationNum>,
     // mutable for initialisation
-    pub(crate) node: RefCell<Option<Rc<Node<VarGenerics<T>>>>>,
+    pub(crate) node: RefCell<Option<Rc<Node>>>,
     // mutable for initialisation
     pub(crate) node_id: Cell<NodeId>,
 }
