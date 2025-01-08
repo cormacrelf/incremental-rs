@@ -1477,14 +1477,17 @@ impl Node {
         .is_break()
     }
     fn find_child(&self, pred: &dyn Fn(i32, &NodeRef) -> bool) -> Option<NodeRef> {
-        self.try_fold_children((), |(), ix, child| {
+        let output = self.try_fold_children((), |(), ix, child| {
             if pred(ix, &child) {
                 ControlFlow::Break(child)
             } else {
                 ControlFlow::Continue(())
             }
-        })
-        .break_value()
+        });
+        match output {
+            ControlFlow::Continue(..) => None,
+            ControlFlow::Break(x) => Some(x),
+        }
     }
     fn try_fold_children<B, R>(
         &self,
